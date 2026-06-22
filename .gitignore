@@ -12,6 +12,7 @@ build/
 outputs/
 projects/
 .ci-projects/
+.quickstart-projects/
 *.svg
 *.dwg
 *.dxf

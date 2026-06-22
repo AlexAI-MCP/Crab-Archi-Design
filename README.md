@@ -43,6 +43,16 @@ Python 3.9+ is supported.
 pip install -e .
 ```
 
+## Quickstart
+
+Run the complete sample path from job creation to final release audit:
+
+```bash
+examples/run_quickstart.sh
+```
+
+The script creates a sample job spec, Markdown review brief, validated project package, and `release_audit_###.json` under `.quickstart-projects/`.
+
 ## CI Preflight
 
 GitHub Actions runs the same core contract used by local handoff:
@@ -68,6 +78,7 @@ The CI sample uses:
 - `examples/constraint_sketch_sample.json`
 - `examples/opencrab_mcp_result_sample.json`
 - `examples/job_spec_sample.json`
+- `examples/run_quickstart.sh`
 
 ## CLI
 

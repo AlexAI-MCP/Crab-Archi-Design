@@ -114,3 +114,5 @@ jobs:
             --project-id ci-demo \
             --zip .ci-projects/ci-demo/exports/ci-demo_export_001.zip \
             --strict
+
+          examples/run_quickstart.sh .ci-projects/quickstart ci-quickstart

@@ -1188,6 +1188,29 @@ def test_create_job_writes_validatable_spec(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_quickstart_script_executes_full_sample_path(tmp_path: Path) -> None:
+    out_dir = tmp_path / "quickstart"
+    project_id = "pytest-quickstart"
+    result = subprocess.run(
+        ["bash", str(ROOT / "examples" / "run_quickstart.sh"), str(out_dir), project_id],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Quickstart complete" in result.stdout
+    job_path = out_dir / "job_specs" / f"{project_id}_job.json"
+    brief_path = job_path.with_suffix(".md")
+    audit_path = out_dir / "projects" / project_id / "audits" / "release_audit_001.json"
+    assert job_path.exists()
+    assert brief_path.exists()
+    assert audit_path.exists()
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit["status"] == "pass"
+    assert audit["checks"]["package_verify_pass"] is True
+
+
 def test_run_job_executes_sample_pipeline(tmp_path: Path) -> None:
     job_path = tmp_path / "job.json"
     job = {

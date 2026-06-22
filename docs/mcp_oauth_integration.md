@@ -23,6 +23,12 @@ crab-archi-design mcp-manifest \
   --output integrations/crab_archi_design_mcp_manifest.json
 ```
 
+Before wiring a custom worker, run the repository quickstart once:
+
+```bash
+examples/run_quickstart.sh
+```
+
 Generate runtime configuration for MCP clients and OAuth workers:
 
 ```bash
