@@ -22,6 +22,18 @@ projects/a801-802-opencrab-test/edit_intents/prompt_edit_###.json
 
 Doodles should be stored as vector strokes in the source SVG coordinate space.
 
+Open the local editor:
+
+```bash
+crab-archi-design doodle-editor
+```
+
+The editor is also available directly at:
+
+```text
+tools/doodle_editor.html
+```
+
 ```json
 {
   "coordinate_space": "source_svg_viewbox",
@@ -47,7 +59,7 @@ Then run:
 ```bash
 crab-archi-design --project-root projects sketch-intent \
   --project-id a801-802-opencrab-test \
-  --sketch examples/sketch_layer_sample.json
+  --sketch /path/to/downloaded_sketch.json
 ```
 
 ## Apply the Edit

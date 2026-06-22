@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crab Archi Design Doodle Editor</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f4;
+      --panel: #ffffff;
+      --ink: #171717;
+      --muted: #666b72;
+      --line: #d9ddd8;
+      --accent: #0f766e;
+      --danger: #dc2626;
+      --shadow: 0 12px 30px rgba(31, 41, 55, 0.12);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    h1 {
+      font-size: 19px;
+      line-height: 1.2;
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .field {
+      display: grid;
+      gap: 7px;
+    }
+
+    label {
+      color: #343841;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    input,
+    select,
+    textarea,
+    button {
+      font: inherit;
+    }
+
+    input[type="file"],
+    input[type="text"],
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 9px 10px;
+      min-height: 38px;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 180px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      min-height: 38px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    button:hover {
+      border-color: #9aa39c;
+      background: #f5f7f4;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    button.danger {
+      color: var(--danger);
+    }
+
+    .status {
+      display: grid;
+      gap: 6px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fafbf9;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .stage {
+      position: relative;
+      overflow: hidden;
+      min-width: 0;
+      background:
+        linear-gradient(90deg, rgba(15, 118, 110, 0.08) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(15, 118, 110, 0.08) 1px, transparent 1px),
+        #fcfcfb;
+      background-size: 32px 32px;
+    }
+
+    .canvas-wrap {
+      position: absolute;
+      inset: 18px;
+      display: grid;
+      place-items: center;
+      overflow: auto;
+    }
+
+    .drawing-shell {
+      position: relative;
+      width: min(100%, 1480px);
+      min-width: 900px;
+      aspect-ratio: 1.414 / 1;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    #svgHost,
+    #overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #svgHost svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #overlay {
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    .empty {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+      padding: 28px;
+      pointer-events: none;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 900px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        border-right: none;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .stage {
+        min-height: 66vh;
+      }
+
+      .canvas-wrap {
+        inset: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>Crab Archi Design</h1>
+        <div class="subtle">ViewBox Sketch</div>
+      </div>
+
+      <div class="field">
+        <label for="svgFile">Source SVG</label>
+        <input id="svgFile" type="file" accept=".svg,image/svg+xml">
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="open_connection">open_connection</option>
+            <option value="add_partition">add_partition</option>
+            <option value="remove_partition">remove_partition</option>
+            <option value="expand_room">expand_room</option>
+            <option value="shrink_room">shrink_room</option>
+            <option value="lock_boundary">lock_boundary</option>
+            <option value="keep_zone">keep_zone</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="strokeWidth">Width</label>
+          <select id="strokeWidth">
+            <option value="3">3</option>
+            <option value="5" selected>5</option>
+            <option value="8">8</option>
+            <option value="12">12</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="targetHint">Target hint</label>
+        <input id="targetHint" type="text" value="greenery_lounge_to_main_hall">
+      </div>
+
+      <div class="toolbar">
+        <button id="undoButton" type="button">Undo</button>
+        <button id="clearButton" class="danger" type="button">Clear</button>
+        <button id="downloadButton" class="primary" type="button">Download</button>
+      </div>
+
+      <input id="importFile" class="hidden" type="file" accept=".json,application/json">
+      <div class="row">
+        <button id="copyButton" type="button">Copy JSON</button>
+        <button id="importButton" type="button">Import JSON</button>
+      </div>
+
+      <div class="status">
+        <div id="fileStatus">No SVG loaded</div>
+        <div id="viewBoxStatus">viewBox: -</div>
+        <div id="strokeStatus">strokes: 0</div>
+        <div id="pointStatus">point: -</div>
+      </div>
+
+      <div class="field">
+        <label for="jsonOut">Sketch JSON</label>
+        <textarea id="jsonOut" spellcheck="false"></textarea>
+      </div>
+    </aside>
+
+    <section class="stage">
+      <div class="canvas-wrap">
+        <div class="drawing-shell" id="drawingShell">
+          <div id="svgHost"></div>
+          <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div id="emptyState" class="empty">No SVG</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const svgFile = document.getElementById("svgFile");
+    const importFile = document.getElementById("importFile");
+    const importButton = document.getElementById("importButton");
+    const mode = document.getElementById("mode");
+    const strokeWidth = document.getElementById("strokeWidth");
+    const targetHint = document.getElementById("targetHint");
+    const undoButton = document.getElementById("undoButton");
+    const clearButton = document.getElementById("clearButton");
+    const downloadButton = document.getElementById("downloadButton");
+    const copyButton = document.getElementById("copyButton");
+    const fileStatus = document.getElementById("fileStatus");
+    const viewBoxStatus = document.getElementById("viewBoxStatus");
+    const strokeStatus = document.getElementById("strokeStatus");
+    const pointStatus = document.getElementById("pointStatus");
+    const jsonOut = document.getElementById("jsonOut");
+    const svgHost = document.getElementById("svgHost");
+    const overlay = document.getElementById("overlay");
+    const emptyState = document.getElementById("emptyState");
+    const drawingShell = document.getElementById("drawingShell");
+
+    const modeColors = {
+      open_connection: "#0f766e",
+      add_partition: "#2563eb",
+      remove_partition: "#dc2626",
+      expand_room: "#16a34a",
+      shrink_room: "#f97316",
+      lock_boundary: "#c026d3",
+      keep_zone: "#4b5563"
+    };
+
+    const state = {
+      sourceName: null,
+      viewBox: [0, 0, 1000, 707],
+      strokes: [],
+      activeStroke: null,
+      activePolyline: null,
+      drawing: false
+    };
+
+    function parseViewBox(svgElement) {
+      const raw = svgElement.getAttribute("viewBox");
+      if (raw) {
+        const parts = raw.trim().split(/[,\s]+/).map(Number);
+        if (parts.length === 4 && parts.every(Number.isFinite)) {
+          return parts;
+        }
+      }
+      const width = parseFloat(svgElement.getAttribute("width")) || 1000;
+      const height = parseFloat(svgElement.getAttribute("height")) || 707;
+      return [0, 0, width, height];
+    }
+
+    function setViewBox(viewBox) {
+      state.viewBox = viewBox;
+      const value = viewBox.join(" ");
+      overlay.setAttribute("viewBox", value);
+      overlay.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      drawingShell.style.aspectRatio = `${viewBox[2]} / ${viewBox[3]}`;
+      viewBoxStatus.textContent = `viewBox: ${value}`;
+    }
+
+    function nextStrokeId() {
+      return `s${String(state.strokes.length + 1).padStart(3, "0")}`;
+    }
+
+    function sketchJson() {
+      return {
+        schema: "crab-archi-design-sketch-layer-v1",
+        coordinate_space: "source_svg_viewbox",
+        source_svg_name: state.sourceName,
+        viewBox: state.viewBox,
+        strokes: state.strokes.map((stroke) => ({
+          stroke_id: stroke.stroke_id,
+          mode: stroke.mode,
+          target_hint: stroke.target_hint,
+          width: stroke.width,
+          points: stroke.points
+        }))
+      };
+    }
+
+    function refreshJson() {
+      strokeStatus.textContent = `strokes: ${state.strokes.length}`;
+      jsonOut.value = JSON.stringify(sketchJson(), null, 2);
+    }
+
+    function pointToString(point) {
+      return `${point[0].toFixed(2)},${point[1].toFixed(2)}`;
+    }
+
+    function updatePolyline(polyline, points) {
+      polyline.setAttribute("points", points.map(pointToString).join(" "));
+    }
+
+    function strokeColor(strokeMode) {
+      return modeColors[strokeMode] || "#111827";
+    }
+
+    function createPolyline(stroke) {
+      const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+      polyline.setAttribute("fill", "none");
+      polyline.setAttribute("stroke", strokeColor(stroke.mode));
+      polyline.setAttribute("stroke-width", String(stroke.width));
+      polyline.setAttribute("stroke-linecap", "round");
+      polyline.setAttribute("stroke-linejoin", "round");
+      polyline.setAttribute("opacity", "0.92");
+      polyline.dataset.strokeId = stroke.stroke_id;
+      updatePolyline(polyline, stroke.points);
+      overlay.appendChild(polyline);
+      return polyline;
+    }
+
+    function redrawStrokes() {
+      overlay.replaceChildren();
+      for (const stroke of state.strokes) {
+        createPolyline(stroke);
+      }
+    }
+
+    function clientPoint(event) {
+      const point = overlay.createSVGPoint();
+      point.x = event.clientX;
+      point.y = event.clientY;
+      const matrix = overlay.getScreenCTM();
+      if (!matrix) {
+        return null;
+      }
+      const mapped = point.matrixTransform(matrix.inverse());
+      return [Number(mapped.x.toFixed(2)), Number(mapped.y.toFixed(2))];
+    }
+
+    function appendPoint(point) {
+      if (!state.activeStroke) {
+        return;
+      }
+      const points = state.activeStroke.points;
+      const last = points[points.length - 1];
+      if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) < 2) {
+        return;
+      }
+      points.push(point);
+      updatePolyline(state.activePolyline, points);
+      pointStatus.textContent = `point: ${point[0].toFixed(1)}, ${point[1].toFixed(1)}`;
+    }
+
+    function beginStroke(event) {
+      if (!state.sourceName) {
+        return;
+      }
+      const point = clientPoint(event);
+      if (!point) {
+        return;
+      }
+      event.preventDefault();
+      overlay.setPointerCapture(event.pointerId);
+      state.drawing = true;
+      state.activeStroke = {
+        stroke_id: nextStrokeId(),
+        mode: mode.value,
+        target_hint: targetHint.value.trim(),
+        width: Number(strokeWidth.value),
+        points: []
+      };
+      state.activePolyline = createPolyline(state.activeStroke);
+      appendPoint(point);
+    }
+
+    function moveStroke(event) {
+      const point = clientPoint(event);
+      if (point) {
+        pointStatus.textContent = `point: ${point[0].toFixed(1)}, ${point[1].toFixed(1)}`;
+      }
+      if (!state.drawing || !point) {
+        return;
+      }
+      event.preventDefault();
+      appendPoint(point);
+    }
+
+    function endStroke(event) {
+      if (!state.drawing || !state.activeStroke) {
+        return;
+      }
+      event.preventDefault();
+      if (state.activeStroke.points.length > 1) {
+        state.strokes.push(state.activeStroke);
+      } else if (state.activePolyline) {
+        state.activePolyline.remove();
+      }
+      state.drawing = false;
+      state.activeStroke = null;
+      state.activePolyline = null;
+      refreshJson();
+    }
+
+    async function loadSvgFile(file) {
+      const text = await file.text();
+      const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+      const sourceSvg = doc.documentElement;
+      if (!sourceSvg || sourceSvg.tagName.toLowerCase() !== "svg") {
+        throw new Error("Selected file is not an SVG.");
+      }
+      const viewBox = parseViewBox(sourceSvg);
+      sourceSvg.removeAttribute("width");
+      sourceSvg.removeAttribute("height");
+      sourceSvg.setAttribute("width", "100%");
+      sourceSvg.setAttribute("height", "100%");
+      sourceSvg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      svgHost.replaceChildren(document.importNode(sourceSvg, true));
+      state.sourceName = file.name;
+      state.strokes = [];
+      setViewBox(viewBox);
+      redrawStrokes();
+      emptyState.classList.add("hidden");
+      fileStatus.textContent = file.name;
+      refreshJson();
+    }
+
+    function importSketch(data) {
+      if (Array.isArray(data.viewBox) && data.viewBox.length === 4) {
+        setViewBox(data.viewBox.map(Number));
+      }
+      state.sourceName = data.source_svg_name || state.sourceName;
+      state.strokes = (data.strokes || []).map((stroke, index) => ({
+        stroke_id: stroke.stroke_id || `s${String(index + 1).padStart(3, "0")}`,
+        mode: stroke.mode || stroke.tool || "mark_up",
+        target_hint: stroke.target_hint || "",
+        width: Number(stroke.width || 5),
+        points: (stroke.points || []).map((point) => [Number(point[0]), Number(point[1])])
+      })).filter((stroke) => stroke.points.length > 1);
+      redrawStrokes();
+      refreshJson();
+    }
+
+    function downloadJson() {
+      const blob = new Blob([JSON.stringify(sketchJson(), null, 2)], { type: "application/json" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `${state.sourceName ? state.sourceName.replace(/\.svg$/i, "") : "crab_archi"}_sketch.json`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    svgFile.addEventListener("change", async () => {
+      const file = svgFile.files && svgFile.files[0];
+      if (!file) {
+        return;
+      }
+      try {
+        await loadSvgFile(file);
+      } catch (error) {
+        fileStatus.textContent = error.message;
+      }
+    });
+
+    importButton.addEventListener("click", () => importFile.click());
+    importFile.addEventListener("change", async () => {
+      const file = importFile.files && importFile.files[0];
+      if (!file) {
+        return;
+      }
+      try {
+        importSketch(JSON.parse(await file.text()));
+      } catch (error) {
+        fileStatus.textContent = error.message;
+      }
+    });
+
+    undoButton.addEventListener("click", () => {
+      state.strokes.pop();
+      redrawStrokes();
+      refreshJson();
+    });
+
+    clearButton.addEventListener("click", () => {
+      state.strokes = [];
+      redrawStrokes();
+      refreshJson();
+    });
+
+    downloadButton.addEventListener("click", downloadJson);
+    copyButton.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(jsonOut.value);
+      } catch {
+        jsonOut.select();
+        document.execCommand("copy");
+      }
+      copyButton.textContent = "Copied";
+      window.setTimeout(() => {
+        copyButton.textContent = "Copy JSON";
+      }, 900);
+    });
+
+    overlay.addEventListener("pointerdown", beginStroke);
+    overlay.addEventListener("pointermove", moveStroke);
+    overlay.addEventListener("pointerup", endStroke);
+    overlay.addEventListener("pointercancel", endStroke);
+    refreshJson();
+  </script>
+</body>
+</html>

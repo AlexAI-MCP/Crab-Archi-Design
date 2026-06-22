@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import webbrowser
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
@@ -517,6 +518,20 @@ def command_qa(args: argparse.Namespace) -> None:
     print(json.dumps({"status": qa["status"], "checks": checks}, ensure_ascii=False))
 
 
+def command_doodle_editor(args: argparse.Namespace) -> None:
+    candidates = [
+        Path(__file__).resolve().parents[2] / "tools" / "doodle_editor.html",
+        Path.cwd() / "tools" / "doodle_editor.html",
+    ]
+    editor = next((path for path in candidates if path.exists()), None)
+    if editor is None:
+        raise SystemExit("Missing tools/doodle_editor.html")
+    print(editor)
+    print(editor.as_uri())
+    if args.open:
+        webbrowser.open(editor.as_uri())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="crab-archi-design")
     parser.add_argument("--project-root", default=str(DEFAULT_PROJECT_ROOT))
@@ -556,6 +571,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("--skip-preview", action="store_true", help="Pass --skip-preview to adapters that support it.")
     p_apply.add_argument("--timeout", type=int, default=300)
     p_apply.set_defaults(func=command_apply_edit)
+
+    p_editor = sub.add_parser("doodle-editor", help="Print or open the local SVG doodle editor.")
+    p_editor.add_argument("--open", action="store_true")
+    p_editor.set_defaults(func=command_doodle_editor)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

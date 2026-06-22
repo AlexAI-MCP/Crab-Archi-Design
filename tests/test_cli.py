@@ -154,3 +154,11 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
 
     solver_input = json.loads(Path(report["solver_input"]).read_text(encoding="utf-8"))
     assert solver_input["intents"][0]["schema"] == "crab-archi-design-natural-language-edit-intent-v1"
+
+
+def test_doodle_editor_command_prints_local_editor() -> None:
+    result = run_cli("doodle-editor", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.strip().splitlines()
+    assert Path(lines[0]).name == "doodle_editor.html"
+    assert lines[1].startswith("file://")
