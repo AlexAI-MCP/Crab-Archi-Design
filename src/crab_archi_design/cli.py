@@ -94,6 +94,7 @@ def command_init(args: argparse.Namespace) -> None:
             "evidence_dir": str(out_dir / "evidence"),
             "standards_dir": str(out_dir / "standards"),
             "briefs_dir": str(out_dir / "briefs"),
+            "handoffs_dir": str(out_dir / "handoffs"),
             "runs_dir": str(out_dir / "runs"),
             "qa_dir": str(out_dir / "qa"),
             "status_dir": str(out_dir / "status"),
@@ -1707,17 +1708,16 @@ def sum_selected_standard_rows(manifest: dict[str, Any] | None) -> int:
     return total
 
 
-def command_project_status(args: argparse.Namespace) -> None:
-    root = Path(args.project_root)
-    manifest = load_manifest(args.project_id, root)
-    base = project_dir(args.project_id, root)
+def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
+    manifest = load_manifest(project_id, root)
+    base = project_dir(project_id, root)
     source_svg = Path(manifest["source_svg"]).expanduser()
     source_info = inspect_svg(source_svg)
 
-    recognition_manifest = load_recognition_manifest(args.project_id, root)
-    evidence_manifest = load_evidence_manifest(args.project_id, root)
-    constraint_manifest = load_constraint_manifest(args.project_id, root)
-    standards_manifest = load_standards_manifest(args.project_id, root)
+    recognition_manifest = load_recognition_manifest(project_id, root)
+    evidence_manifest = load_evidence_manifest(project_id, root)
+    constraint_manifest = load_constraint_manifest(project_id, root)
+    standards_manifest = load_standards_manifest(project_id, root)
     edit_intent_paths = sorted_json_files(base / "edit_intents", "*.json")
     latest_brief = latest_file(base / "briefs", "edit_brief_*.json")
     latest_apply = latest_file(base / "runs", "apply_edit_*/apply_edit_report.json")
@@ -1762,7 +1762,7 @@ def command_project_status(args: argparse.Namespace) -> None:
     status = {
         "schema": "crab-archi-design-project-status-v1",
         "created_at": now(),
-        "project_id": args.project_id,
+        "project_id": project_id,
         "overall_status": overall_status,
         "gates": gates,
         "gate_groups": {
@@ -1770,10 +1770,10 @@ def command_project_status(args: argparse.Namespace) -> None:
             "candidate_ready": {name: gates[name] for name in candidate_gate_names},
         },
         "latest_artifacts": {
-            "recognition_manifest": str(recognition_manifest_path(args.project_id, root)) if recognition_manifest else None,
-            "standards_manifest": str(standards_manifest_path(args.project_id, root)) if standards_manifest else None,
-            "evidence_manifest": str(evidence_manifest_path(args.project_id, root)) if evidence_manifest else None,
-            "constraint_manifest": str(constraint_manifest_path(args.project_id, root)) if constraint_manifest else None,
+            "recognition_manifest": str(recognition_manifest_path(project_id, root)) if recognition_manifest else None,
+            "standards_manifest": str(standards_manifest_path(project_id, root)) if standards_manifest else None,
+            "evidence_manifest": str(evidence_manifest_path(project_id, root)) if evidence_manifest else None,
+            "constraint_manifest": str(constraint_manifest_path(project_id, root)) if constraint_manifest else None,
             "edit_brief": str(latest_brief) if latest_brief else None,
             "apply_report": str(latest_apply) if latest_apply else None,
             "alternative_svg": str(latest_alternative) if latest_alternative else None,
@@ -1797,10 +1797,261 @@ def command_project_status(args: argparse.Namespace) -> None:
         "source_svg_info": source_info,
         "alternative_svg_info": alternative_info,
     }
-    out = base / "status" / "project_status.json"
+    return status
+
+
+def command_project_status(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    status = build_project_status(args.project_id, root)
+    out = project_dir(args.project_id, root) / "status" / "project_status.json"
     write_json(out, status)
     print(out)
-    print(json.dumps({"status": overall_status, "gates": gates, "latest_artifacts": status["latest_artifacts"]}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "status": status["overall_status"],
+                "gates": status["gates"],
+                "latest_artifacts": status["latest_artifacts"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def selected_standard_rows(manifest: dict[str, Any] | None, max_rows: int = 20) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    if not manifest:
+        return rows
+    for item in manifest.get("standard_items", []):
+        payload_rows = item.get("payload", {}).get("selected_rows", [])
+        if isinstance(payload_rows, list):
+            for row in payload_rows:
+                if isinstance(row, dict):
+                    rows.append({str(key): str(value) for key, value in row.items()})
+                    if len(rows) >= max_rows:
+                        return rows
+    return rows
+
+
+def summarize_evidence_manifest(manifest: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not manifest:
+        return []
+    return [
+        {
+            "id": item.get("id"),
+            "source": item.get("source"),
+            "pack_id": item.get("pack_id"),
+            "query": item.get("query"),
+            "summary": item.get("summary"),
+            "source_file": item.get("source_file"),
+            "metadata": item.get("metadata", {}),
+        }
+        for item in manifest.get("evidence_items", [])
+    ]
+
+
+def summarize_constraint_manifest(manifest: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not manifest:
+        return []
+    return [
+        {
+            "id": item.get("id"),
+            "role": item.get("role"),
+            "mode": item.get("mode"),
+            "target_hint": item.get("target_hint"),
+            "point_count": item.get("point_count"),
+            "solver_policy": item.get("solver_policy"),
+        }
+        for item in manifest.get("constraint_items", [])
+    ]
+
+
+def summarize_recognition_manifest(manifest: dict[str, Any] | None) -> dict[str, Any]:
+    if not manifest:
+        return {"status": "missing", "program_label_candidates": []}
+    return {
+        "status": recognition_status(manifest),
+        "source_svg_info": manifest.get("source_svg_info"),
+        "primitive_count": manifest.get("primitive_count", 0),
+        "label_count": manifest.get("label_count", 0),
+        "program_label_count": manifest.get("program_label_count", 0),
+        "program_label_candidates": manifest.get("program_label_candidates", [])[:24],
+    }
+
+
+def build_design_handoff_markdown(handoff: dict[str, Any]) -> str:
+    lines = [
+        f"# {handoff['project_id']} Design Handoff",
+        "",
+        f"- Status: `{handoff['status']}`",
+        f"- Project status: `{handoff['project_status']['overall_status']}`",
+        f"- Created: `{handoff['created_at']}`",
+        f"- Source SVG: `{handoff['source_svg']}`",
+        f"- Households: `{handoff['household_count']}`",
+        f"- Ontology pack: `{handoff['ontology_pack']}`",
+        "",
+        "## Task",
+        "",
+        handoff["task"],
+        "",
+        "## Ready Gates",
+        "",
+    ]
+    for key, value in handoff["handoff_checks"].items():
+        lines.append(f"- `{key}`: `{str(value).lower()}`")
+
+    lines.extend(["", "## Prompt Blocks", "", "### System Prompt", "", handoff["prompt_blocks"]["system_prompt"], "", "### User Prompt", "", handoff["prompt_blocks"]["user_prompt"], ""])
+    lines.extend(["## Operations", ""])
+    for op in handoff["operations"]:
+        label = op.get("target") or op.get("target_hint") or op.get("action") or "operation"
+        action = op.get("action") or op.get("edit_type") or ""
+        method = op.get("method") or op.get("snap_policy") or ""
+        lines.append(f"- `{label}`: {action} {method}".strip())
+    if not handoff["operations"]:
+        lines.append("- No operations.")
+
+    lines.extend(["", "## Evidence", ""])
+    for item in handoff["knowledge_context"]["evidence_items"]:
+        lines.append(f"- `{item.get('pack_id') or item.get('id')}`: {item.get('summary') or item.get('query') or item.get('source')}")
+    if not handoff["knowledge_context"]["evidence_items"]:
+        lines.append("- No evidence attached.")
+
+    lines.extend(["", "## Constraints", ""])
+    for item in handoff["knowledge_context"]["constraint_items"]:
+        lines.append(f"- `{item.get('role')}`: {item.get('target_hint') or item.get('mode') or item.get('id')} (policy `{item.get('solver_policy')}`)")
+    if not handoff["knowledge_context"]["constraint_items"]:
+        lines.append("- No constraints attached.")
+
+    lines.extend(["", "## Standards Excerpt", ""])
+    for row in handoff["knowledge_context"]["standards_excerpt"]:
+        lines.append(f"- {json.dumps(row, ensure_ascii=False)}")
+    if not handoff["knowledge_context"]["standards_excerpt"]:
+        lines.append("- No parsed standards rows attached.")
+
+    lines.extend(["", "## Engine Contract", ""])
+    for item in handoff["engine_contract"]["must_preserve"]:
+        lines.append(f"- Preserve: `{item}`")
+    for item in handoff["engine_contract"]["must_output"]:
+        lines.append(f"- Output: `{item}`")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def command_design_handoff(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    base = project_dir(args.project_id, root)
+    intent_paths = resolve_intent_paths(base, args.intent)
+    intents = [read_json(path) for path in intent_paths]
+    operations = flatten_operations(intents)
+
+    recognition_manifest = load_recognition_manifest(args.project_id, root)
+    evidence_manifest = load_evidence_manifest(args.project_id, root)
+    constraint_manifest = load_constraint_manifest(args.project_id, root)
+    standards_manifest = load_standards_manifest(args.project_id, root)
+    project_status = build_project_status(args.project_id, root)
+    latest_brief_path = latest_file(base / "briefs", "edit_brief_*.json")
+    latest_brief = read_json(latest_brief_path) if latest_brief_path else None
+
+    ready_checks = project_status["gate_groups"]["ready_for_apply"]
+    handoff_checks = {
+        **ready_checks,
+        "latest_edit_brief_pass": bool(latest_brief and latest_brief.get("status") == "pass"),
+    }
+    task = args.task or (
+        "Create an evidence-backed community layout alternative from the original SVG. "
+        "Use the attached OpenCrab ontology evidence, standards, recognition manifest, constraints, "
+        "natural-language intent, and doodle intent. Return solver-ready native SVG instructions."
+    )
+    hard_constraints = manifest.get("hard_constraints", [])
+    system_prompt = (
+        "You are the Crab Archi Design planning agent. Use OpenCrab MCP evidence as the design knowledge base, "
+        "treat standards and constraints as binding inputs, and produce solver-ready instructions rather than a raster overlay. "
+        "Do not invent protected geometry changes. Preserve parking count, columns, cores, ramps, stairs, egress, and the community shell."
+    )
+    operation_lines = [
+        f"- {op.get('target') or op.get('target_hint') or 'operation'}: {op.get('action') or op.get('edit_type') or ''} {op.get('method') or op.get('snap_policy') or ''}".strip()
+        for op in operations
+    ]
+    user_prompt = "\n".join(
+        [
+            f"Project: {args.project_id}",
+            f"Task: {task}",
+            f"Source SVG: {manifest.get('source_svg')}",
+            f"Households: {manifest.get('household_count')}",
+            f"Ontology pack: {manifest.get('ontology_pack')}",
+            "Operations:",
+            *(operation_lines or ["- Review attached intent files."]),
+            "Required behavior:",
+            "- Keep every edit inside mutable/projectable community zones.",
+            "- Use OpenCrab evidence and 900-household standards before assigning program area.",
+            "- Keep protected no-go and locked geometry unchanged.",
+            "- Output native SVG solver instructions and cite the manifest evidence paths.",
+        ]
+    )
+
+    handoff = {
+        "schema": "crab-archi-design-design-handoff-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "status": "pass" if all(handoff_checks.values()) else "review_required",
+        "task": task,
+        "source_svg": manifest.get("source_svg"),
+        "household_count": manifest.get("household_count"),
+        "ontology_pack": manifest.get("ontology_pack"),
+        "opencrab_mcp": manifest.get("opencrab_mcp"),
+        "project_status": project_status,
+        "handoff_checks": handoff_checks,
+        "latest_edit_brief": str(latest_brief_path) if latest_brief_path else None,
+        "intent_paths": [str(path) for path in intent_paths],
+        "intents": intents,
+        "operations": operations,
+        "knowledge_context": {
+            "recognition": summarize_recognition_manifest(recognition_manifest),
+            "evidence_items": summarize_evidence_manifest(evidence_manifest),
+            "constraint_items": summarize_constraint_manifest(constraint_manifest),
+            "standards_status": standards_status(standards_manifest),
+            "standard_count": count_standard_items(standards_manifest),
+            "standards_excerpt": selected_standard_rows(standards_manifest),
+            "manifest_paths": {
+                "recognition_manifest": str(recognition_manifest_path(args.project_id, root)) if recognition_manifest else None,
+                "evidence_manifest": str(evidence_manifest_path(args.project_id, root)) if evidence_manifest else None,
+                "constraint_manifest": str(constraint_manifest_path(args.project_id, root)) if constraint_manifest else None,
+                "standards_manifest": str(standards_manifest_path(args.project_id, root)) if standards_manifest else None,
+            },
+        },
+        "prompt_blocks": {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+        },
+        "engine_contract": {
+            "input": "design handoff JSON + original SVG + referenced manifests",
+            "must_preserve": hard_constraints,
+            "must_output": [
+                "native_svg_alternative",
+                "engine_report_with_evidence_references",
+                "area_delta_summary",
+                "qa_gate_results",
+            ],
+            "must_pass": [
+                "source_svg_parse_ok",
+                "recognition_manifest_active",
+                "opencrab_evidence_verified",
+                "constraint_manifest_active",
+                "standards_manifest_active",
+                "native_svg_no_images",
+            ],
+        },
+    }
+    handoff_dir = base / "handoffs"
+    seq = next_sequence(handoff_dir, "design_handoff_*.json")
+    json_path = handoff_dir / f"design_handoff_{seq:03d}.json"
+    md_path = handoff_dir / f"design_handoff_{seq:03d}.md"
+    write_json(json_path, handoff)
+    md_path.write_text(build_design_handoff_markdown(handoff), encoding="utf-8")
+    print(json_path)
+    print(md_path)
+    print(json.dumps({"status": handoff["status"], "checks": handoff_checks}, ensure_ascii=False))
 
 
 def command_doodle_editor(args: argparse.Namespace) -> None:
@@ -1913,6 +2164,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("project-status", help="Summarize project readiness gates and latest artifacts.")
     p_status.add_argument("--project-id", required=True)
     p_status.set_defaults(func=command_project_status)
+
+    p_handoff = sub.add_parser("design-handoff", help="Build a Codex/LLM/engine design handoff package from current project gates.")
+    p_handoff.add_argument("--project-id", required=True)
+    p_handoff.add_argument("--intent", default="all", help="latest, all, or a project-relative/absolute intent JSON path.")
+    p_handoff.add_argument("--task", help="Optional design task override for the handoff prompt.")
+    p_handoff.set_defaults(func=command_design_handoff)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

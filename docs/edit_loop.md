@@ -198,6 +198,26 @@ projects/a801-802-opencrab-test/status/project_status.json
 
 The status file reports whether the project is `review_required`, `ready_for_apply`, `candidate_review_required`, or `complete_candidate_ready`. It also records the latest recognition, standards, evidence, constraint, brief, apply report, alternative SVG, and review panel paths. Use it before `apply-edit` to confirm all required gates are active, and after `review-panel` to confirm the latest candidate is a native SVG with no raster overlay.
 
+## Build the Design Handoff
+
+Before calling a geometry engine, package the project into a handoff that Codex, an LLM wrapper, an MCP tool, or a deterministic solver can read:
+
+```bash
+crab-archi-design --project-root projects design-handoff \
+  --project-id a801-802-opencrab-test \
+  --intent all \
+  --task "Prepare a native SVG community layout alternative using the OpenCrab ontology and 900-household standards."
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/handoffs/design_handoff_###.json
+projects/a801-802-opencrab-test/handoffs/design_handoff_###.md
+```
+
+The handoff includes current readiness gates, source recognition summary, OpenCrab evidence summaries, standards excerpts, constraint summaries, natural-language and doodle operations, prompt blocks, and the required engine output contract. It reports `review_required` unless the project is ready for solver handoff and the latest `edit-brief` has passed.
+
 ## Apply the Edit
 
 ```bash
@@ -248,10 +268,11 @@ For architectural layout revisions, use this order:
 6. Doodle: mark the exact edge, room, circulation line, or wall segment.
 7. `edit-brief`: check recognition, evidence, standards, constraints, source SVG parse, and sketch bounds.
 8. `project-status`: confirm the project is ready for solver handoff.
-9. `apply-edit`: generate a native SVG candidate.
-10. `review-panel`: inspect before/after.
-11. `project-status`: confirm the latest candidate and review artifacts are complete.
-12. Repeat with another short prompt or doodle repair intent.
+9. `design-handoff`: package the current evidence, standards, constraints, and prompt blocks.
+10. `apply-edit`: generate a native SVG candidate.
+11. `review-panel`: inspect before/after.
+12. `project-status`: confirm the latest candidate and review artifacts are complete.
+13. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

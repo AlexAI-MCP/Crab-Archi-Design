@@ -193,6 +193,32 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     assert status_json["metrics"]["program_label_count"] == 1
     assert status_json["metrics"]["edit_intent_count"] == 2
 
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "design-handoff",
+        "--project-id",
+        "demo",
+        "--intent",
+        "all",
+        "--task",
+        "Prepare a native SVG community layout alternative.",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    handoff_json = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    handoff_md = Path(result.stdout.splitlines()[1]).read_text(encoding="utf-8")
+    assert handoff_json["status"] == "pass"
+    assert handoff_json["schema"] == "crab-archi-design-design-handoff-v1"
+    assert handoff_json["project_status"]["overall_status"] == "ready_for_apply"
+    assert handoff_json["handoff_checks"]["latest_edit_brief_pass"] is True
+    assert handoff_json["knowledge_context"]["recognition"]["program_label_count"] == 1
+    assert handoff_json["knowledge_context"]["evidence_items"][0]["pack_id"] == "community_svg_topology_ontology_v2"
+    assert handoff_json["knowledge_context"]["standards_excerpt"][0]["프로그램"] == "그리너리 라운지"
+    assert "OpenCrab MCP evidence" in handoff_json["prompt_blocks"]["system_prompt"]
+    assert "greenery_lounge" in handoff_md
+    assert "native_svg_alternative" in handoff_md
+
 
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"

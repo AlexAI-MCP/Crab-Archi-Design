@@ -45,6 +45,7 @@ recognize-svg
   -> prompt-edit / sketch-intent
   -> edit-brief
   -> project-status
+  -> design-handoff
   -> apply-edit
   -> solver_input.json
   -> engine adapter
@@ -63,6 +64,8 @@ recognize-svg
 `edit-brief` writes JSON and Markdown review artifacts before SVG mutation. It is intentionally lightweight: it verifies source recognition, OpenCrab evidence, standards and constraint manifests, checks source SVG parsing, summarizes operations, and flags doodle strokes that fall outside the source SVG viewBox.
 
 `project-status` writes a project command-center JSON file. It summarizes recognition, OpenCrab evidence, standards, constraints, edit intents, latest apply reports, latest alternative SVGs, and review panels so an agent can decide whether the project is ready for solver handoff or candidate review.
+
+`design-handoff` writes a Codex/LLM/MCP/engine handoff package. It combines status gates, recognition summaries, OpenCrab evidence, standards excerpts, constraints, operations, prompt blocks, and output contracts so design generation starts from the same evidence-backed project state every time.
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 

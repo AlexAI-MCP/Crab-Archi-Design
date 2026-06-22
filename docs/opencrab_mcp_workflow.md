@@ -20,10 +20,11 @@ OpenCrab MCP is the required knowledge path for Crab Archi Design.
 10. Compile a `DesignIntent` JSON with OpenCrab evidence references.
 11. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
 12. Run `project-status` to confirm recognition, standards, OpenCrab evidence, constraints, and edit intents are ready.
-13. Generate native SVG geometry through a deterministic solver.
-14. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
-15. Run `project-status` again to confirm the latest candidate and review panel are complete.
-16. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+13. Build a `design-handoff` package for Codex, an LLM wrapper, an MCP tool, or the deterministic solver.
+14. Generate native SVG geometry through a deterministic solver.
+15. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
+16. Run `project-status` again to confirm the latest candidate and review panel are complete.
+17. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -42,6 +43,8 @@ projects/<project>/evidence/evidence_manifest.json
 `edit-brief` should be run after natural-language or doodle input and before `apply-edit`. It does not replace OpenCrab MCP. It confirms the OpenCrab evidence gate, summarizes the requested operations, and catches basic drawing-coordinate mistakes such as doodle strokes outside the source SVG viewBox.
 
 `project-status` writes `projects/<project>/status/project_status.json` as the command-center artifact for these gates. Use it before solver handoff and after candidate review so the agent can distinguish `ready_for_apply`, `candidate_review_required`, and `complete_candidate_ready` states.
+
+`design-handoff` writes `projects/<project>/handoffs/design_handoff_###.json` and `.md`. It packages the prompt blocks, OpenCrab evidence summaries, standards excerpts, constraints, recognized drawing context, and deterministic engine contract after the readiness gates are satisfied.
 
 ## Recognition Gate
 
