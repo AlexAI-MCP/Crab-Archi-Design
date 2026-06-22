@@ -5,8 +5,11 @@ import os
 import subprocess
 import sys
 import textwrap
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+
+from crab_archi_design.layout_svg_engine import draw_layout
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -848,12 +851,60 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     gates = engine_report["quality"]["gates"]
     assert gates["layout_layer_added"] is True
     assert gates["community_shell_found"] is True
+    assert gates["rooms_inside_community_shell"] is True
     assert gates["no_go_intrusion_free"] is True
+    assert gates["layout_coverage_sufficient"] is True
+    assert gates["room_aspect_efficiency"] is True
     assert gates["standard_programs_planned"] is True
     assert gates["large_programs_present"] is True
+    assert gates["large_program_hierarchy"] is True
     assert gates["recognized_columns_preserved"] is True
     assert engine_report["summary"]["recognized_column_count"] >= 1
     assert engine_report["summary"]["room_count"] >= 7
+    assert engine_report["summary"]["layout_coverage_ratio"] >= 0.78
+    assert engine_report["summary"]["room_shell_violations"] == []
+
+
+def test_layout_engine_flags_rooms_outside_community_shell() -> None:
+    root = ET.fromstring(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260">
+              <rect x="20" y="20" width="340" height="210" fill="#fff" stroke="#111"/>
+            </svg>
+            """
+        ).strip()
+    )
+    solver_input = {
+        "constraint_manifest": {
+            "constraint_items": [
+                {
+                    "role": "community_shell",
+                    "points": [[45, 45], [330, 45], [210, 145], [45, 210], [45, 45]],
+                }
+            ]
+        },
+        "standards_manifest": {
+            "standard_items": [
+                {
+                    "payload": {
+                        "selected_rows": [
+                            {"세대": "900세대", "프로그램": "그리너리 라운지", "면적_m2": "80"},
+                            {"세대": "900세대", "프로그램": "피트니스", "면적_m2": "70"},
+                            {"세대": "900세대", "프로그램": "골프클럽", "면적_m2": "95"},
+                            {"세대": "900세대", "프로그램": "사우나/라커/샤워", "면적_m2": "85"},
+                        ]
+                    }
+                }
+            ]
+        },
+        "recognition_manifest": {"geometry_candidates": {"column_candidates": []}},
+    }
+
+    summary = draw_layout(root, solver_input)
+    assert summary["shell_found"] is True
+    assert summary["room_shell_violations"]
+    assert {item["room"] for item in summary["room_shell_violations"]} & {"golf_screen", "sauna_locker_shower", "fitness_gx"}
 
 
 def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:

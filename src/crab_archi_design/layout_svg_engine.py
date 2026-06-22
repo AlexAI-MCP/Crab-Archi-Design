@@ -108,6 +108,102 @@ def bbox_area(box: tuple[float, float, float, float]) -> float:
     return max(0.0, box[2]) * max(0.0, box[3])
 
 
+def polygon_area(points: list[tuple[float, float]]) -> float:
+    if len(points) < 3:
+        return 0.0
+    total = 0.0
+    for index, point in enumerate(points):
+        next_point = points[(index + 1) % len(points)]
+        total += point[0] * next_point[1] - next_point[0] * point[1]
+    return abs(total) * 0.5
+
+
+def point_on_segment(point: tuple[float, float], start: tuple[float, float], end: tuple[float, float], tolerance: float = 1e-6) -> bool:
+    px, py = point
+    sx, sy = start
+    ex, ey = end
+    cross = (px - sx) * (ey - sy) - (py - sy) * (ex - sx)
+    if abs(cross) > tolerance:
+        return False
+    dot = (px - sx) * (ex - sx) + (py - sy) * (ey - sy)
+    if dot < -tolerance:
+        return False
+    length_sq = (ex - sx) ** 2 + (ey - sy) ** 2
+    if length_sq <= tolerance:
+        return (px - sx) ** 2 + (py - sy) ** 2 <= tolerance
+    return dot <= length_sq + tolerance
+
+
+def point_in_polygon(point: tuple[float, float], polygon: list[tuple[float, float]]) -> bool:
+    if len(polygon) < 3:
+        return False
+    x, y = point
+    inside = False
+    previous = polygon[-1]
+    for current in polygon:
+        if point_on_segment(point, previous, current):
+            return True
+        xi, yi = current
+        xj, yj = previous
+        intersects = (yi > y) != (yj > y)
+        if intersects:
+            x_at_y = (xj - xi) * (y - yi) / (yj - yi) + xi
+            if x <= x_at_y:
+                inside = not inside
+        previous = current
+    return inside
+
+
+def room_box(room_item: dict[str, Any]) -> tuple[float, float, float, float]:
+    return (float(room_item["x"]), float(room_item["y"]), float(room_item["width"]), float(room_item["height"]))
+
+
+def box_checkpoints(box: tuple[float, float, float, float]) -> list[tuple[float, float]]:
+    x, y, w, h = box
+    return [
+        (x, y),
+        (x + w, y),
+        (x + w, y + h),
+        (x, y + h),
+        (x + w * 0.5, y + h * 0.5),
+    ]
+
+
+def room_shell_violations(rooms: list[dict[str, Any]], shell_points: list[tuple[float, float]]) -> list[dict[str, Any]]:
+    if not shell_points:
+        return []
+    violations = []
+    for planned in rooms:
+        outside_points = [point for point in box_checkpoints(room_box(planned)) if not point_in_polygon(point, shell_points)]
+        if outside_points:
+            violations.append({"room": planned["role"], "outside_point_count": len(outside_points)})
+    return violations
+
+
+def room_aspect_violations(rooms: list[dict[str, Any]], max_room_aspect: float = 5.5, max_hall_aspect: float = 8.0) -> list[dict[str, Any]]:
+    violations = []
+    for planned in rooms:
+        width = max(1.0, float(planned["width"]))
+        height = max(1.0, float(planned["height"]))
+        aspect = max(width / height, height / width)
+        allowed = max_hall_aspect if planned["role"] == "hall_lobby" else max_room_aspect
+        if aspect > allowed:
+            violations.append({"room": planned["role"], "aspect": round(aspect, 3), "allowed": allowed})
+    return violations
+
+
+def role_area_map(rooms: list[dict[str, Any]]) -> dict[str, float]:
+    return {item["role"]: float(item["drawing_area"]) for item in rooms}
+
+
+def large_program_hierarchy_ok(rooms: list[dict[str, Any]]) -> bool:
+    areas = role_area_map(rooms)
+    required = ["greenery_lounge", "fitness_gx", "golf_screen"]
+    if not all(role in areas for role in required):
+        return False
+    return areas["greenery_lounge"] >= areas["fitness_gx"] >= areas["golf_screen"]
+
+
 def bboxes_intersect(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
     return not (
         bbox_right(left) <= right[0]
@@ -295,6 +391,13 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
     layout = avoid_no_go(inset_box(base_box, margin), protected_boxes)
     program_areas = program_areas_from_standards(solver_input)
     rooms = make_room_plan(layout, program_areas)
+    room_boxes = [room_box(item) for item in rooms]
+    total_room_area = sum(bbox_area(item) for item in room_boxes)
+    layout_coverage_ratio = total_room_area / max(1.0, bbox_area(base_box))
+    shell_area = polygon_area(shell_points)
+    shell_coverage_ratio = total_room_area / max(1.0, shell_area) if shell_area > 0 else None
+    shell_violations = room_shell_violations(rooms, shell_points)
+    aspect_violations = room_aspect_violations(rooms)
     source_id = "crab_archi_design_layout_clip"
 
     defs = next((child for child in root if local_tag(child) == "defs"), None)
@@ -402,7 +505,6 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
             },
         )
 
-    room_boxes = [(item["x"], item["y"], item["width"], item["height"]) for item in rooms]
     no_go_intrusions = [
         {"room": room_item["role"], "protected_index": idx + 1}
         for room_item, room_box in zip(rooms, room_boxes)
@@ -417,17 +519,25 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
         "viewBox": viewbox,
         "shell_found": shell_box is not None,
         "mutable_zone_used": mutable_box is not None,
+        "base_box": {"x": base_box[0], "y": base_box[1], "width": base_box[2], "height": base_box[3]},
         "layout_box": {"x": layout[0], "y": layout[1], "width": layout[2], "height": layout[3]},
         "layout_area": bbox_area(layout),
+        "total_room_area": total_room_area,
+        "layout_coverage_ratio": layout_coverage_ratio,
+        "shell_area": shell_area,
+        "shell_coverage_ratio": shell_coverage_ratio,
         "protected_box_count": len(protected_boxes),
         "recognized_column_count": len(column_boxes),
         "no_go_intrusions": no_go_intrusions,
+        "room_shell_violations": shell_violations,
+        "room_aspect_violations": aspect_violations,
         "program_areas": program_areas,
         "rooms": rooms,
         "room_count": len(rooms),
         "standards_roles": sorted(role for role in standards_roles if role),
         "planned_standard_roles": sorted(role for role in standards_roles if role in planned_roles),
         "large_program_roles_present": sorted(role for role in large_roles if role in planned_roles),
+        "large_program_hierarchy_ok": large_program_hierarchy_ok(rooms),
     }
 
 
@@ -471,10 +581,14 @@ def main() -> None:
                 "layout_layer_added": True,
                 "community_shell_found": summary["shell_found"],
                 "mutable_zone_or_shell_used": summary["mutable_zone_used"] or summary["shell_found"],
+                "rooms_inside_community_shell": not summary["room_shell_violations"],
                 "no_go_intrusion_free": not summary["no_go_intrusions"],
+                "layout_coverage_sufficient": summary["layout_coverage_ratio"] >= 0.78,
+                "room_aspect_efficiency": not summary["room_aspect_violations"],
                 "standards_available": bool(standards_roles),
                 "standard_programs_planned": planned_standard_roles >= standards_roles if standards_roles else False,
                 "large_programs_present": set(summary["large_program_roles_present"]) >= {"greenery_lounge", "fitness_gx", "golf_screen"},
+                "large_program_hierarchy": summary["large_program_hierarchy_ok"],
                 "room_count_positive": summary["room_count"] > 0,
                 "recognized_columns_preserved": summary["recognized_column_count"] >= 0,
             }

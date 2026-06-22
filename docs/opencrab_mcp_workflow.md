@@ -78,7 +78,7 @@ The topology manifest is the target graph used for projection. It links recogniz
 
 `design-handoff` writes `projects/<project>/handoffs/design_handoff_###.json` and `.md`. It packages the prompt blocks, topology graph summary, OpenCrab evidence summaries, standards excerpts, constraints, recognized drawing context, and deterministic engine contract after the readiness gates are satisfied.
 
-`layout-svg-engine` can be used at the solver step to generate a standards-backed room-envelope candidate without raster overlays. It uses the attached community shell, mutable zone, no-go constraints, recognized column candidates, OpenCrab evidence gate, and standards rows to draw native SVG room partitions for greenery lounge, fitness, golf, wellness, hall, and support programs.
+`layout-svg-engine` can be used at the solver step to generate a standards-backed room-envelope candidate without raster overlays. It uses the attached community shell, mutable zone, no-go constraints, recognized column candidates, OpenCrab evidence gate, and standards rows to draw native SVG room partitions for greenery lounge, fitness, golf, wellness, hall, and support programs. The engine report keeps the candidate in `review_required` if rooms escape the community shell, overlap protected no-go envelopes, leave insufficient usable coverage, create inefficient sliver rooms, or lose the intended large-program hierarchy.
 
 `reference-svg-engine` can still be used to validate the full workflow without changing room envelopes. It produces a native SVG reference candidate and report for diagnostics.
 
