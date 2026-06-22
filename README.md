@@ -59,8 +59,17 @@ crab-archi-design sketch-intent \
   --project-id demo \
   --sketch examples/sketch_layer_sample.json
 
+crab-archi-design apply-edit \
+  --project-id demo \
+  --intent all \
+  --skip-preview
+
 crab-archi-design qa --project-id demo
 ```
+
+`apply-edit` reads structured natural-language and doodle intents, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
+
+For the full revision loop, see [docs/edit_loop.md](docs/edit_loop.md).
 
 ## Repository Scope
 

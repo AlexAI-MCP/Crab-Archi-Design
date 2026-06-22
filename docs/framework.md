@@ -31,6 +31,19 @@ The project workflow treats OpenCrab MCP as the source of design intelligence. A
 
 The solver consumes recognition IR, constraints, standards, ontology evidence, and intent JSON. It generates native SVG patches and rejects changes that violate no-go or lock constraints.
 
+The first executable loop is:
+
+```text
+prompt-edit / sketch-intent
+  -> apply-edit
+  -> solver_input.json
+  -> engine adapter
+  -> alternatives/alternative_###.svg
+  -> apply_edit_report.json
+```
+
+The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
+
 ## Adapter Roadmap
 
 1. CLI adapter for local execution.
