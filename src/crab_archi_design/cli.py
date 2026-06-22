@@ -896,6 +896,9 @@ def build_engine_command(adapter: str, extra_args: list[str]) -> tuple[list[str]
     if adapter in {"reference-svg-engine", "builtin-reference", "crab-reference-engine"}:
         adapter_path = Path(__file__).resolve().parent / "reference_svg_engine.py"
         return [sys.executable, str(adapter_path), *extra_args], adapter_path
+    if adapter in {"layout-svg-engine", "builtin-layout", "crab-layout-engine", "room-envelope-engine"}:
+        adapter_path = Path(__file__).resolve().parent / "layout_svg_engine.py"
+        return [sys.executable, str(adapter_path), *extra_args], adapter_path
     adapter_path = Path(adapter).expanduser()
     if adapter_path.exists():
         if adapter_path.suffix == ".py":
@@ -2313,7 +2316,7 @@ def command_workflow_run(args: argparse.Namespace) -> None:
                 households=args.households,
                 standards=args.standards or [],
                 ontology_pack=args.ontology_pack,
-                engine_adapter=args.engine_adapter or "reference-svg-engine",
+                engine_adapter=args.engine_adapter or "layout-svg-engine",
                 opencrab_mcp_server=args.opencrab_mcp_server,
                 opencrab_homepage=args.opencrab_homepage,
                 allow_missing_source=False,
@@ -2335,7 +2338,7 @@ def command_workflow_run(args: argparse.Namespace) -> None:
         add_skipped("init", "Project manifest already exists. Pass --reinit to recreate it.")
 
     manifest = load_manifest(project_id, root)
-    engine_adapter = args.engine_adapter or manifest.get("engine_adapter") or "reference-svg-engine"
+    engine_adapter = args.engine_adapter or manifest.get("engine_adapter") or "layout-svg-engine"
     households = args.households if args.households is not None else manifest.get("household_count")
 
     required_sequence = [
@@ -2576,7 +2579,7 @@ def workflow_namespace_from_job(job: dict[str, Any], project_root: Path, path_ba
         standards_summary=job.get("standards_summary"),
         standards_metadata=job_value_list(job, "standards_metadata"),
         ontology_pack=job.get("ontology_pack"),
-        engine_adapter=job.get("engine_adapter") or "reference-svg-engine",
+        engine_adapter=job.get("engine_adapter") or "layout-svg-engine",
         engine_arg=job_value_list(job, "engine_arg"),
         opencrab_mcp_server=job.get("opencrab_mcp_server") or "opencrab",
         opencrab_homepage=job.get("opencrab_homepage") or OPENCRAB_HOMEPAGE,
@@ -3044,6 +3047,7 @@ def command_doctor(args: argparse.Namespace) -> None:
         "python_version_ok": sys.version_info >= (3, 9),
         "cli_file_exists": Path(__file__).exists(),
         "reference_svg_engine_exists": (Path(__file__).resolve().parent / "reference_svg_engine.py").exists(),
+        "layout_svg_engine_exists": (Path(__file__).resolve().parent / "layout_svg_engine.py").exists(),
         "doodle_editor_exists": (repo / "tools" / "doodle_editor.html").exists(),
         "readme_exists": (repo / "README.md").exists(),
         "opencrab_workflow_doc_exists": (repo / "docs" / "opencrab_mcp_workflow.md").exists(),

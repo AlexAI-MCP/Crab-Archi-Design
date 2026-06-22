@@ -154,7 +154,7 @@ Example job spec:
   "opencrab_result_file": ["/path/to/opencrab_mcp_result.json"],
   "constraint_sketch": "/path/to/constraint_sketch.json",
   "prompt": "Improve the greenery lounge and fitness connection while preserving protected geometry.",
-  "engine_adapter": "reference-svg-engine",
+  "engine_adapter": "layout-svg-engine",
   "skip_preview": true,
   "export_package": true,
   "verify_package": true,
@@ -178,7 +178,7 @@ crab-archi-design run-job --job examples/job_spec_sample.json --strict
 
 For debugging, Codex can still call the lower-level manual sequence: `workflow-run`, `export-package`, `verify-package --strict`, and `doctor --strict`.
 
-The LLM should produce structured intent and handoff artifacts. Native SVG mutation should remain in deterministic adapters such as `reference-svg-engine` or a production room-envelope solver.
+The LLM should produce structured intent and handoff artifacts. Native SVG mutation should remain in deterministic adapters such as `layout-svg-engine`, `reference-svg-engine`, or a project-specific room-envelope solver.
 
 ## OpenCrab Requirement
 

@@ -10,7 +10,7 @@
   "opencrab_source_tool": "opencrab_search_documents",
   "constraint_sketch": "examples/constraint_sketch_sample.json",
   "prompt": "Improve the greenery lounge, fitness, golf, and wellness hierarchy while preserving parking, cores, columns, ramps, stairs, egress, and the community shell.",
-  "engine_adapter": "reference-svg-engine",
+  "engine_adapter": "layout-svg-engine",
   "skip_preview": true,
   "export_package": true,
   "verify_package": true,

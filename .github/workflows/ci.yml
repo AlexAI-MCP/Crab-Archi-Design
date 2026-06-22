@@ -29,7 +29,7 @@ jobs:
 
       - name: Compile
         run: |
-          python -m py_compile src/crab_archi_design/cli.py src/crab_archi_design/mcp_server.py src/crab_archi_design/reference_svg_engine.py tests/test_cli.py
+          python -m py_compile src/crab_archi_design/cli.py src/crab_archi_design/mcp_server.py src/crab_archi_design/reference_svg_engine.py src/crab_archi_design/layout_svg_engine.py tests/test_cli.py
 
       - name: Test
         run: |
@@ -66,7 +66,7 @@ jobs:
             --opencrab-source-tool opencrab_search_documents \
             --constraint-sketch examples/constraint_sketch_sample.json \
             --prompt "Improve the greenery lounge and fitness connection while preserving parking, cores, columns, ramps, stairs, egress, and the community shell." \
-            --engine-adapter reference-svg-engine \
+            --engine-adapter layout-svg-engine \
             --skip-preview
 
           crab-archi-design --project-root .ci-projects export-package \

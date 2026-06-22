@@ -586,6 +586,106 @@ def test_apply_edit_runs_builtin_reference_engine(tmp_path: Path) -> None:
     assert engine_report["summary"]["operation_count"] >= 1
 
 
+def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
+    source_svg = tmp_path / "original.svg"
+    source_svg.write_text(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 340">
+              <rect x="30" y="30" width="300" height="260" fill="#fff" stroke="#111"/>
+              <text x="55" y="70">작은도서관</text>
+              <text x="155" y="70">주민카페</text>
+              <text x="55" y="210">피트니스</text>
+              <text x="260" y="190">골프</text>
+            </svg>
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    standards = tmp_path / "standards.csv"
+    standards.write_text(
+        "세대,프로그램,면적_m2\n"
+        "900세대,그리너리 라운지,80\n"
+        "900세대,피트니스,70\n"
+        "900세대,골프클럽,95\n"
+        "900세대,사우나/라커/샤워,85\n",
+        encoding="utf-8",
+    )
+    constraint = tmp_path / "constraint.json"
+    constraint.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [
+                    {"stroke_id": "shell", "mode": "community_shell", "target_hint": "community_outer_shell", "points": [[30, 30], [330, 30], [390, 130], [300, 300], [40, 290], [30, 30]]},
+                    {"stroke_id": "mutable", "mode": "mutable_zone", "target_hint": "internal_community_program_rework", "points": [[55, 55], [310, 55], [330, 250], [70, 270], [55, 55]]},
+                    {"stroke_id": "no-go", "mode": "no_go_zone", "target_hint": "parking_core_no_go", "points": [[325, 95], [455, 130], [380, 300], [300, 255]]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    opencrab_result = tmp_path / "opencrab.json"
+    opencrab_result.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "query": "community room envelope topology",
+                "evidence": [{"id": "e1", "text": "Use central hall, greenery lounge, fitness, golf, and wellness hierarchy.", "source": "OpenCrab"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for args in [
+        (
+            "init",
+            "--project-id",
+            "demo",
+            "--source-svg",
+            str(source_svg),
+            "--households",
+            "900",
+            "--standards",
+            str(standards),
+            "--ontology-pack",
+            "community_svg_topology_ontology_v2",
+            "--engine-adapter",
+            "layout-svg-engine",
+        ),
+        ("recognize-svg", "--project-id", "demo"),
+        ("opencrab-sync", "--project-id", "demo", "--result-file", str(opencrab_result)),
+        ("standards-attach", "--project-id", "demo", "--file", str(standards), "--households", "900"),
+        ("constraint-attach", "--project-id", "demo", "--sketch", str(constraint)),
+        ("prompt-edit", "--project-id", "demo", "--text", "Create a standards-based layout with no parking or core intrusion."),
+    ]:
+        result = run_cli("--project-root", str(tmp_path / "projects"), *args, cwd=ROOT)
+        assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "apply-edit", "--project-id", "demo", "--skip-preview", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert report["status"] == "pass"
+    alternative = Path(report["copied_artifacts"]["svg"][0])
+    alternative_text = alternative.read_text(encoding="utf-8")
+    assert "crab_archi_design_layout_engine_candidate" in alternative_text
+    assert 'data-engine="layout-svg-engine"' in alternative_text
+    assert "<image" not in alternative_text
+    for role in ["greenery_lounge", "fitness_gx", "golf_screen", "sauna_locker_shower", "hall_lobby"]:
+        assert f'data-program="{role}"' in alternative_text
+
+    engine_report = json.loads(Path(report["copied_artifacts"]["report"][0]).read_text(encoding="utf-8"))
+    assert engine_report["schema"] == "crab-archi-design-layout-engine-report-v1"
+    assert engine_report["reference_only"] is False
+    gates = engine_report["quality"]["gates"]
+    assert gates["layout_layer_added"] is True
+    assert gates["community_shell_found"] is True
+    assert gates["no_go_intrusion_free"] is True
+    assert gates["standard_programs_planned"] is True
+    assert gates["large_programs_present"] is True
+    assert engine_report["summary"]["room_count"] >= 7
+
+
 def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
     source_svg.write_text(
@@ -727,6 +827,7 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     assert doctor_report["schema"] == "crab-archi-design-doctor-report-v1"
     assert doctor_report["status"] == "pass"
     assert doctor_report["local_checks"]["doodle_editor_exists"] is True
+    assert doctor_report["local_checks"]["layout_svg_engine_exists"] is True
     assert doctor_report["project_checks"]["project_candidate_ready"] is True
     assert doctor_report["package_verification"]["status"] == "pass"
     assert doctor_report["required_checks"]["package.package_verify_pass"] is True
@@ -746,7 +847,7 @@ def test_run_job_executes_sample_pipeline(tmp_path: Path) -> None:
         "opencrab_source_tool": "opencrab_search_documents",
         "constraint_sketch": str(ROOT / "examples" / "constraint_sketch_sample.json"),
         "prompt": "Improve the greenery lounge hierarchy while preserving protected geometry.",
-        "engine_adapter": "reference-svg-engine",
+        "engine_adapter": "layout-svg-engine",
         "skip_preview": True,
         "export_package": True,
         "verify_package": True,
@@ -775,6 +876,8 @@ def test_run_job_executes_sample_pipeline(tmp_path: Path) -> None:
 
     workflow = json.loads(Path(report["artifacts"]["workflow_report"]).read_text(encoding="utf-8"))
     assert workflow["status"] == "pass"
+    alternative = Path(workflow["latest_artifacts"]["alternative_svg"])
+    assert "crab_archi_design_layout_engine_candidate" in alternative.read_text(encoding="utf-8")
     doctor = json.loads(Path(report["artifacts"]["doctor_report"]).read_text(encoding="utf-8"))
     assert doctor["status"] == "pass"
 
