@@ -3097,6 +3097,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["mcp_server_config_available"],
         },
         {
+            "id": "mcp_smoke",
+            "cli_subcommand": "mcp-smoke",
+            "description": "Start the configured stdio MCP server and verify initialize/tools/list JSON-RPC roundtrip.",
+            "required_args": [],
+            "optional_args": ["--config", "--server-name", "--project-root", "--cwd", "--output-dir", "--strict", "--timeout"],
+            "outputs": ["diagnostics/mcp_smoke_report_###.json"],
+            "gates": ["mcp_initialize_ok", "mcp_tools_list_ok"],
+        },
+        {
             "id": "doodle_editor",
             "cli_subcommand": "doodle-editor",
             "description": "Print or open the browser-based SVG doodle editor for sketch JSON capture.",
@@ -3132,7 +3141,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
             "revision_loop": ["prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
             "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
-            "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "doctor"],
+            "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
         "security": {
             "source_svg_in_package": "opt-in via export-package --include-source-svg",
@@ -3222,6 +3231,127 @@ def command_mcp_config(args: argparse.Namespace) -> None:
         print(json.dumps({"status": "pass", "server_name": args.server_name}, ensure_ascii=False))
         return
     print(json.dumps(config, ensure_ascii=False, indent=2))
+
+
+def select_mcp_server_config(config: dict[str, Any], server_name: str | None) -> tuple[str, dict[str, Any]]:
+    if server_name:
+        for section, key in [("codex", "mcpServers"), ("generic_mcp_client", "servers")]:
+            servers = config.get(section, {}).get(key, {})
+            if server_name in servers:
+                return server_name, servers[server_name]
+        if config.get("server_name") == server_name and isinstance(config.get("mcp_server"), dict):
+            return server_name, config["mcp_server"]
+        raise SystemExit(f"Missing MCP server config for server name: {server_name}")
+    if isinstance(config.get("mcp_server"), dict):
+        return str(config.get("server_name") or "crab-archi-design"), config["mcp_server"]
+    servers = config.get("codex", {}).get("mcpServers", {})
+    if servers:
+        name = next(iter(servers))
+        return str(name), servers[name]
+    raise SystemExit("Missing MCP server configuration.")
+
+
+def write_mcp_message(process: subprocess.Popen[str], payload: dict[str, Any]) -> None:
+    if process.stdin is None:
+        raise RuntimeError("MCP process stdin is closed.")
+    process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    process.stdin.flush()
+
+
+def read_mcp_message(process: subprocess.Popen[str]) -> dict[str, Any]:
+    if process.stdout is None:
+        raise RuntimeError("MCP process stdout is closed.")
+    line = process.stdout.readline()
+    if not line:
+        raise RuntimeError("MCP process closed stdout before responding.")
+    return json.loads(line)
+
+
+def run_mcp_smoke(config: dict[str, Any], server_name: str | None, timeout: int) -> dict[str, Any]:
+    selected_name, server = select_mcp_server_config(config, server_name)
+    command = [str(server.get("command") or "crab-archi-design-mcp"), *[str(item) for item in server.get("args", [])]]
+    if command[0] == "crab-archi-design-mcp" and shutil.which(command[0]) is None:
+        command = [sys.executable, "-m", "crab_archi_design.mcp_server", *command[1:]]
+    cwd = str(Path(server["cwd"]).expanduser()) if server.get("cwd") else None
+    env = os.environ.copy()
+    for key, value in (server.get("env") or {}).items():
+        env[str(key)] = str(value)
+
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    messages = config.get("smoke_test_messages") or [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}},
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    responses: list[dict[str, Any]] = []
+    try:
+        for message in messages:
+            write_mcp_message(process, message)
+            if "id" in message:
+                responses.append(read_mcp_message(process))
+        if process.stdin:
+            process.stdin.close()
+        stderr = process.stderr.read() if process.stderr else ""
+        process.wait(timeout=timeout)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+
+    initialize = next((item for item in responses if item.get("id") == 1), {})
+    tools_list = next((item for item in responses if item.get("id") == 2), {})
+    tools = tools_list.get("result", {}).get("tools", []) if isinstance(tools_list.get("result"), dict) else []
+    tool_names = [item.get("name") for item in tools if isinstance(item, dict)]
+    checks = {
+        "process_exit_ok": process.returncode == 0,
+        "initialize_ok": initialize.get("result", {}).get("serverInfo", {}).get("name") == "crab-archi-design-mcp",
+        "tools_list_ok": bool(tools),
+        "doctor_tool_available": "doctor" in tool_names,
+        "workflow_run_tool_available": "workflow_run" in tool_names,
+    }
+    return {
+        "schema": "crab-archi-design-mcp-smoke-report-v1",
+        "created_at": now(),
+        "status": "pass" if all(checks.values()) else "review_required",
+        "server_name": selected_name,
+        "command": command,
+        "cwd": cwd,
+        "checks": checks,
+        "tool_count": len(tool_names),
+        "tool_names": tool_names,
+        "responses": responses,
+        "stderr": stderr,
+        "returncode": process.returncode,
+    }
+
+
+def command_mcp_smoke(args: argparse.Namespace) -> None:
+    if args.config:
+        config = read_json(Path(args.config).expanduser())
+    else:
+        config = build_mcp_runtime_config(args.server_name, args.config_project_root, args.cwd)
+    report = run_mcp_smoke(config, args.server_name, args.timeout)
+    out_dir = Path(args.output_dir).expanduser() if args.output_dir else Path("diagnostics")
+    seq = next_sequence(out_dir, "mcp_smoke_report_*.json")
+    out = out_dir / f"mcp_smoke_report_{seq:03d}.json"
+    write_json(out, report)
+    print(out)
+    print(json.dumps({"status": report["status"], "checks": report["checks"], "tool_count": report["tool_count"]}, ensure_ascii=False))
+    if args.strict and report["status"] != "pass":
+        raise SystemExit(f"mcp-smoke failed; report: {out}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3412,6 +3542,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp_config.add_argument("--project-root", dest="config_project_root", default=str(DEFAULT_PROJECT_ROOT), help="Default project root for MCP tool calls.")
     p_mcp_config.add_argument("--cwd", help="Working directory for the MCP server process. Defaults to repository root.")
     p_mcp_config.set_defaults(func=command_mcp_config)
+
+    p_mcp_smoke = sub.add_parser("mcp-smoke", help="Verify a stdio MCP server config with initialize and tools/list.")
+    p_mcp_smoke.add_argument("--config", help="Runtime config JSON from mcp-config. Defaults to an in-memory config.")
+    p_mcp_smoke.add_argument("--server-name", default="crab-archi-design")
+    p_mcp_smoke.add_argument("--project-root", dest="config_project_root", default=str(DEFAULT_PROJECT_ROOT), help="Default project root when building an in-memory config.")
+    p_mcp_smoke.add_argument("--cwd", help="Working directory when building an in-memory config. Defaults to repository root.")
+    p_mcp_smoke.add_argument("--output-dir", help="Directory for mcp_smoke_report_###.json. Defaults to diagnostics.")
+    p_mcp_smoke.add_argument("--timeout", type=int, default=30)
+    p_mcp_smoke.add_argument("--strict", action="store_true")
+    p_mcp_smoke.set_defaults(func=command_mcp_smoke)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

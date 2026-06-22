@@ -29,6 +29,10 @@ Generate runtime configuration for MCP clients and OAuth workers:
 crab-archi-design mcp-config \
   --output integrations/crab_archi_design_mcp_config.json \
   --project-root projects
+
+crab-archi-design mcp-smoke \
+  --config integrations/crab_archi_design_mcp_config.json \
+  --strict
 ```
 
 The manifest records:
@@ -90,6 +94,8 @@ ping
 
 The stdio bridge uses `CRAB_ARCHI_PROJECT_ROOT` as the default project root when a tool call does not pass `project_root` explicitly.
 
+Use `mcp-smoke` before handing a config to Codex, an MCP wrapper, or an OAuth worker. It starts the configured stdio process, sends `initialize`, `notifications/initialized`, and `tools/list`, then writes a `mcp_smoke_report_###.json` report with the available tool names and gate checks.
+
 Example client messages:
 
 ```json
@@ -128,11 +134,12 @@ Use this pattern:
 2. Store them in a sandboxed job directory.
 3. Call OpenCrab MCP and save the MCP result JSON.
 4. Load the generated `mcp-config` and start `crab-archi-design-mcp --stdio` in the sandbox.
-5. Run `workflow-run` with `--opencrab-result-file`.
-6. Run `export-package`.
-7. Run `verify-package --strict`.
-8. Run `doctor --strict`.
-9. Upload only the validated ZIP or selected JSON/SVG artifacts.
+5. Run `mcp-smoke --strict`.
+6. Run `workflow-run` with `--opencrab-result-file`.
+7. Run `export-package`.
+8. Run `verify-package --strict`.
+9. Run `doctor --strict`.
+10. Upload only the validated ZIP or selected JSON/SVG artifacts.
 
 By default, `export-package` excludes the original source SVG. Include it only with `--include-source-svg` when the receiving environment is allowed to hold proprietary drawings.
 
@@ -143,6 +150,7 @@ Codex can use the same manifest without a custom server:
 ```bash
 crab-archi-design mcp-manifest
 crab-archi-design mcp-config --project-root projects
+crab-archi-design mcp-smoke --strict
 crab-archi-design --project-root projects workflow-run ...
 crab-archi-design --project-root projects doctor --project-id <project> --zip <zip> --strict
 ```
