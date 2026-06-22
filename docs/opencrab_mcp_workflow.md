@@ -30,7 +30,8 @@ The full flow can be run manually step by step, or through `workflow-run` once t
 18. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
 19. Run `verify-package` to validate the exported ZIP before handoff or upload.
 20. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
-21. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+21. Run `mcp-manifest` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog.
+22. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -75,6 +76,12 @@ projects/<project>/diagnostics/doctor_report_###.json
 ```
 
 The report combines local tool checks, OpenCrab MCP manifest checks, `project-status` readiness gates, latest native SVG candidate checks, and optional `verify-package` results.
+
+`mcp-manifest` is the integration catalog. It advertises the OpenCrab evidence gate, CLI subcommands, required arguments, output artifacts, recommended command sequences, and security rules for MCP/OAuth execution. See:
+
+```text
+docs/mcp_oauth_integration.md
+```
 
 ## Recognition Gate
 

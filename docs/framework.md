@@ -86,6 +86,8 @@ recognize-svg
 
 `doctor` is the operational readiness check. It combines local install checks, OpenCrab MCP configuration checks, `project-status` gates, latest candidate SVG checks, and optional `verify-package` results into `diagnostics/doctor_report_###.json`. Use it before CI promotion, OAuth upload, MCP handoff, or GitHub release workflows.
 
+`mcp-manifest` emits the machine-readable CLI tool catalog for Codex exec, MCP wrappers, OAuth upload workers, and SaaS ingestion services. See `docs/mcp_oauth_integration.md`.
+
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 
 The built-in `reference-svg-engine` adapter is available for end-to-end validation. It reads `solver_input.json`, copies the source SVG into a native SVG candidate, adds a compact reference layer with operations/evidence/standards/constraints summary, and writes a quality-gated engine report. Production projects should replace it with a geometry solver that edits recognized room envelopes and partitions.

@@ -23,6 +23,8 @@ from typing import Any
 
 DEFAULT_PROJECT_ROOT = Path("projects")
 OPENCRAB_HOMEPAGE = "https://opencrab.sh"
+PROJECT_NAME = "crab-archi-design"
+PROJECT_VERSION = "0.1.0"
 
 
 def now() -> str:
@@ -2952,6 +2954,187 @@ def command_doodle_editor(args: argparse.Namespace) -> None:
         webbrowser.open(editor.as_uri())
 
 
+def build_mcp_tool_manifest() -> dict[str, Any]:
+    tool_defaults = {
+        "project_root_arg": "--project-root",
+        "project_id_arg": "--project-id",
+        "command": "crab-archi-design",
+        "execution": "local_exec",
+        "output_contract": "first stdout line is the primary artifact path unless the command prints JSON only",
+    }
+    tools = [
+        {
+            "id": "workflow_run",
+            "cli_subcommand": "workflow-run",
+            "description": "Run the full source SVG to evidence-backed candidate workflow.",
+            "required_args": ["--project-id"],
+            "typical_required_args_for_new_project": ["--source-svg", "--standards", "--ontology-pack", "--opencrab-result-file", "--constraint-sketch", "--prompt"],
+            "optional_args": ["--households", "--engine-adapter", "--sketch", "--task", "--skip-preview", "--reinit"],
+            "outputs": ["workflow/workflow_run_###.json", "alternatives/alternative_###.svg", "panels/review_panel_###.html"],
+            "gates": ["recognition", "standards", "opencrab_evidence", "constraints", "edit_brief", "apply_edit", "review_panel"],
+        },
+        {
+            "id": "opencrab_sync",
+            "cli_subcommand": "opencrab-sync",
+            "description": "Normalize OpenCrab MCP JSON results and attach them as project evidence.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--result-file", "--result-json", "--source-tool", "--workspace-id", "--pack-id", "--query", "--summary", "--metadata", "--replace"],
+            "outputs": ["opencrab/opencrab_sync_###.json", "evidence/evidence_manifest.json"],
+            "gates": ["opencrab_evidence_verified"],
+        },
+        {
+            "id": "prompt_edit",
+            "cli_subcommand": "prompt-edit",
+            "description": "Convert natural-language revision instructions into structured edit intent JSON.",
+            "required_args": ["--project-id", "--text"],
+            "outputs": ["edit_intents/prompt_edit_###.json"],
+            "gates": ["edit_intent_exists"],
+        },
+        {
+            "id": "sketch_intent",
+            "cli_subcommand": "sketch-intent",
+            "description": "Convert vector doodle sketch JSON into structured edit intent JSON.",
+            "required_args": ["--project-id", "--sketch"],
+            "outputs": ["edit_intents/sketch_edit_###.json"],
+            "gates": ["edit_intent_exists", "sketch_points_inside_viewbox"],
+        },
+        {
+            "id": "constraint_attach",
+            "cli_subcommand": "constraint-attach",
+            "description": "Attach doodle-derived community shell, no-go, lock, mutable, and projectable constraints.",
+            "required_args": ["--project-id", "--sketch"],
+            "optional_args": ["--role", "--replace"],
+            "outputs": ["constraints/constraint_manifest.json"],
+            "gates": ["constraint_manifest_active"],
+        },
+        {
+            "id": "edit_brief",
+            "cli_subcommand": "edit-brief",
+            "description": "Summarize natural-language and doodle edit intents before SVG mutation.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--intent"],
+            "outputs": ["briefs/edit_brief_###.json", "briefs/edit_brief_###.md"],
+            "gates": ["recognition_manifest_active", "opencrab_evidence_verified", "standards_manifest_active", "constraint_manifest_active"],
+        },
+        {
+            "id": "design_handoff",
+            "cli_subcommand": "design-handoff",
+            "description": "Build a Codex/LLM/MCP/engine handoff package from current project gates.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--intent", "--task"],
+            "outputs": ["handoffs/design_handoff_###.json", "handoffs/design_handoff_###.md"],
+            "gates": ["ready_for_apply"],
+        },
+        {
+            "id": "apply_edit",
+            "cli_subcommand": "apply-edit",
+            "description": "Run the configured deterministic engine adapter and collect a native SVG alternative.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--intent", "--engine-adapter", "--engine-cwd", "--engine-arg", "--candidate-svg", "--candidate-report", "--preview", "--skip-preview", "--timeout"],
+            "outputs": ["runs/apply_edit_###/apply_edit_report.json", "alternatives/alternative_###.svg"],
+            "gates": ["native_svg_no_images", "latest_apply_pass", "latest_alternative_native_svg"],
+        },
+        {
+            "id": "review_panel",
+            "cli_subcommand": "review-panel",
+            "description": "Generate a local before/after HTML review panel.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--apply-report", "--alternative", "--title", "--open"],
+            "outputs": ["panels/review_panel_###.html"],
+            "gates": ["latest_alternative_exists"],
+        },
+        {
+            "id": "project_status",
+            "cli_subcommand": "project-status",
+            "description": "Write the command-center project readiness report.",
+            "required_args": ["--project-id"],
+            "outputs": ["status/project_status.json"],
+            "gates": ["ready_for_apply", "candidate_ready"],
+        },
+        {
+            "id": "export_package",
+            "cli_subcommand": "export-package",
+            "description": "Create a portable ZIP package of latest evidence, handoff, SVG, and review artifacts.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--include-source-svg", "--only-latest", "--skip-opencrab-sync"],
+            "outputs": ["exports/export_manifest_###.json", "exports/<project>_export_###.zip"],
+            "gates": ["no_missing_required_files"],
+        },
+        {
+            "id": "verify_package",
+            "cli_subcommand": "verify-package",
+            "description": "Verify exported ZIP integrity, manifest, required files, and hashes.",
+            "required_args": ["--zip"],
+            "optional_args": ["--manifest", "--output-dir", "--check-local-files", "--strict"],
+            "outputs": ["exports/verify_report_###.json"],
+            "gates": ["zip_integrity_ok", "archive_file_hashes_ok"],
+        },
+        {
+            "id": "doctor",
+            "cli_subcommand": "doctor",
+            "description": "Diagnose local install, OpenCrab configuration, project gates, candidate readiness, and optional package verification.",
+            "required_args": [],
+            "optional_args": ["--project-id", "--zip", "--manifest", "--output-dir", "--check-local-files", "--strict"],
+            "outputs": ["diagnostics/doctor_report_###.json"],
+            "gates": ["local_ready", "project_ready", "package_ready"],
+        },
+        {
+            "id": "doodle_editor",
+            "cli_subcommand": "doodle-editor",
+            "description": "Print or open the browser-based SVG doodle editor for sketch JSON capture.",
+            "required_args": [],
+            "optional_args": ["--open"],
+            "outputs": ["file:// URL printed to stdout"],
+            "gates": ["doodle_editor_exists"],
+        },
+    ]
+    return {
+        "schema": "crab-archi-design-mcp-tool-manifest-v1",
+        "created_at": now(),
+        "name": PROJECT_NAME,
+        "version": PROJECT_VERSION,
+        "description": "Exec-callable architectural community SVG design workflow for Codex, MCP wrappers, OAuth upload flows, and SaaS ingestion.",
+        "homepage": "https://github.com/AlexAI-MCP/Crab-Archi-Design",
+        "opencrab": {
+            "required": True,
+            "homepage": OPENCRAB_HOMEPAGE,
+            "expected_mcp_server": "opencrab",
+            "evidence_gate": "opencrab_evidence_verified",
+            "decision_rule": "final layout alternatives must cite OpenCrab ontology evidence before native SVG mutation is accepted",
+        },
+        "transport": {
+            "primary": "exec",
+            "command": "crab-archi-design",
+            "oauth_boundary": "OAuth or SaaS services should call the CLI in a sandboxed worker and exchange only generated package ZIPs or validated JSON artifacts.",
+            "mcp_wrapper": "Expose each tool id as an MCP tool that maps arguments to the listed CLI subcommand.",
+        },
+        "defaults": tool_defaults,
+        "tools": tools,
+        "recommended_sequences": {
+            "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
+            "revision_loop": ["prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
+            "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
+        },
+        "security": {
+            "source_svg_in_package": "opt-in via export-package --include-source-svg",
+            "native_svg_only_gate": "latest_alternative_native_svg",
+            "no_raster_overlay_gate": "native_svg_no_images",
+            "secrets_policy": "do not put OAuth tokens, API keys, or private credentials in project manifests, evidence payloads, or export packages",
+        },
+    }
+
+
+def command_mcp_manifest(args: argparse.Namespace) -> None:
+    manifest = build_mcp_tool_manifest()
+    if args.output:
+        out = Path(args.output).expanduser()
+        write_json(out, manifest)
+        print(out)
+        print(json.dumps({"status": "pass", "tool_count": len(manifest["tools"])}, ensure_ascii=False))
+        return
+    print(json.dumps(manifest, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="crab-archi-design")
     parser.add_argument("--project-root", default=str(DEFAULT_PROJECT_ROOT))
@@ -3129,6 +3312,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument("--check-local-files", action="store_true", help="Also verify local source paths when checking an export ZIP.")
     p_doctor.add_argument("--strict", action="store_true", help="Exit non-zero if any required diagnostic check fails.")
     p_doctor.set_defaults(func=command_doctor)
+
+    p_mcp_manifest = sub.add_parser("mcp-manifest", help="Print or write the MCP/OAuth exec tool manifest.")
+    p_mcp_manifest.add_argument("--output", help="Optional path for the tool manifest JSON. Defaults to stdout.")
+    p_mcp_manifest.set_defaults(func=command_mcp_manifest)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

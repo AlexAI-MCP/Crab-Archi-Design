@@ -16,6 +16,27 @@ def run_cli(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run([sys.executable, str(CLI), *args], cwd=cwd, text=True, capture_output=True, check=False)
 
 
+def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
+    result = run_cli("mcp-manifest", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(result.stdout)
+    assert manifest["schema"] == "crab-archi-design-mcp-tool-manifest-v1"
+    assert manifest["opencrab"]["required"] is True
+    assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
+    assert manifest["transport"]["primary"] == "exec"
+    tool_ids = {tool["id"] for tool in manifest["tools"]}
+    assert {"workflow_run", "opencrab_sync", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
+    assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor"]
+    assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
+
+    out = tmp_path / "mcp_manifest.json"
+    result = run_cli("mcp-manifest", "--output", str(out), cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["schema"] == "crab-archi-design-mcp-tool-manifest-v1"
+    assert '"tool_count"' in result.stdout
+
+
 def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
     source_svg.write_text(
