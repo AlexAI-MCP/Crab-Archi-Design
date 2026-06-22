@@ -28,7 +28,7 @@ This creates a workflow report:
 projects/a801-802-opencrab-test/workflow/workflow_run_###.json
 ```
 
-The command runs the same gates as the manual loop: source recognition, standards, OpenCrab evidence sync, constraints, intent, edit brief, project status, design handoff, apply edit, review panel, and final project status. Existing project manifests can be reused; pass `--reinit` only when you intentionally want to recreate the project manifest.
+The command runs the same gates as the manual loop: source recognition, standards, OpenCrab evidence sync, constraints, topology build, intent, edit brief, project status, design handoff, apply edit, review panel, and final project status. Existing project manifests can be reused; pass `--reinit` only when you intentionally want to recreate the project manifest.
 
 ## Recognize Source SVG
 
@@ -141,6 +141,23 @@ Recommended modes:
 
 `qa`, `edit-brief`, and `apply-edit` report `review_required` until this constraint manifest is active.
 
+## Build Target Topology
+
+Build the target drawing topology after recognition, standards, OpenCrab evidence, and constraints are attached:
+
+```bash
+crab-archi-design --project-root projects topology-build \
+  --project-id a801-802-opencrab-test
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/topology/topology_manifest.json
+```
+
+The topology manifest links recognized program labels, room envelopes, protected columns, wall candidates, standards roles, drawing constraints, and OpenCrab adjacency targets. `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit` report `review_required` until this manifest is active.
+
 ## Natural Language
 
 ```bash
@@ -242,7 +259,7 @@ This creates:
 projects/a801-802-opencrab-test/status/project_status.json
 ```
 
-The status file reports whether the project is `review_required`, `ready_for_apply`, `candidate_review_required`, or `complete_candidate_ready`. It also records the latest recognition, standards, evidence, constraint, brief, apply report, alternative SVG, and review panel paths. Use it before `apply-edit` to confirm all required gates are active, and after `review-panel` to confirm the latest candidate is a native SVG with no raster overlay.
+The status file reports whether the project is `review_required`, `ready_for_apply`, `candidate_review_required`, or `complete_candidate_ready`. It also records the latest recognition, topology, standards, evidence, constraint, brief, apply report, alternative SVG, and review panel paths. Use it before `apply-edit` to confirm all required gates are active, and after `review-panel` to confirm the latest candidate is a native SVG with no raster overlay.
 
 ## Build the Design Handoff
 
@@ -262,7 +279,7 @@ projects/a801-802-opencrab-test/handoffs/design_handoff_###.json
 projects/a801-802-opencrab-test/handoffs/design_handoff_###.md
 ```
 
-The handoff includes current readiness gates, source recognition summary, OpenCrab evidence summaries, standards excerpts, constraint summaries, natural-language and doodle operations, prompt blocks, and the required engine output contract. It reports `review_required` unless the project is ready for solver handoff and the latest `edit-brief` has passed.
+The handoff includes current readiness gates, source recognition summary, topology graph summary, OpenCrab evidence summaries, standards excerpts, constraint summaries, natural-language and doodle operations, prompt blocks, and the required engine output contract. It reports `review_required` unless the project is ready for solver handoff and the latest `edit-brief` has passed.
 
 ## Apply the Edit
 
@@ -291,15 +308,16 @@ For a diagnostic smoke test, `reference-svg-engine` remains available. It writes
 
 1. Selects the requested edit intents.
 2. Loads `recognition/recognition_manifest.json`.
-3. Loads `evidence/evidence_manifest.json`.
-4. Loads `standards/standards_manifest.json`.
-5. Loads `constraints/constraint_manifest.json`.
-6. Writes `runs/apply_edit_###/solver_input.json`.
-7. Runs the project `engine_adapter`.
-8. Discovers native SVG/report/preview outputs.
-9. Ignores the original source SVG when choosing the candidate.
-10. Copies the generated SVG to `alternatives/alternative_###.svg`.
-11. Writes `runs/apply_edit_###/apply_edit_report.json`.
+3. Loads `topology/topology_manifest.json`.
+4. Loads `evidence/evidence_manifest.json`.
+5. Loads `standards/standards_manifest.json`.
+6. Loads `constraints/constraint_manifest.json`.
+7. Writes `runs/apply_edit_###/solver_input.json`.
+8. Runs the project `engine_adapter`.
+9. Discovers native SVG/report/preview outputs.
+10. Ignores the original source SVG when choosing the candidate.
+11. Copies the generated SVG to `alternatives/alternative_###.svg`.
+12. Writes `runs/apply_edit_###/apply_edit_report.json`.
 
 ## Review the Alternative
 
@@ -314,7 +332,7 @@ This creates:
 projects/a801-802-opencrab-test/panels/review_panel_###.html
 ```
 
-The panel embeds the original SVG and generated alternative SVG side by side, then shows the intent summary, apply checks, engine QA gates, and SVG inspection counts.
+The panel embeds the original SVG and generated alternative SVG side by side, then shows the intent summary, recognition/topology summaries, apply checks, engine QA gates, and SVG inspection counts.
 
 ## Export the Package
 
@@ -332,7 +350,7 @@ projects/a801-802-opencrab-test/exports/export_manifest_###.json
 projects/a801-802-opencrab-test/exports/a801-802-opencrab-test_export_###.zip
 ```
 
-By default, the package includes latest project status, recognition, evidence, standards, constraints, edit intents, OpenCrab sync artifacts, design handoff, workflow report, apply report, engine reports, alternative SVG, and review panel. The original source SVG is excluded unless you pass `--include-source-svg`, which is useful for local handoff but should be deliberate for proprietary drawings.
+By default, the package includes latest project status, recognition, topology, evidence, standards, constraints, edit intents, OpenCrab sync artifacts, design handoff, workflow report, apply report, engine reports, alternative SVG, and review panel. The original source SVG is excluded unless you pass `--include-source-svg`, which is useful for local handoff but should be deliberate for proprietary drawings.
 
 Verify the package before handoff:
 
@@ -365,7 +383,7 @@ This creates:
 projects/a801-802-opencrab-test/diagnostics/doctor_report_###.json
 ```
 
-`doctor` checks the local CLI files, built-in reference engine, doodle editor, OpenCrab workflow docs, project manifest, OpenCrab MCP configuration, source SVG parsing, recognition, standards, evidence, constraints, edit intents, latest candidate SVG, and optional ZIP verification.
+`doctor` checks the local CLI files, built-in reference engine, doodle editor, OpenCrab workflow docs, project manifest, OpenCrab MCP configuration, source SVG parsing, recognition, topology, standards, evidence, constraints, edit intents, latest candidate SVG, and optional ZIP verification.
 
 ## Practical Revision Pattern
 
@@ -376,18 +394,19 @@ For architectural layout revisions, use this order:
 3. `standards-attach`: attach household-count standards and selected rows.
 4. `evidence-attach` or `opencrab-sync`: attach OpenCrab/LocalCrab ontology evidence.
 5. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
-6. Natural language: describe the design intent and constraints.
-7. Doodle: mark the exact edge, room, circulation line, or wall segment.
-8. `edit-brief`: check recognition, evidence, standards, constraints, source SVG parse, and sketch bounds.
-9. `project-status`: confirm the project is ready for solver handoff.
-10. `design-handoff`: package the current evidence, standards, constraints, and prompt blocks.
-11. `apply-edit`: generate a native SVG candidate.
-12. `review-panel`: inspect before/after.
-13. `project-status`: confirm the latest candidate and review artifacts are complete.
-14. `export-package`: bundle the latest artifacts for handoff.
-15. `verify-package`: validate the ZIP before upload or handoff.
-16. `doctor`: diagnose local install, project gates, OpenCrab configuration, candidate readiness, and optional package verification.
-17. Repeat with another short prompt or doodle repair intent.
+6. `topology-build`: connect recognition, standards, evidence, and constraints into the target topology graph.
+7. Natural language: describe the design intent and constraints.
+8. Doodle: mark the exact edge, room, circulation line, or wall segment.
+9. `edit-brief`: check recognition, topology, evidence, standards, constraints, source SVG parse, and sketch bounds.
+10. `project-status`: confirm the project is ready for solver handoff.
+11. `design-handoff`: package the current topology, evidence, standards, constraints, and prompt blocks.
+12. `apply-edit`: generate a native SVG candidate.
+13. `review-panel`: inspect before/after.
+14. `project-status`: confirm the latest candidate and review artifacts are complete.
+15. `export-package`: bundle the latest artifacts for handoff.
+16. `verify-package`: validate the ZIP before upload or handoff.
+17. `doctor`: diagnose local install, project gates, OpenCrab configuration, candidate readiness, and optional package verification.
+18. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

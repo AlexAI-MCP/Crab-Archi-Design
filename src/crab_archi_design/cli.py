@@ -94,6 +94,7 @@ def command_init(args: argparse.Namespace) -> None:
         "artifacts": {
             "project_dir": str(out_dir),
             "recognition_dir": str(out_dir / "recognition"),
+            "topology_dir": str(out_dir / "topology"),
             "constraints_dir": str(out_dir / "constraints"),
             "alternatives_dir": str(out_dir / "alternatives"),
             "edit_intents_dir": str(out_dir / "edit_intents"),
@@ -318,6 +319,25 @@ def recognition_status(manifest: dict[str, Any] | None) -> str:
     return "active" if manifest.get("source_svg_info", {}).get("xml_parse") == "ok" else "review_required"
 
 
+def topology_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
+    return project_dir(project_id, root) / "topology" / "topology_manifest.json"
+
+
+def load_topology_manifest(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> dict[str, Any] | None:
+    path = topology_manifest_path(project_id, root)
+    if not path.exists():
+        return None
+    return read_json(path)
+
+
+def topology_status(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return "missing"
+    if manifest.get("status"):
+        return str(manifest["status"])
+    return "active" if manifest.get("node_count", 0) > 0 and manifest.get("edge_count", 0) > 0 else "review_required"
+
+
 def classify_label_role(text: str) -> str | None:
     lowered = text.lower()
     rules = [
@@ -415,6 +435,25 @@ def bbox_aspect(box: dict[str, float]) -> float:
     width = max(0.001, box.get("width", 0.0))
     height = max(0.001, box.get("height", 0.0))
     return max(width / height, height / width)
+
+
+def bbox_center(box: dict[str, float]) -> tuple[float, float]:
+    return (box.get("x", 0.0) + box.get("width", 0.0) * 0.5, box.get("y", 0.0) + box.get("height", 0.0) * 0.5)
+
+
+def point_distance(left: tuple[float, float], right: tuple[float, float]) -> float:
+    return ((left[0] - right[0]) ** 2 + (left[1] - right[1]) ** 2) ** 0.5
+
+
+def point_in_bbox(point: tuple[float, float], box: dict[str, float], pad: float = 0.0) -> bool:
+    x, y = point
+    return box.get("x", 0.0) - pad <= x <= box.get("x", 0.0) + box.get("width", 0.0) + pad and box.get("y", 0.0) - pad <= y <= box.get("y", 0.0) + box.get("height", 0.0) + pad
+
+
+def label_point(label: dict[str, Any]) -> tuple[float, float] | None:
+    if label.get("x") is None or label.get("y") is None:
+        return None
+    return (svg_float(label.get("x")), svg_float(label.get("y")))
 
 
 def geometry_role_hint(tag: str, box: dict[str, float], el: ET.Element, viewbox: list[float]) -> str | None:
@@ -1022,6 +1061,300 @@ def command_recognize_svg(args: argparse.Namespace) -> None:
     )
 
 
+def row_area_hint(row: dict[str, str]) -> float | None:
+    for key, value in row.items():
+        text = f"{key} {value}"
+        if not any(term in text.lower() for term in ["면적", "area", "평", "sqm", "m2", "㎡"]):
+            continue
+        match = re.search(r"\d+(?:\.\d+)?", str(value).replace(",", ""))
+        if match:
+            return float(match.group(0))
+    for value in row.values():
+        match = re.search(r"\d+(?:\.\d+)?", str(value).replace(",", ""))
+        if match:
+            return float(match.group(0))
+    return None
+
+
+def standard_role_rows(manifest: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    roles: dict[str, dict[str, Any]] = {}
+    if not manifest:
+        return roles
+    for item in manifest.get("standard_items", []):
+        rows = item.get("payload", {}).get("selected_rows", [])
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            normalized = {str(key): str(value) for key, value in row.items()}
+            role = classify_label_role(" ".join([*normalized.keys(), *normalized.values()]))
+            if not role:
+                continue
+            entry = roles.setdefault(role, {"role": role, "rows": [], "target_area_hint": None})
+            entry["rows"].append(normalized)
+            area = row_area_hint(normalized)
+            if area is not None:
+                entry["target_area_hint"] = area if entry["target_area_hint"] is None else entry["target_area_hint"] + area
+    return roles
+
+
+def node_type_counts(nodes: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for node in nodes:
+        node_type = str(node.get("type") or "unknown")
+        counts[node_type] = counts.get(node_type, 0) + 1
+    return counts
+
+
+def edge_type_counts(edges: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for edge in edges:
+        edge_type = str(edge.get("type") or "unknown")
+        counts[edge_type] = counts.get(edge_type, 0) + 1
+    return counts
+
+
+def add_topology_edge(edges: list[dict[str, Any]], source: str, target: str, edge_type: str, **properties: Any) -> None:
+    edges.append(
+        {
+            "id": f"edge_{len(edges) + 1:04d}",
+            "source": source,
+            "target": target,
+            "type": edge_type,
+            **properties,
+        }
+    )
+
+
+def nearest_envelope(point: tuple[float, float], envelope_nodes: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, float | None]:
+    best_node: dict[str, Any] | None = None
+    best_distance: float | None = None
+    for node in envelope_nodes:
+        box = node.get("bbox") or {}
+        distance = point_distance(point, bbox_center(box))
+        if best_distance is None or distance < best_distance:
+            best_node = node
+            best_distance = distance
+    return best_node, best_distance
+
+
+def containing_envelope(point: tuple[float, float], envelope_nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    containers = [node for node in envelope_nodes if point_in_bbox(point, node.get("bbox") or {})]
+    if not containers:
+        return None
+    return sorted(containers, key=lambda node: bbox_area(node.get("bbox") or {}))[0]
+
+
+def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
+    project = load_manifest(project_id, root)
+    recognition = load_recognition_manifest(project_id, root)
+    constraints = load_constraint_manifest(project_id, root)
+    standards = load_standards_manifest(project_id, root)
+    evidence = load_evidence_manifest(project_id, root)
+    geometry = (recognition or {}).get("geometry_candidates", {})
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    role_to_nodes: dict[str, list[str]] = {}
+
+    def register_role(role: str | None, node_id: str) -> None:
+        if role:
+            role_to_nodes.setdefault(role, []).append(node_id)
+
+    for index, item in enumerate((recognition or {}).get("program_label_candidates", []), start=1):
+        point = label_point(item)
+        node = {
+            "id": f"program_label_{index:03d}",
+            "type": "program_label",
+            "label": item.get("text"),
+            "role": item.get("role_hint"),
+            "point": list(point) if point else None,
+            "source": "recognition.program_label_candidates",
+        }
+        nodes.append(node)
+        register_role(node.get("role"), node["id"])
+
+    for index, item in enumerate(geometry.get("room_envelope_candidates", []), start=1):
+        node = {
+            "id": f"room_envelope_{index:03d}",
+            "type": "room_envelope",
+            "bbox": item.get("bbox"),
+            "tag": item.get("tag"),
+            "source_id": item.get("id"),
+            "source": "recognition.geometry_candidates.room_envelope_candidates",
+        }
+        nodes.append(node)
+
+    for index, item in enumerate(geometry.get("column_candidates", []), start=1):
+        node = {
+            "id": f"column_{index:03d}",
+            "type": "structural_column",
+            "bbox": item.get("bbox"),
+            "tag": item.get("tag"),
+            "protected": True,
+            "source": "recognition.geometry_candidates.column_candidates",
+        }
+        nodes.append(node)
+
+    for index, item in enumerate(geometry.get("wall_candidates", []), start=1):
+        node = {
+            "id": f"wall_{index:03d}",
+            "type": "wall_candidate",
+            "bbox": item.get("bbox"),
+            "tag": item.get("tag"),
+            "source": "recognition.geometry_candidates.wall_candidates",
+        }
+        nodes.append(node)
+
+    for index, item in enumerate((constraints or {}).get("constraint_items", []), start=1):
+        node = {
+            "id": f"constraint_{index:03d}",
+            "type": "constraint",
+            "role": item.get("role"),
+            "mode": item.get("mode"),
+            "target_hint": item.get("target_hint"),
+            "point_count": item.get("point_count"),
+            "solver_policy": item.get("solver_policy"),
+            "source": "constraints.constraint_items",
+        }
+        nodes.append(node)
+
+    for role, entry in standard_role_rows(standards).items():
+        node = {
+            "id": f"standard_program_{role}",
+            "type": "standard_program",
+            "role": role,
+            "row_count": len(entry["rows"]),
+            "target_area_hint": entry.get("target_area_hint"),
+            "source": "standards.selected_rows",
+        }
+        nodes.append(node)
+        register_role(role, node["id"])
+
+    envelope_nodes = [node for node in nodes if node.get("type") == "room_envelope"]
+    label_nodes = [node for node in nodes if node.get("type") == "program_label"]
+    column_nodes = [node for node in nodes if node.get("type") == "structural_column"]
+    standard_nodes = [node for node in nodes if node.get("type") == "standard_program"]
+    constraint_nodes = [node for node in nodes if node.get("type") == "constraint"]
+
+    for node in label_nodes:
+        point_raw = node.get("point")
+        if not point_raw:
+            continue
+        point = (float(point_raw[0]), float(point_raw[1]))
+        envelope = containing_envelope(point, envelope_nodes)
+        if envelope:
+            add_topology_edge(edges, node["id"], envelope["id"], "label_inside_envelope", evidence="recognized_label_point")
+            continue
+        envelope, distance = nearest_envelope(point, envelope_nodes)
+        if envelope:
+            add_topology_edge(edges, node["id"], envelope["id"], "label_nearest_envelope", distance=distance, evidence="recognized_label_point")
+
+    for column in column_nodes:
+        center = bbox_center(column.get("bbox") or {})
+        for envelope in envelope_nodes:
+            if point_in_bbox(center, envelope.get("bbox") or {}):
+                add_topology_edge(edges, column["id"], envelope["id"], "column_inside_envelope", protected=True)
+                break
+
+    for standard in standard_nodes:
+        role = standard.get("role")
+        if not role:
+            continue
+        for label in label_nodes:
+            if label.get("role") == role:
+                add_topology_edge(edges, standard["id"], label["id"], "standard_applies_to_program", role=role)
+
+    protected_constraint_roles = {"community_shell", "lock", "no_go", "protect"}
+    for constraint in constraint_nodes:
+        role = constraint.get("role")
+        if role in protected_constraint_roles:
+            for column in column_nodes[:60]:
+                add_topology_edge(edges, constraint["id"], column["id"], "constraint_protects_geometry", role=role)
+        elif role in {"mutable", "projectable"}:
+            for label in label_nodes[:24]:
+                add_topology_edge(edges, constraint["id"], label["id"], "constraint_guides_program", role=role)
+
+    adjacency_pairs = [
+        ("greenery_lounge", "hall_lobby", "main hall anchors greenery lounge"),
+        ("fitness_gx", "hall_lobby", "fitness and GX connect to main hall"),
+        ("golf_screen", "hall_lobby", "golf access connects to main hall"),
+        ("sauna_locker_shower", "golf_screen", "wellness locker/shower cluster supports golf"),
+        ("management_support", "hall_lobby", "management support remains visible from hall"),
+    ]
+    for left_role, right_role, rationale in adjacency_pairs:
+        left_nodes = role_to_nodes.get(left_role) or []
+        right_nodes = role_to_nodes.get(right_role) or []
+        if left_nodes and right_nodes:
+            add_topology_edge(
+                edges,
+                left_nodes[0],
+                right_nodes[0],
+                "ontology_adjacency_target",
+                left_role=left_role,
+                right_role=right_role,
+                rationale=rationale,
+                evidence="OpenCrab topology prior",
+            )
+
+    status = "active" if recognition_status(recognition) == "active" and nodes and edges else "review_required"
+    node_counts = node_type_counts(nodes)
+    edge_counts = edge_type_counts(edges)
+    protected_count = sum(1 for node in nodes if node.get("protected") is True or node.get("type") == "structural_column")
+    return {
+        "schema": "crab-archi-design-topology-manifest-v1",
+        "created_at": now(),
+        "project_id": project_id,
+        "source_svg": project.get("source_svg"),
+        "status": status,
+        "coordinate_space": "source_svg_viewbox",
+        "required_for_final_svg": True,
+        "source_manifests": {
+            "recognition_manifest": str(recognition_manifest_path(project_id, root)) if recognition else None,
+            "standards_manifest": str(standards_manifest_path(project_id, root)) if standards else None,
+            "evidence_manifest": str(evidence_manifest_path(project_id, root)) if evidence else None,
+            "constraint_manifest": str(constraint_manifest_path(project_id, root)) if constraints else None,
+        },
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "graph_summary": {
+            "node_counts_by_type": node_counts,
+            "edge_counts_by_type": edge_counts,
+            "program_role_count": len(role_to_nodes),
+            "protected_node_count": protected_count,
+            "roles": sorted(role_to_nodes),
+        },
+        "nodes": nodes,
+        "edges": edges,
+        "quality_gates": {
+            "recognition_manifest_active": recognition_status(recognition) == "active",
+            "has_program_or_standard_nodes": bool(label_nodes or standard_nodes),
+            "has_geometry_nodes": bool(envelope_nodes or column_nodes),
+            "has_topology_edges": bool(edges),
+        },
+    }
+
+
+def command_topology_build(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    load_manifest(args.project_id, root)
+    topology = build_topology_manifest(args.project_id, root)
+    out = topology_manifest_path(args.project_id, root)
+    write_json(out, topology)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": topology["status"],
+                "node_count": topology["node_count"],
+                "edge_count": topology["edge_count"],
+                "node_counts_by_type": topology["graph_summary"]["node_counts_by_type"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def sorted_json_files(path: Path, pattern: str) -> list[Path]:
     return sorted(path.glob(pattern), key=lambda item: (item.stat().st_mtime, item.name))
 
@@ -1291,6 +1624,7 @@ def build_edit_brief_markdown(brief: dict[str, Any]) -> str:
         f"- Constraint status: `{brief['constraint_status']}`",
         f"- Standards status: `{brief['standards_status']}`",
         f"- Recognition status: `{brief['recognition_status']}`",
+        f"- Topology status: `{brief['topology_status']}`",
         "",
         "## Checks",
         "",
@@ -1341,6 +1675,15 @@ def build_edit_brief_markdown(brief: dict[str, Any]) -> str:
         lines.append(f"- Program labels: `{summary['program_label_count']}`")
     else:
         lines.append("- No recognition manifest attached.")
+    lines.extend(["", "## Topology", ""])
+    if brief["topology_summary"]["status"] != "missing":
+        summary = brief["topology_summary"]
+        lines.append(f"- Status: `{summary['status']}`")
+        lines.append(f"- Nodes: `{summary['node_count']}`")
+        lines.append(f"- Edges: `{summary['edge_count']}`")
+        lines.append(f"- Roles: `{', '.join(summary.get('roles', [])) or '-'}`")
+    else:
+        lines.append("- No topology manifest attached.")
     lines.extend(["", "## Next Solver Instruction", "", brief["next_solver_instruction"], ""])
     return "\n".join(lines)
 
@@ -1367,9 +1710,11 @@ def command_edit_brief(args: argparse.Namespace) -> None:
     constraint_manifest = load_constraint_manifest(args.project_id, root)
     standards_manifest = load_standards_manifest(args.project_id, root)
     recognition_manifest = load_recognition_manifest(args.project_id, root)
+    topology_manifest = load_topology_manifest(args.project_id, root)
     checks = {
         "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
         "recognition_manifest_active": recognition_status(recognition_manifest) == "active",
+        "topology_manifest_active": topology_status(topology_manifest) == "active",
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
         "standards_manifest_active": standards_status(standards_manifest) == "active",
@@ -1395,6 +1740,7 @@ def command_edit_brief(args: argparse.Namespace) -> None:
         "evidence_status": evidence_status(evidence_manifest),
         "evidence_count": count_evidence_items(evidence_manifest),
         "recognition_status": recognition_status(recognition_manifest),
+        "topology_status": topology_status(topology_manifest),
         "constraint_status": constraint_status(constraint_manifest),
         "constraint_count": count_constraint_items(constraint_manifest),
         "enforced_constraint_count": count_constraint_items(constraint_manifest, enforced_only=True),
@@ -1434,12 +1780,19 @@ def command_edit_brief(args: argparse.Namespace) -> None:
             "program_label_count": (recognition_manifest or {}).get("program_label_count", 0),
             "source_svg_info": (recognition_manifest or {}).get("source_svg_info"),
         },
+        "topology_summary": {
+            "status": topology_status(topology_manifest),
+            "node_count": (topology_manifest or {}).get("node_count", 0),
+            "edge_count": (topology_manifest or {}).get("edge_count", 0),
+            "roles": (topology_manifest or {}).get("graph_summary", {}).get("roles", []),
+            "graph_summary": (topology_manifest or {}).get("graph_summary", {}),
+        },
         "checks": checks,
         "sketch_analysis": sketch_analysis,
         "hard_constraints": manifest.get("hard_constraints", []),
         "next_solver_instruction": (
             "Apply only native SVG edits inside mutable community zones. Preserve parking count, columns, cores, "
-            "stairs, ramps, egress, and the community outer shell. Follow attached household standards and recognition manifest. "
+            "stairs, ramps, egress, and the community outer shell. Follow attached household standards, recognition manifest, and topology manifest. "
             "Treat doodle strokes as intent anchors, not final geometry."
         ),
     }
@@ -1656,6 +2009,29 @@ def render_recognition_list(manifest: dict[str, Any] | None) -> str:
     return "\n".join(rows)
 
 
+def render_topology_list(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return '<li class="review"><span>topology_manifest</span><strong>missing</strong></li>'
+    status = topology_status(manifest)
+    status_class = "pass" if status == "active" else "review"
+    summary = manifest.get("graph_summary", {})
+    roles = ", ".join(summary.get("roles", []))
+    rows = [
+        f'<li class="{status_class}"><span>status</span><strong>{html.escape(status)}</strong></li>',
+        f'<li class="{status_class}"><span>node_count</span><strong>{html.escape(str(manifest.get("node_count", 0)))}</strong></li>',
+        f'<li class="{status_class}"><span>edge_count</span><strong>{html.escape(str(manifest.get("edge_count", 0)))}</strong></li>',
+        f'<li class="{status_class}"><span>roles</span><strong>{html.escape(roles or "-")}</strong></li>',
+    ]
+    for edge in manifest.get("edges", [])[:8]:
+        rows.append(
+            "<li>"
+            f"<strong>{html.escape(str(edge.get('type') or 'edge'))}</strong>"
+            f"<span>{html.escape(str(edge.get('source') or ''))} -> {html.escape(str(edge.get('target') or ''))}</span>"
+            "</li>"
+        )
+    return "\n".join(rows)
+
+
 def build_review_panel_html(context: dict[str, Any]) -> str:
     source_svg = context["source_svg_markup"]
     alternative_svg = context["alternative_svg_markup"]
@@ -1666,6 +2042,7 @@ def build_review_panel_html(context: dict[str, Any]) -> str:
     constraint_list = render_constraint_list(context["constraint_manifest"])
     standards_list = render_standards_list(context["standards_manifest"])
     recognition_list = render_recognition_list(context["recognition_manifest"])
+    topology_list = render_topology_list(context["topology_manifest"])
     source_info = html.escape(json.dumps(context["source_svg_info"], ensure_ascii=False, indent=2))
     alt_info = html.escape(json.dumps(context["alternative_svg_info"], ensure_ascii=False, indent=2))
     title = html.escape(context["title"])
@@ -1763,6 +2140,10 @@ def build_review_panel_html(context: dict[str, Any]) -> str:
         <div class="box"><ul>{recognition_list}</ul></div>
       </section>
       <section>
+        <h2>Topology</h2>
+        <div class="box"><ul>{topology_list}</ul></div>
+      </section>
+      <section>
         <h2>Constraints</h2>
         <div class="box"><ul>{constraint_list}</ul></div>
       </section>
@@ -1835,6 +2216,7 @@ def command_review_panel(args: argparse.Namespace) -> None:
         "apply_checks": apply_report.get("checks", {}),
         "engine_quality_gates": engine_quality,
         "recognition_manifest": load_recognition_manifest(args.project_id, root),
+        "topology_manifest": load_topology_manifest(args.project_id, root),
         "evidence_manifest": load_evidence_manifest(args.project_id, root),
         "constraint_manifest": load_constraint_manifest(args.project_id, root),
         "standards_manifest": load_standards_manifest(args.project_id, root),
@@ -1878,6 +2260,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
     intent_paths = resolve_intent_paths(base, args.intent)
     intents = [read_json(path) for path in intent_paths]
     recognition_manifest = load_recognition_manifest(args.project_id, root)
+    topology_manifest = load_topology_manifest(args.project_id, root)
     evidence_manifest = load_evidence_manifest(args.project_id, root)
     constraint_manifest = load_constraint_manifest(args.project_id, root)
     standards_manifest = load_standards_manifest(args.project_id, root)
@@ -1898,6 +2281,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "intents": intents,
         "hard_constraints": manifest.get("hard_constraints", []),
         "recognition_manifest": recognition_manifest,
+        "topology_manifest": topology_manifest,
         "evidence_manifest": evidence_manifest,
         "constraint_manifest": constraint_manifest,
         "standards_manifest": standards_manifest,
@@ -1976,6 +2360,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "candidate_svg_exists": alternative_svg is not None and alternative_svg.exists(),
         "native_svg_no_images": svg_info.get("xml_parse") == "ok" and svg_info.get("image_elements") == 0,
         "recognition_manifest_active": recognition_status(recognition_manifest) == "active",
+        "topology_manifest_active": topology_status(topology_manifest) == "active",
         "opencrab_mcp_required": bool(manifest.get("opencrab_mcp", {}).get("required")),
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
@@ -2009,6 +2394,7 @@ def command_qa(args: argparse.Namespace) -> None:
         "manifest_exists": True,
         "source_svg_exists_or_allowed_missing": Path(manifest["source_svg"]).exists() or args.allow_missing_source,
         "recognition_manifest_active": recognition_status(load_recognition_manifest(args.project_id, root)) == "active",
+        "topology_manifest_active": topology_status(load_topology_manifest(args.project_id, root)) == "active",
         "has_hard_constraints": bool(manifest.get("hard_constraints")),
         "opencrab_mcp_required": bool(manifest.get("opencrab_mcp", {}).get("required")),
         "opencrab_mcp_server_configured": bool(manifest.get("opencrab_mcp", {}).get("mcp_server")),
@@ -2058,6 +2444,7 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
     source_info = inspect_svg(source_svg)
 
     recognition_manifest = load_recognition_manifest(project_id, root)
+    topology_manifest = load_topology_manifest(project_id, root)
     evidence_manifest = load_evidence_manifest(project_id, root)
     constraint_manifest = load_constraint_manifest(project_id, root)
     standards_manifest = load_standards_manifest(project_id, root)
@@ -2074,6 +2461,7 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
         "source_svg_exists": source_svg.exists(),
         "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
         "recognition_manifest_active": recognition_status(recognition_manifest) == "active",
+        "topology_manifest_active": topology_status(topology_manifest) == "active",
         "standards_manifest_active": standards_status(standards_manifest) == "active",
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
@@ -2087,6 +2475,7 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
         "source_svg_exists",
         "source_svg_parse_ok",
         "recognition_manifest_active",
+        "topology_manifest_active",
         "standards_manifest_active",
         "opencrab_evidence_verified",
         "constraint_manifest_active",
@@ -2114,6 +2503,7 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
         },
         "latest_artifacts": {
             "recognition_manifest": str(recognition_manifest_path(project_id, root)) if recognition_manifest else None,
+            "topology_manifest": str(topology_manifest_path(project_id, root)) if topology_manifest else None,
             "standards_manifest": str(standards_manifest_path(project_id, root)) if standards_manifest else None,
             "evidence_manifest": str(evidence_manifest_path(project_id, root)) if evidence_manifest else None,
             "constraint_manifest": str(constraint_manifest_path(project_id, root)) if constraint_manifest else None,
@@ -2129,6 +2519,8 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
             "column_candidate_count": (recognition_manifest or {}).get("geometry_summary", {}).get("column_candidate_count", 0),
             "wall_candidate_count": (recognition_manifest or {}).get("geometry_summary", {}).get("wall_candidate_count", 0),
             "room_envelope_candidate_count": (recognition_manifest or {}).get("geometry_summary", {}).get("room_envelope_candidate_count", 0),
+            "topology_node_count": (topology_manifest or {}).get("node_count", 0),
+            "topology_edge_count": (topology_manifest or {}).get("edge_count", 0),
             "source_image_elements": source_info.get("image_elements"),
             "standard_count": count_standard_items(standards_manifest),
             "selected_standard_row_count": sum_selected_standard_rows(standards_manifest),
@@ -2229,6 +2621,19 @@ def summarize_recognition_manifest(manifest: dict[str, Any] | None) -> dict[str,
     }
 
 
+def summarize_topology_manifest(manifest: dict[str, Any] | None) -> dict[str, Any]:
+    if not manifest:
+        return {"status": "missing", "nodes": [], "edges": []}
+    return {
+        "status": topology_status(manifest),
+        "node_count": manifest.get("node_count", 0),
+        "edge_count": manifest.get("edge_count", 0),
+        "graph_summary": manifest.get("graph_summary", {}),
+        "nodes": manifest.get("nodes", [])[:36],
+        "edges": manifest.get("edges", [])[:48],
+    }
+
+
 def build_design_handoff_markdown(handoff: dict[str, Any]) -> str:
     lines = [
         f"# {handoff['project_id']} Design Handoff",
@@ -2272,6 +2677,17 @@ def build_design_handoff_markdown(handoff: dict[str, Any]) -> str:
     if not handoff["knowledge_context"]["constraint_items"]:
         lines.append("- No constraints attached.")
 
+    lines.extend(["", "## Topology", ""])
+    topology = handoff["knowledge_context"]["topology"]
+    if topology["status"] != "missing":
+        roles = topology.get("graph_summary", {}).get("roles", [])
+        lines.append(f"- Status: `{topology['status']}`")
+        lines.append(f"- Nodes: `{topology['node_count']}`")
+        lines.append(f"- Edges: `{topology['edge_count']}`")
+        lines.append(f"- Roles: `{', '.join(roles) or '-'}`")
+    else:
+        lines.append("- No topology manifest attached.")
+
     lines.extend(["", "## Standards Excerpt", ""])
     for row in handoff["knowledge_context"]["standards_excerpt"]:
         lines.append(f"- {json.dumps(row, ensure_ascii=False)}")
@@ -2296,6 +2712,7 @@ def command_design_handoff(args: argparse.Namespace) -> None:
     operations = flatten_operations(intents)
 
     recognition_manifest = load_recognition_manifest(args.project_id, root)
+    topology_manifest = load_topology_manifest(args.project_id, root)
     evidence_manifest = load_evidence_manifest(args.project_id, root)
     constraint_manifest = load_constraint_manifest(args.project_id, root)
     standards_manifest = load_standards_manifest(args.project_id, root)
@@ -2310,13 +2727,13 @@ def command_design_handoff(args: argparse.Namespace) -> None:
     }
     task = args.task or (
         "Create an evidence-backed community layout alternative from the original SVG. "
-        "Use the attached OpenCrab ontology evidence, standards, recognition manifest, constraints, "
+        "Use the attached OpenCrab ontology evidence, standards, recognition manifest, topology graph, constraints, "
         "natural-language intent, and doodle intent. Return solver-ready native SVG instructions."
     )
     hard_constraints = manifest.get("hard_constraints", [])
     system_prompt = (
         "You are the Crab Archi Design planning agent. Use OpenCrab MCP evidence as the design knowledge base, "
-        "treat standards and constraints as binding inputs, and produce solver-ready instructions rather than a raster overlay. "
+        "treat standards, topology, and constraints as binding inputs, and produce solver-ready instructions rather than a raster overlay. "
         "Do not invent protected geometry changes. Preserve parking count, columns, cores, ramps, stairs, egress, and the community shell."
     )
     operation_lines = [
@@ -2334,6 +2751,7 @@ def command_design_handoff(args: argparse.Namespace) -> None:
             *(operation_lines or ["- Review attached intent files."]),
             "Required behavior:",
             "- Keep every edit inside mutable/projectable community zones.",
+            "- Preserve topology constraints from the topology manifest before changing room partitions.",
             "- Use OpenCrab evidence and 900-household standards before assigning program area.",
             "- Keep protected no-go and locked geometry unchanged.",
             "- Output native SVG solver instructions and cite the manifest evidence paths.",
@@ -2358,6 +2776,7 @@ def command_design_handoff(args: argparse.Namespace) -> None:
         "operations": operations,
         "knowledge_context": {
             "recognition": summarize_recognition_manifest(recognition_manifest),
+            "topology": summarize_topology_manifest(topology_manifest),
             "evidence_items": summarize_evidence_manifest(evidence_manifest),
             "constraint_items": summarize_constraint_manifest(constraint_manifest),
             "standards_status": standards_status(standards_manifest),
@@ -2365,6 +2784,7 @@ def command_design_handoff(args: argparse.Namespace) -> None:
             "standards_excerpt": selected_standard_rows(standards_manifest),
             "manifest_paths": {
                 "recognition_manifest": str(recognition_manifest_path(args.project_id, root)) if recognition_manifest else None,
+                "topology_manifest": str(topology_manifest_path(args.project_id, root)) if topology_manifest else None,
                 "evidence_manifest": str(evidence_manifest_path(args.project_id, root)) if evidence_manifest else None,
                 "constraint_manifest": str(constraint_manifest_path(args.project_id, root)) if constraint_manifest else None,
                 "standards_manifest": str(standards_manifest_path(args.project_id, root)) if standards_manifest else None,
@@ -2386,6 +2806,7 @@ def command_design_handoff(args: argparse.Namespace) -> None:
             "must_pass": [
                 "source_svg_parse_ok",
                 "recognition_manifest_active",
+                "topology_manifest_active",
                 "opencrab_evidence_verified",
                 "constraint_manifest_active",
                 "standards_manifest_active",
@@ -2621,6 +3042,8 @@ def command_workflow_run(args: argparse.Namespace) -> None:
         add_skipped("constraint-attach", "Existing constraint manifest found.")
     else:
         add_skipped("constraint-attach", "No constraint sketch supplied.")
+
+    add_step("topology-build", command_topology_build, argparse.Namespace(project_root=str(root), project_id=project_id))
 
     if args.prompt:
         add_step("prompt-edit", command_prompt_edit, argparse.Namespace(project_root=str(root), project_id=project_id, text=args.prompt))
@@ -3019,7 +3442,14 @@ def collect_export_files(project_id: str, root: Path, include_source_svg: bool, 
 
     latest_artifacts = status.get("latest_artifacts", {})
     for role, raw_path in latest_artifacts.items():
-        append_package_file(files, project_id, base, role, Path(raw_path) if raw_path else None, required=role in {"recognition_manifest", "evidence_manifest", "constraint_manifest", "standards_manifest"})
+        append_package_file(
+            files,
+            project_id,
+            base,
+            role,
+            Path(raw_path) if raw_path else None,
+            required=role in {"recognition_manifest", "topology_manifest", "evidence_manifest", "constraint_manifest", "standards_manifest"},
+        )
 
     for handoff_path in latest_handoff_files(base):
         append_package_file(files, project_id, base, f"design_handoff_{handoff_path.suffix.lstrip('.')}", handoff_path)
@@ -3274,6 +3704,7 @@ def command_doctor(args: argparse.Namespace) -> None:
                     "source_svg_exists",
                     "source_svg_parse_ok",
                     "recognition_manifest_active",
+                    "topology_manifest_active",
                     "standards_manifest_active",
                     "opencrab_evidence_verified",
                     "constraint_manifest_active",
@@ -3405,7 +3836,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "typical_required_args_for_new_project": ["--source-svg", "--standards", "--ontology-pack", "--opencrab-result-file", "--constraint-sketch", "--prompt"],
             "optional_args": ["--households", "--engine-adapter", "--sketch", "--task", "--skip-preview", "--reinit"],
             "outputs": ["workflow/workflow_run_###.json", "alternatives/alternative_###.svg", "panels/review_panel_###.html"],
-            "gates": ["recognition", "standards", "opencrab_evidence", "constraints", "edit_brief", "apply_edit", "review_panel"],
+            "gates": ["recognition", "standards", "opencrab_evidence", "constraints", "topology", "edit_brief", "apply_edit", "review_panel"],
+        },
+        {
+            "id": "topology_build",
+            "cli_subcommand": "topology-build",
+            "description": "Build a target topology graph from SVG recognition, standards, OpenCrab evidence, and drawing constraints.",
+            "required_args": ["--project-id"],
+            "outputs": ["topology/topology_manifest.json"],
+            "gates": ["topology_manifest_active"],
         },
         {
             "id": "opencrab_sync",
@@ -3448,7 +3887,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "required_args": ["--project-id"],
             "optional_args": ["--intent"],
             "outputs": ["briefs/edit_brief_###.json", "briefs/edit_brief_###.md"],
-            "gates": ["recognition_manifest_active", "opencrab_evidence_verified", "standards_manifest_active", "constraint_manifest_active"],
+            "gates": ["recognition_manifest_active", "topology_manifest_active", "opencrab_evidence_verified", "standards_manifest_active", "constraint_manifest_active"],
         },
         {
             "id": "design_handoff",
@@ -3574,8 +4013,8 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
         "recommended_sequences": {
             "saas_job_runner": ["run_job"],
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
-            "revision_loop": ["prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
-            "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
+            "revision_loop": ["topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
+            "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
             "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
         "security": {
@@ -3758,6 +4197,7 @@ def run_mcp_smoke(config: dict[str, Any], server_name: str | None, timeout: int)
         "run_job_tool_available": "run_job" in tool_names,
         "doctor_tool_available": "doctor" in tool_names,
         "workflow_run_tool_available": "workflow_run" in tool_names,
+        "topology_build_tool_available": "topology_build" in tool_names,
     }
     return {
         "schema": "crab-archi-design-mcp-smoke-report-v1",
@@ -3823,6 +4263,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_recognize.add_argument("--source-svg", help="Override the project source SVG.")
     p_recognize.add_argument("--max-labels", type=int, default=500)
     p_recognize.set_defaults(func=command_recognize_svg)
+
+    p_topology = sub.add_parser("topology-build", help="Build a target topology graph from recognition, standards, evidence, and constraints.")
+    p_topology.add_argument("--project-id", required=True)
+    p_topology.set_defaults(func=command_topology_build)
 
     p_standards = sub.add_parser("standards-attach", help="Attach standards files such as CSV, Excel, PDF, or JSON to a project.")
     p_standards.add_argument("--project-id", required=True)

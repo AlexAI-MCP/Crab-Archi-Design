@@ -26,7 +26,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"run_job", "workflow_run", "opencrab_sync", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
+    assert {"run_job", "workflow_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
     assert manifest["recommended_sequences"]["saas_job_runner"] == ["run_job"]
@@ -78,8 +78,10 @@ def test_mcp_smoke_validates_runtime_config(tmp_path: Path) -> None:
     assert report["checks"]["initialize_ok"] is True
     assert report["checks"]["tools_list_ok"] is True
     assert report["checks"]["run_job_tool_available"] is True
+    assert report["checks"]["topology_build_tool_available"] is True
     assert "run_job" in report["tool_names"]
     assert "workflow_run" in report["tool_names"]
+    assert "topology_build" in report["tool_names"]
 
 
 def read_json_line(process: subprocess.Popen[str]) -> dict[str, object]:
@@ -125,6 +127,7 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         list_response = read_json_line(process)
         tools = {tool["name"]: tool for tool in list_response["result"]["tools"]}
         assert "run_job" in tools
+        assert "topology_build" in tools
         assert "doctor" in tools
         assert "mcp_manifest" in tools
         assert "mcp_config" in tools
@@ -295,10 +298,18 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     assert standards_manifest["standard_count"] == 1
     assert standards_manifest["standard_items"][0]["payload"]["matched_household_row_count"] == 2
 
+    result = run_cli("--project-root", str(tmp_path / "projects"), "topology-build", "--project-id", "demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    topology_manifest = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert topology_manifest["status"] == "active"
+    assert topology_manifest["node_count"] > 0
+    assert topology_manifest["edge_count"] > 0
+
     result = run_cli("--project-root", str(tmp_path / "projects"), "qa", "--project-id", "demo", cwd=ROOT)
     assert result.returncode == 0, result.stderr
     assert '"status": "pass"' in result.stdout
     assert '"recognition_manifest_active": true' in result.stdout
+    assert '"topology_manifest_active": true' in result.stdout
     assert '"opencrab_evidence_verified": true' in result.stdout
     assert '"constraint_manifest_active": true' in result.stdout
     assert '"standards_manifest_active": true' in result.stdout
@@ -309,12 +320,14 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     brief_md = Path(result.stdout.splitlines()[1]).read_text(encoding="utf-8")
     assert brief_json["status"] == "pass"
     assert brief_json["checks"]["recognition_manifest_active"] is True
+    assert brief_json["checks"]["topology_manifest_active"] is True
     assert brief_json["checks"]["opencrab_evidence_verified"] is True
     assert brief_json["checks"]["constraint_manifest_active"] is True
     assert brief_json["checks"]["standards_manifest_active"] is True
     assert brief_json["checks"]["sketch_points_inside_viewbox"] is True
     assert "greenery_lounge" in brief_md
     assert "Recognition" in brief_md
+    assert "Topology" in brief_md
     assert "Constraints" in brief_md
     assert "Standards" in brief_md
 
@@ -323,11 +336,14 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     status_json = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
     assert status_json["overall_status"] == "ready_for_apply"
     assert status_json["gates"]["recognition_manifest_active"] is True
+    assert status_json["gates"]["topology_manifest_active"] is True
     assert status_json["gates"]["opencrab_evidence_verified"] is True
     assert status_json["gates"]["constraint_manifest_active"] is True
     assert status_json["gates"]["standards_manifest_active"] is True
     assert status_json["gates"]["edit_intent_exists"] is True
     assert status_json["metrics"]["program_label_count"] == 1
+    assert status_json["metrics"]["topology_node_count"] > 0
+    assert status_json["metrics"]["topology_edge_count"] > 0
     assert status_json["metrics"]["edit_intent_count"] == 2
 
     result = run_cli(
@@ -350,6 +366,7 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     assert handoff_json["project_status"]["overall_status"] == "ready_for_apply"
     assert handoff_json["handoff_checks"]["latest_edit_brief_pass"] is True
     assert handoff_json["knowledge_context"]["recognition"]["program_label_count"] == 1
+    assert handoff_json["knowledge_context"]["topology"]["status"] == "active"
     assert handoff_json["knowledge_context"]["evidence_items"][0]["pack_id"] == "community_svg_topology_ontology_v2"
     assert handoff_json["knowledge_context"]["standards_excerpt"][0]["프로그램"] == "그리너리 라운지"
     assert "OpenCrab MCP evidence" in handoff_json["prompt_blocks"]["system_prompt"]
@@ -397,6 +414,58 @@ def test_recognize_svg_extracts_geometry_candidates(tmp_path: Path) -> None:
     assert summary["wall_candidate_count"] >= 1
     assert summary["room_envelope_candidate_count"] >= 1
     assert recognition["geometry_candidates"]["column_candidates"][0]["bbox"]["width"] == 22.0
+
+
+def test_topology_build_creates_target_graph(tmp_path: Path) -> None:
+    source_svg = tmp_path / "topology.svg"
+    source_svg.write_text(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600">
+              <rect x="50" y="50" width="700" height="420" fill="none" stroke="#111" stroke-width="5"/>
+              <rect x="100" y="100" width="22" height="22" fill="#111"/>
+              <line x1="90" y1="260" x2="690" y2="260" stroke="#111" stroke-width="7"/>
+              <text x="80" y="90">피트니스</text>
+              <text x="360" y="120">홀</text>
+            </svg>
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    standards = tmp_path / "standards.csv"
+    standards.write_text("세대,프로그램,면적\n900세대,피트니스,70\n900세대,홀,40\n", encoding="utf-8")
+    constraint = tmp_path / "constraint.json"
+    constraint.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [{"stroke_id": "shell", "mode": "community_shell", "target_hint": "community_outer_shell", "points": [[50, 50], [750, 50], [750, 470], [50, 470]]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for args in [
+        ("init", "--project-id", "topology-demo", "--source-svg", str(source_svg), "--ontology-pack", "community_svg_topology_ontology_v2"),
+        ("recognize-svg", "--project-id", "topology-demo"),
+        ("standards-attach", "--project-id", "topology-demo", "--file", str(standards), "--households", "900"),
+        ("constraint-attach", "--project-id", "topology-demo", "--sketch", str(constraint)),
+    ]:
+        result = run_cli("--project-root", str(tmp_path / "projects"), *args, cwd=ROOT)
+        assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "topology-build", "--project-id", "topology-demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    topology = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert topology["schema"] == "crab-archi-design-topology-manifest-v1"
+    assert topology["status"] == "active"
+    assert topology["node_count"] > 0
+    assert topology["edge_count"] > 0
+    node_types = {node["type"] for node in topology["nodes"]}
+    edge_types = {edge["type"] for edge in topology["edges"]}
+    assert {"program_label", "room_envelope", "structural_column", "standard_program", "constraint"} <= node_types
+    assert {"label_inside_envelope", "column_inside_envelope", "standard_applies_to_program", "ontology_adjacency_target"} <= edge_types
+    assert topology["graph_summary"]["protected_node_count"] >= 1
 
 
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
@@ -591,6 +660,8 @@ def test_apply_edit_runs_builtin_reference_engine(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     result = run_cli("--project-root", project_root_arg, "constraint-attach", "--project-id", "demo", "--sketch", str(constraint_sketch), cwd=command_cwd)
     assert result.returncode == 0, result.stderr
+    result = run_cli("--project-root", project_root_arg, "topology-build", "--project-id", "demo", cwd=command_cwd)
+    assert result.returncode == 0, result.stderr
     result = run_cli(
         "--project-root",
         project_root_arg,
@@ -700,6 +771,7 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
         ("opencrab-sync", "--project-id", "demo", "--result-file", str(opencrab_result)),
         ("standards-attach", "--project-id", "demo", "--file", str(standards), "--households", "900"),
         ("constraint-attach", "--project-id", "demo", "--sketch", str(constraint)),
+        ("topology-build", "--project-id", "demo"),
         ("prompt-edit", "--project-id", "demo", "--text", "Create a standards-based layout with no parking or core intrusion."),
     ]:
         result = run_cli("--project-root", str(tmp_path / "projects"), *args, cwd=ROOT)
@@ -795,6 +867,7 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     assert step_status["standards-attach"] == "pass"
     assert step_status["opencrab-sync"] == "pass"
     assert step_status["constraint-attach"] == "pass"
+    assert step_status["topology-build"] == "pass"
     assert step_status["edit-brief"] == "pass"
     assert step_status["design-handoff"] == "pass"
     assert step_status["apply-edit"] == "pass"
@@ -821,6 +894,7 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     assert "export_manifest.json" in names
     assert any(name.endswith("project_manifest.json") for name in names)
     assert any(name.endswith("project_status.json") for name in names)
+    assert any(name.endswith("topology_manifest.json") for name in names)
     assert any(name.endswith("alternative_001.svg") for name in names)
     assert any(name.endswith(".html") and "review_panel" in name for name in names)
     assert any(name.endswith("workflow_run_001.json") for name in names)
@@ -922,6 +996,7 @@ def test_run_job_executes_sample_pipeline(tmp_path: Path) -> None:
 
     workflow = json.loads(Path(report["artifacts"]["workflow_report"]).read_text(encoding="utf-8"))
     assert workflow["status"] == "pass"
+    assert Path(workflow["latest_artifacts"]["topology_manifest"]).exists()
     alternative = Path(workflow["latest_artifacts"]["alternative_svg"])
     assert "crab_archi_design_layout_engine_candidate" in alternative.read_text(encoding="utf-8")
     doctor = json.loads(Path(report["artifacts"]["doctor_report"]).read_text(encoding="utf-8"))
@@ -930,7 +1005,7 @@ def test_run_job_executes_sample_pipeline(tmp_path: Path) -> None:
 
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
-    source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><text x='2' y='2'>fitness</text></svg>", encoding="utf-8")
+    source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect x='1' y='1' width='8' height='8'/><text x='2' y='2'>fitness</text></svg>", encoding="utf-8")
     engine = tmp_path / "fake_engine.py"
     engine.write_text(
         textwrap.dedent(
@@ -1027,6 +1102,9 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
 
+    result = run_cli("--project-root", str(tmp_path / "projects"), "topology-build", "--project-id", "demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+
     result = run_cli(
         "--project-root",
         str(tmp_path / "projects"),
@@ -1053,6 +1131,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert report["status"] == "pass"
     assert report["checks"]["native_svg_no_images"] is True
     assert report["checks"]["recognition_manifest_active"] is True
+    assert report["checks"]["topology_manifest_active"] is True
     assert report["checks"]["opencrab_evidence_verified"] is True
     assert report["checks"]["constraint_manifest_active"] is True
     assert report["checks"]["standards_manifest_active"] is True
@@ -1064,6 +1143,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     solver_input = json.loads(Path(report["solver_input"]).read_text(encoding="utf-8"))
     assert solver_input["intents"][0]["schema"] == "crab-archi-design-natural-language-edit-intent-v1"
     assert solver_input["recognition_manifest"]["status"] == "active"
+    assert solver_input["topology_manifest"]["status"] == "active"
     assert solver_input["evidence_manifest"]["status"] == "verified"
     assert solver_input["constraint_manifest"]["status"] == "active"
     assert solver_input["standards_manifest"]["status"] == "active"
@@ -1084,6 +1164,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert "Alternative" in panel
     assert "native_svg_no_images" in panel
     assert "Recognition" in panel
+    assert "Topology" in panel
     assert "Evidence" in panel
     assert "Constraints" in panel
     assert "Standards" in panel

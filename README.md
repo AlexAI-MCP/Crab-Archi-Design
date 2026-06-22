@@ -14,10 +14,11 @@ It is designed around the workflow proven in the Community SVG experiments:
 2. Recognize drawing elements, program labels, protected structures, and mutable zones.
 3. Query OpenCrab MCP for the installed ontology pack, source evidence, topology, adjacency, and reusable design claims.
 4. Attach standards from Excel, CSV, PDF, or ontology evidence.
-5. Compile design direction into structured intent JSON.
-6. Generate native SVG alternatives with a deterministic geometry engine.
-7. Let users revise alternatives by natural language or doodle sketch.
-8. Run QA gates before exporting the final native SVG.
+5. Build a target topology manifest that links labels, room envelopes, protected geometry, standards, evidence, and constraints.
+6. Compile design direction into structured intent JSON.
+7. Generate native SVG alternatives with a deterministic geometry engine.
+8. Let users revise alternatives by natural language or doodle sketch.
+9. Run QA gates before exporting the final native SVG.
 
 The framework intentionally keeps LLMs out of direct SVG mutation. Codex or another LLM should produce `DesignIntent` and `EditIntent` JSON. A deterministic solver should apply safe native SVG patches.
 
@@ -116,6 +117,9 @@ crab-archi-design constraint-attach \
   --project-id demo \
   --sketch examples/constraint_sketch_sample.json
 
+crab-archi-design topology-build \
+  --project-id demo
+
 crab-archi-design prompt-edit \
   --project-id demo \
   --text "Open the greenery lounge more toward the main hall and keep parking/core locked."
@@ -177,15 +181,17 @@ crab-archi-design qa --project-id demo
 
 `run-job` is the SaaS/OAuth/MCP worker entry point. It reads a `crab-archi-design-job-spec-v1` JSON file containing the source SVG path, standards, OpenCrab MCP result files, doodle constraints, natural-language prompt, engine adapter, and export/verification policy. It then runs `workflow-run`, `export-package`, `verify-package`, and `doctor`, and writes a `projects/<project>/jobs/job_run_###.json` report.
 
-`workflow-run` executes the normal project path in one command: init if needed, recognize source SVG, attach standards, sync or attach evidence, attach constraints, create prompt/sketch intents, write the edit brief, status, design handoff, apply edit, review panel, final status, and a `projects/<project>/workflow/workflow_run_###.json` report.
+`workflow-run` executes the normal project path in one command: init if needed, recognize source SVG, attach standards, sync or attach evidence, attach constraints, build topology, create prompt/sketch intents, write the edit brief, status, design handoff, apply edit, review panel, final status, and a `projects/<project>/workflow/workflow_run_###.json` report.
 
-`apply-edit` reads structured natural-language and doodle intents, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
+`apply-edit` reads structured natural-language and doodle intents plus recognition, topology, evidence, standards, and constraints, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
 
 `layout-svg-engine` is the built-in room-envelope adapter. It reads the community shell, mutable zone, no-go constraints, recognized column candidates, standards rows, and OpenCrab-backed intent, then creates a native SVG redraw layer with program rooms, partitions, labels, preserved shell/column markup, and no raster overlay.
 
 `reference-svg-engine` remains available as a diagnostic adapter. It consumes the same solver input and emits a native SVG candidate plus engine report, using only additive SVG elements and no raster overlay.
 
 `recognize-svg` writes `projects/<project>/recognition/recognition_manifest.json`. It stores SVG parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, label candidates, and program role hints before any layout mutation.
+
+`topology-build` writes `projects/<project>/topology/topology_manifest.json`. It turns recognition candidates, standards rows, OpenCrab evidence, and doodle constraints into an explicit node/edge graph for labels, room envelopes, columns, walls, program standards, protected constraints, and ontology adjacency targets. `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit` require this manifest to be active before a final SVG alternative can pass.
 
 `standards-attach` writes `projects/<project>/standards/standards_manifest.json`. CSV files are parsed into selected rows for the household count; Excel, PDF, and JSON files are attached as verified standards references for the engine adapter.
 
@@ -199,11 +205,11 @@ crab-archi-design qa --project-id demo
 
 `edit-brief` summarizes natural-language and doodle intents before SVG mutation. It writes JSON and Markdown briefs, checks OpenCrab evidence, and flags doodle strokes outside the source SVG viewBox.
 
-`project-status` writes `projects/<project>/status/project_status.json`. It summarizes readiness gates, latest briefs, latest apply reports, latest alternatives, latest review panels, and metrics such as recognized primitive count, program labels, evidence count, standards rows, constraints, and edit intents.
+`project-status` writes `projects/<project>/status/project_status.json`. It summarizes readiness gates, latest briefs, latest apply reports, latest alternatives, latest review panels, and metrics such as recognized primitive count, program labels, topology nodes/edges, evidence count, standards rows, constraints, and edit intents.
 
-`design-handoff` writes `projects/<project>/handoffs/design_handoff_###.json` and `.md`. It packages the current status gates, source recognition, OpenCrab evidence, standards excerpts, constraints, natural-language and doodle intents, prompt blocks, and deterministic engine contract for Codex/LLM/MCP-backed design generation.
+`design-handoff` writes `projects/<project>/handoffs/design_handoff_###.json` and `.md`. It packages the current status gates, source recognition, topology graph summary, OpenCrab evidence, standards excerpts, constraints, natural-language and doodle intents, prompt blocks, and deterministic engine contract for Codex/LLM/MCP-backed design generation.
 
-`review-panel` generates a local before/after HTML panel with original SVG, alternative SVG, intent summary, apply checks, and engine QA gates.
+`review-panel` generates a local before/after HTML panel with original SVG, alternative SVG, intent summary, recognition/topology summaries, apply checks, and engine QA gates.
 
 `export-package` writes `projects/<project>/exports/export_manifest_###.json` and `projects/<project>/exports/<project>_export_###.zip`. The ZIP bundles the latest status, manifests, OpenCrab sync results, edit intents, handoff, workflow report, apply report, engine reports, alternative SVG, and review panel for downstream agents or SaaS upload. Source SVG inclusion is opt-in with `--include-source-svg`.
 

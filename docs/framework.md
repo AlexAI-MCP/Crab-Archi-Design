@@ -52,6 +52,8 @@ recognize-svg
   -> standards/standards_manifest.json
   -> constraint-attach
   -> constraints/constraint_manifest.json
+  -> topology-build
+  -> topology/topology_manifest.json
   -> prompt-edit / sketch-intent
   -> edit-brief
   -> project-status
@@ -72,6 +74,8 @@ recognize-svg
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, raster image detection, text label candidates, and program role hints.
 
+`topology-build` converts recognition, standards, OpenCrab evidence, and drawing constraints into a target topology manifest. It creates nodes for program labels, room envelopes, structural columns, wall candidates, standards roles, and constraints, then links them with edges such as label-inside-envelope, column-inside-envelope, standard-applies-to-program, protected-geometry, and OpenCrab adjacency targets.
+
 `workflow-run` orchestrates the same manual commands in a single run. It initializes the project when needed, executes the gates in order, writes all normal artifacts, and records the step-by-step result in a workflow report.
 
 `opencrab-sync` is the MCP bridge. It normalizes `opencrab_query`, `opencrab_search_documents`, or similar OpenCrab MCP JSON results into a project sync artifact and appends the extracted evidence to the evidence manifest.
@@ -80,11 +84,11 @@ recognize-svg
 
 `standards-attach` converts area/program standards into a project manifest. CSV files are parsed into selected household-count rows; Excel, PDF, and JSON files are attached as verified source references for the engine adapter.
 
-`edit-brief` writes JSON and Markdown review artifacts before SVG mutation. It is intentionally lightweight: it verifies source recognition, OpenCrab evidence, standards and constraint manifests, checks source SVG parsing, summarizes operations, and flags doodle strokes that fall outside the source SVG viewBox.
+`edit-brief` writes JSON and Markdown review artifacts before SVG mutation. It is intentionally lightweight: it verifies source recognition, topology, OpenCrab evidence, standards and constraint manifests, checks source SVG parsing, summarizes operations, and flags doodle strokes that fall outside the source SVG viewBox.
 
-`project-status` writes a project command-center JSON file. It summarizes recognition, OpenCrab evidence, standards, constraints, edit intents, latest apply reports, latest alternative SVGs, and review panels so an agent can decide whether the project is ready for solver handoff or candidate review.
+`project-status` writes a project command-center JSON file. It summarizes recognition, topology, OpenCrab evidence, standards, constraints, edit intents, latest apply reports, latest alternative SVGs, and review panels so an agent can decide whether the project is ready for solver handoff or candidate review.
 
-`design-handoff` writes a Codex/LLM/MCP/engine handoff package. It combines status gates, recognition summaries, OpenCrab evidence, standards excerpts, constraints, operations, prompt blocks, and output contracts so design generation starts from the same evidence-backed project state every time.
+`design-handoff` writes a Codex/LLM/MCP/engine handoff package. It combines status gates, recognition summaries, topology summaries, OpenCrab evidence, standards excerpts, constraints, operations, prompt blocks, and output contracts so design generation starts from the same evidence-backed project state every time.
 
 `export-package` creates the portable handoff bundle. It writes an export manifest and ZIP containing the latest project status, manifests, OpenCrab sync files, intents, design handoff, workflow report, apply report, engine reports, alternative SVG, and review panel. Source SVG is included only when explicitly requested.
 

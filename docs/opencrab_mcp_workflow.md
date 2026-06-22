@@ -19,20 +19,21 @@ The full flow can be run manually step by step, through `workflow-run`, or throu
 7. Query OpenCrab MCP for the selected ontology pack.
 8. Retrieve precedent topology, program hierarchy, adjacency levers, area standards, claims, and evidence references.
 9. Run `opencrab-sync` to normalize MCP results into the project evidence manifest.
-10. Project the superior-case ontology onto the target drawing's mutable zones.
-11. Compile a `DesignIntent` JSON with OpenCrab evidence references.
-12. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
-13. Run `project-status` to confirm recognition, standards, OpenCrab evidence, constraints, and edit intents are ready.
-14. Build a `design-handoff` package for Codex, an LLM wrapper, an MCP tool, or the deterministic solver.
-15. Generate native SVG geometry through a deterministic solver.
-16. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
-17. Run `project-status` again to confirm the latest candidate and review panel are complete.
-18. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
-19. Run `verify-package` to validate the exported ZIP before handoff or upload.
-20. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
-21. Use `run-job` when a SaaS, OAuth, or MCP worker needs to execute the whole sequence from a single JSON job spec.
-22. Run `mcp-manifest`, `mcp-config`, and `mcp-smoke` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog, runtime configuration, and connection smoke test.
-23. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+10. Build the target topology manifest from recognition, standards, OpenCrab evidence, and constraints.
+11. Project the superior-case ontology onto the target drawing's mutable zones.
+12. Compile a `DesignIntent` JSON with OpenCrab evidence references.
+13. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
+14. Run `project-status` to confirm recognition, topology, standards, OpenCrab evidence, constraints, and edit intents are ready.
+15. Build a `design-handoff` package for Codex, an LLM wrapper, an MCP tool, or the deterministic solver.
+16. Generate native SVG geometry through a deterministic solver.
+17. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
+18. Run `project-status` again to confirm the latest candidate and review panel are complete.
+19. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
+20. Run `verify-package` to validate the exported ZIP before handoff or upload.
+21. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
+22. Use `run-job` when a SaaS, OAuth, or MCP worker needs to execute the whole sequence from a single JSON job spec.
+23. Run `mcp-manifest`, `mcp-config`, and `mcp-smoke` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog, runtime configuration, and connection smoke test.
+24. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -58,13 +59,21 @@ Then it appends normalized `opencrab_query` or `opencrab_search_documents` evide
 
 `workflow-run` can call `opencrab-sync` as part of the full sequence when `--opencrab-result-file` or `--opencrab-result-json` is supplied. The workflow report records whether each required gate passed, failed, or was skipped.
 
+`topology-build` runs after recognition, standards, evidence, and constraints are available. It writes:
+
+```text
+projects/<project>/topology/topology_manifest.json
+```
+
+The topology manifest is the target graph used for projection. It links recognized program labels, room envelopes, protected columns, wall candidates, standards program roles, user constraints, and OpenCrab adjacency targets. `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit` treat a project as `review_required` until this graph has `status: active`.
+
 `run-job` wraps the OpenCrab-backed workflow for product integrations. The job spec should include the OpenCrab MCP result file paths, constraint sketch JSON, source SVG, standards, prompt, and strict verification settings. The job report records the workflow report, export ZIP, verification report, and doctor report paths.
 
 `edit-brief` should be run after natural-language or doodle input and before `apply-edit`. It does not replace OpenCrab MCP. It confirms the OpenCrab evidence gate, summarizes the requested operations, and catches basic drawing-coordinate mistakes such as doodle strokes outside the source SVG viewBox.
 
 `project-status` writes `projects/<project>/status/project_status.json` as the command-center artifact for these gates. Use it before solver handoff and after candidate review so the agent can distinguish `ready_for_apply`, `candidate_review_required`, and `complete_candidate_ready` states.
 
-`design-handoff` writes `projects/<project>/handoffs/design_handoff_###.json` and `.md`. It packages the prompt blocks, OpenCrab evidence summaries, standards excerpts, constraints, recognized drawing context, and deterministic engine contract after the readiness gates are satisfied.
+`design-handoff` writes `projects/<project>/handoffs/design_handoff_###.json` and `.md`. It packages the prompt blocks, topology graph summary, OpenCrab evidence summaries, standards excerpts, constraints, recognized drawing context, and deterministic engine contract after the readiness gates are satisfied.
 
 `layout-svg-engine` can be used at the solver step to generate a standards-backed room-envelope candidate without raster overlays. It uses the attached community shell, mutable zone, no-go constraints, recognized column candidates, OpenCrab evidence gate, and standards rows to draw native SVG room partitions for greenery lounge, fitness, golf, wellness, hall, and support programs.
 
@@ -97,6 +106,16 @@ projects/<project>/recognition/recognition_manifest.json
 ```
 
 The recognition manifest is the first project-specific drawing IR. It stores source SVG parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, raster image detection, text label candidates, and program role hints. `qa`, `edit-brief`, and `apply-edit` treat a candidate as `review_required` until this manifest has `status: active`.
+
+## Topology Gate
+
+`topology-build` records the target drawing topology in:
+
+```text
+projects/<project>/topology/topology_manifest.json
+```
+
+The topology manifest is the graph that lets the superior-case ontology be projected onto the target drawing without directly drawing over protected geometry. It is built from recognition candidates, standards rows, OpenCrab evidence, and user-confirmed constraints. `qa`, `edit-brief`, `project-status`, `design-handoff`, `apply-edit`, `export-package`, and `doctor` all treat it as a required final-SVG artifact.
 
 ## Standards Gate
 
