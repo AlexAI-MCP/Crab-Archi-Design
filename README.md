@@ -49,7 +49,8 @@ crab-archi-design init \
   --households 900 \
   --standards /path/to/area_standard.xlsx \
   --ontology-pack community_svg_topology_ontology_v2 \
-  --opencrab-mcp-server opencrab
+  --opencrab-mcp-server opencrab \
+  --engine-adapter reference-svg-engine
 
 crab-archi-design recognize-svg \
   --project-id demo
@@ -108,6 +109,8 @@ crab-archi-design qa --project-id demo
 ```
 
 `apply-edit` reads structured natural-language and doodle intents, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
+
+`reference-svg-engine` is the built-in reference adapter. It consumes the same solver input as a production engine and emits a native SVG candidate plus engine report, using only additive SVG elements and no raster overlay. It is intended for end-to-end workflow validation before connecting a project-specific geometry solver.
 
 `recognize-svg` writes `projects/<project>/recognition/recognition_manifest.json`. It stores SVG parse status, viewBox, primitive counts, label candidates, and program role hints before any layout mutation.
 

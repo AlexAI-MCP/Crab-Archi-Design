@@ -73,11 +73,14 @@ recognize-svg
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 
+The built-in `reference-svg-engine` adapter is available for end-to-end validation. It reads `solver_input.json`, copies the source SVG into a native SVG candidate, adds a compact reference layer with operations/evidence/standards/constraints summary, and writes a quality-gated engine report. Production projects should replace it with a geometry solver that edits recognized room envelopes and partitions.
+
 The local `tools/doodle_editor.html` utility turns hand-drawn browser strokes into the same sketch JSON consumed by `sketch-intent`.
 
 ## Adapter Roadmap
 
-1. CLI adapter for local execution.
-2. OpenCrab MCP adapter for pack lookup, evidence retrieval, topology projection, and QA citation.
-3. MCP adapter for agent-safe drawing operations.
-4. OAuth/SaaS adapter for user-scoped standards, pack access, run history, and exports.
+1. Built-in reference adapter for end-to-end workflow validation.
+2. CLI adapter for local project-specific geometry execution.
+3. OpenCrab MCP adapter for pack lookup, evidence retrieval, topology projection, and QA citation.
+4. MCP adapter for agent-safe drawing operations.
+5. OAuth/SaaS adapter for user-scoped standards, pack access, run history, and exports.

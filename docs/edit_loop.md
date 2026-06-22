@@ -247,6 +247,18 @@ crab-archi-design --project-root projects apply-edit \
   --skip-preview
 ```
 
+For a built-in end-to-end smoke test, initialize the project with `--engine-adapter reference-svg-engine` or pass it at runtime:
+
+```bash
+crab-archi-design --project-root projects apply-edit \
+  --project-id a801-802-opencrab-test \
+  --intent all \
+  --engine-adapter reference-svg-engine \
+  --skip-preview
+```
+
+The reference engine writes a native SVG candidate with an additive reference layer and an engine report. It is not the final architectural redraw engine; use it to verify that recognition, OpenCrab evidence, standards, constraints, intents, solver handoff, artifact discovery, QA, and review panels all connect correctly.
+
 `apply-edit` performs the handoff:
 
 1. Selects the requested edit intents.

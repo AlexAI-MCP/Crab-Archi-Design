@@ -357,6 +357,98 @@ def test_opencrab_sync_attaches_mcp_evidence(tmp_path: Path) -> None:
     assert "redraw ready" in item["payload"]["evidence"][0]["text"]
 
 
+def test_apply_edit_runs_builtin_reference_engine(tmp_path: Path) -> None:
+    command_cwd = tmp_path
+    project_root_arg = "projects"
+    source_svg = tmp_path / "original.svg"
+    source_svg.write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 60'><rect x='5' y='5' width='90' height='50'/><text x='10' y='12'>greenery lounge</text></svg>",
+        encoding="utf-8",
+    )
+    standards = tmp_path / "standards.csv"
+    standards.write_text("households,program,area\n900,greenery_lounge,80\n900,fitness,70\n", encoding="utf-8")
+    constraint_sketch = tmp_path / "constraint_sketch.json"
+    constraint_sketch.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [{"stroke_id": "c1", "mode": "community_shell", "target_hint": "community_outer_shell", "points": [[0, 0], [100, 0], [100, 60], [0, 60]]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence_source = tmp_path / "opencrab_result.json"
+    evidence_source.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "query": "community SVG topology",
+                "evidence": [{"id": "ev-001", "text": "Reference topology evidence is available.", "source": "OpenCrab"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "--project-root",
+        project_root_arg,
+        "init",
+        "--project-id",
+        "demo",
+        "--source-svg",
+        str(source_svg),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        "--engine-adapter",
+        "reference-svg-engine",
+        cwd=command_cwd,
+    )
+    assert result.returncode == 0, result.stderr
+    result = run_cli("--project-root", project_root_arg, "recognize-svg", "--project-id", "demo", cwd=command_cwd)
+    assert result.returncode == 0, result.stderr
+    result = run_cli("--project-root", project_root_arg, "opencrab-sync", "--project-id", "demo", "--result-file", str(evidence_source), cwd=command_cwd)
+    assert result.returncode == 0, result.stderr
+    result = run_cli("--project-root", project_root_arg, "standards-attach", "--project-id", "demo", "--file", str(standards), "--households", "900", cwd=command_cwd)
+    assert result.returncode == 0, result.stderr
+    result = run_cli("--project-root", project_root_arg, "constraint-attach", "--project-id", "demo", "--sketch", str(constraint_sketch), cwd=command_cwd)
+    assert result.returncode == 0, result.stderr
+    result = run_cli(
+        "--project-root",
+        project_root_arg,
+        "prompt-edit",
+        "--project-id",
+        "demo",
+        "--text",
+        "Open the greenery lounge toward the hall and keep protected geometry locked.",
+        cwd=command_cwd,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", project_root_arg, "apply-edit", "--project-id", "demo", "--skip-preview", cwd=command_cwd)
+    assert result.returncode == 0, result.stderr
+    report_path = Path(result.stdout.splitlines()[0])
+    if not report_path.is_absolute():
+        report_path = command_cwd / report_path
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["status"] == "pass"
+    assert report["checks"]["native_svg_no_images"] is True
+    alternative = Path(report["copied_artifacts"]["svg"][0])
+    if not alternative.is_absolute():
+        alternative = command_cwd / alternative
+    assert alternative.name == "alternative_001.svg"
+    alternative_text = alternative.read_text(encoding="utf-8")
+    assert "crab_archi_design_reference_engine_candidate" in alternative_text
+    assert "<image" not in alternative_text
+    engine_report_path = Path(report["copied_artifacts"]["report"][0])
+    if not engine_report_path.is_absolute():
+        engine_report_path = command_cwd / engine_report_path
+    engine_report = json.loads(engine_report_path.read_text(encoding="utf-8"))
+    assert engine_report["schema"] == "crab-archi-design-reference-engine-report-v1"
+    assert engine_report["quality"]["gates"]["reference_layer_added"] is True
+    assert engine_report["quality"]["gates"]["opencrab_evidence_available"] is True
+    assert engine_report["summary"]["operation_count"] >= 1
+
+
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
     source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><text x='2' y='2'>fitness</text></svg>", encoding="utf-8")

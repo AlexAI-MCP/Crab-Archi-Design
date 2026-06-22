@@ -887,6 +887,9 @@ def infer_engine_cwd(adapter: Path, fallback: Path) -> Path:
 
 
 def build_engine_command(adapter: str, extra_args: list[str]) -> tuple[list[str], Path | None]:
+    if adapter in {"reference-svg-engine", "builtin-reference", "crab-reference-engine"}:
+        adapter_path = Path(__file__).resolve().parent / "reference_svg_engine.py"
+        return [sys.executable, str(adapter_path), *extra_args], adapter_path
     adapter_path = Path(adapter).expanduser()
     if adapter_path.exists():
         if adapter_path.suffix == ".py":
@@ -1736,12 +1739,12 @@ def command_apply_edit(args: argparse.Namespace) -> None:
     env.update(
         {
             "CRAB_ARCHI_PROJECT_ID": args.project_id,
-            "CRAB_ARCHI_PROJECT_ROOT": str(root),
-            "CRAB_ARCHI_PROJECT_DIR": str(base),
-            "CRAB_ARCHI_RUN_DIR": str(run_dir),
-            "CRAB_ARCHI_SOLVER_INPUT": str(solver_input_path),
-            "CRAB_ARCHI_SOURCE_SVG": manifest.get("source_svg", ""),
-            "CRAB_ARCHI_INTENTS": os.pathsep.join(str(path) for path in intent_paths),
+            "CRAB_ARCHI_PROJECT_ROOT": str(root.resolve()),
+            "CRAB_ARCHI_PROJECT_DIR": str(base.resolve()),
+            "CRAB_ARCHI_RUN_DIR": str(run_dir.resolve()),
+            "CRAB_ARCHI_SOLVER_INPUT": str(solver_input_path.resolve()),
+            "CRAB_ARCHI_SOURCE_SVG": str(Path(manifest.get("source_svg", "")).expanduser().resolve()) if manifest.get("source_svg") else "",
+            "CRAB_ARCHI_INTENTS": os.pathsep.join(str(path.resolve()) for path in intent_paths),
         }
     )
 

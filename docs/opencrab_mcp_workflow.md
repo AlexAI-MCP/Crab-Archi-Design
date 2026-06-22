@@ -55,6 +55,8 @@ Then it appends normalized `opencrab_query` or `opencrab_search_documents` evide
 
 `design-handoff` writes `projects/<project>/handoffs/design_handoff_###.json` and `.md`. It packages the prompt blocks, OpenCrab evidence summaries, standards excerpts, constraints, recognized drawing context, and deterministic engine contract after the readiness gates are satisfied.
 
+`reference-svg-engine` can be used at the solver step to validate the full workflow without raster overlays. It produces a native SVG candidate and report, but it should be treated as a reference adapter until a project-specific room-envelope and partition redraw solver is connected.
+
 ## Recognition Gate
 
 `recognize-svg` records source drawing recognition in:
