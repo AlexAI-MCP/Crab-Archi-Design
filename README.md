@@ -49,9 +49,10 @@ GitHub Actions runs the same core contract used by local handoff:
 1. Install `crab-archi-design` with test dependencies.
 2. Compile the CLI and reference engine.
 3. Run the Python test suite.
-4. Generate the MCP/OAuth exec manifest with `mcp-manifest`.
-5. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
-6. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
+4. Check the stdio MCP entry point with `crab-archi-design-mcp --help`.
+5. Generate the MCP/OAuth exec manifest with `mcp-manifest`.
+6. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
+7. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
 
 The CI sample uses:
 
@@ -153,6 +154,8 @@ crab-archi-design doctor \
 crab-archi-design mcp-manifest \
   --output integrations/crab_archi_design_mcp_manifest.json
 
+crab-archi-design-mcp --stdio
+
 crab-archi-design qa --project-id demo
 ```
 
@@ -189,6 +192,8 @@ crab-archi-design qa --project-id demo
 `doctor` writes `projects/<project>/diagnostics/doctor_report_###.json`. It diagnoses the local framework install, OpenCrab MCP configuration, project readiness gates, latest native SVG candidate, and optional export ZIP verification in one report. Use `--strict` in CI, OAuth upload flows, or MCP handoffs.
 
 `mcp-manifest` writes or prints a machine-readable tool catalog for Codex exec, MCP wrappers, OAuth upload workers, and SaaS ingestion services. It describes each CLI tool id, subcommand, required arguments, outputs, gates, OpenCrab MCP requirement, recommended command sequences, and security boundaries.
+
+`crab-archi-design-mcp` starts a dependency-free stdio JSON-RPC bridge. It supports MCP `initialize`, `tools/list`, and `tools/call`, then maps tool calls back to the tested CLI commands.
 
 For the full revision loop, see [docs/edit_loop.md](docs/edit_loop.md).
 

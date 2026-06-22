@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -35,6 +36,74 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     written = json.loads(out.read_text(encoding="utf-8"))
     assert written["schema"] == "crab-archi-design-mcp-tool-manifest-v1"
     assert '"tool_count"' in result.stdout
+
+
+def read_json_line(process: subprocess.Popen[str]) -> dict[str, object]:
+    assert process.stdout is not None
+    line = process.stdout.readline()
+    assert line, "MCP server closed stdout"
+    return json.loads(line)
+
+
+def write_json_line(process: subprocess.Popen[str], payload: dict[str, object]) -> None:
+    assert process.stdin is not None
+    process.stdin.write(json.dumps(payload) + "\n")
+    process.stdin.flush()
+
+
+def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src") + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    process = subprocess.Popen(
+        [sys.executable, "-m", "crab_archi_design.mcp_server"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        write_json_line(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "pytest", "version": "1"}},
+            },
+        )
+        init_response = read_json_line(process)
+        assert init_response["result"]["capabilities"]["tools"]["listChanged"] is False
+
+        write_json_line(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        write_json_line(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        list_response = read_json_line(process)
+        tools = {tool["name"]: tool for tool in list_response["result"]["tools"]}
+        assert "doctor" in tools
+        assert "mcp_manifest" in tools
+        assert "project_id" in tools["workflow_run"]["inputSchema"]["properties"]
+
+        write_json_line(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "doctor", "arguments": {"cwd": str(tmp_path), "timeout_seconds": 60}},
+            },
+        )
+        call_response = read_json_line(process)
+        result = call_response["result"]
+        assert result["isError"] is False
+        assert result["structuredContent"]["returncode"] == 0
+        assert "doctor_report" in result["structuredContent"]["stdout"]
+        assert (tmp_path / "diagnostics").exists()
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        process.terminate()
+        process.wait(timeout=5)
 
 
 def test_prompt_and_sketch_intents(tmp_path: Path) -> None:

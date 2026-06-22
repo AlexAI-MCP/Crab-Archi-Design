@@ -29,7 +29,7 @@ jobs:
 
       - name: Compile
         run: |
-          python -m py_compile src/crab_archi_design/cli.py src/crab_archi_design/reference_svg_engine.py tests/test_cli.py
+          python -m py_compile src/crab_archi_design/cli.py src/crab_archi_design/mcp_server.py src/crab_archi_design/reference_svg_engine.py tests/test_cli.py
 
       - name: Test
         run: |
@@ -37,6 +37,8 @@ jobs:
 
       - name: End-to-end preflight
         run: |
+          crab-archi-design-mcp --help
+
           crab-archi-design mcp-manifest \
             --output .ci-projects/mcp_manifest.json
 

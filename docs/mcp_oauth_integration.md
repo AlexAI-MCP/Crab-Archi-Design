@@ -7,6 +7,7 @@ The integration boundary is:
 ```text
 Codex / MCP wrapper / OAuth worker
   -> crab-archi-design mcp-manifest
+  -> crab-archi-design-mcp --stdio
   -> selected CLI tool calls
   -> project JSON artifacts
   -> export-package ZIP
@@ -40,6 +41,35 @@ crab-archi-design --project-root <project_root> <cli_subcommand> ...
 ```
 
 Use the first stdout line as the primary artifact path unless the tool prints JSON only.
+
+## Built-in Stdio Bridge
+
+The package installs a dependency-free stdio MCP bridge:
+
+```bash
+crab-archi-design-mcp --stdio
+```
+
+It supports the MCP JSON-RPC methods:
+
+```text
+initialize
+notifications/initialized
+tools/list
+tools/call
+ping
+```
+
+`tools/list` is generated from `crab-archi-design mcp-manifest`, so the CLI manifest and MCP server stay aligned. `tools/call` maps each tool id back to the corresponding CLI subcommand and returns both text content and `structuredContent` with command, stdout, stderr, return code, and primary artifact path.
+
+Example client messages:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"example","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"doctor","arguments":{"project_root":"projects","project_id":"demo","strict":true}}}
+```
 
 The most important tools are:
 

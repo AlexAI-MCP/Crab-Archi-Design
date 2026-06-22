@@ -77,7 +77,7 @@ projects/<project>/diagnostics/doctor_report_###.json
 
 The report combines local tool checks, OpenCrab MCP manifest checks, `project-status` readiness gates, latest native SVG candidate checks, and optional `verify-package` results.
 
-`mcp-manifest` is the integration catalog. It advertises the OpenCrab evidence gate, CLI subcommands, required arguments, output artifacts, recommended command sequences, and security rules for MCP/OAuth execution. See:
+`mcp-manifest` is the integration catalog. It advertises the OpenCrab evidence gate, CLI subcommands, required arguments, output artifacts, recommended command sequences, and security rules for MCP/OAuth execution. `crab-archi-design-mcp --stdio` serves the same tools through `tools/list` and `tools/call`. See:
 
 ```text
 docs/mcp_oauth_integration.md

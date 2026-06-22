@@ -3079,6 +3079,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["local_ready", "project_ready", "package_ready"],
         },
         {
+            "id": "mcp_manifest",
+            "cli_subcommand": "mcp-manifest",
+            "description": "Print or write the MCP/OAuth exec tool manifest.",
+            "required_args": [],
+            "optional_args": ["--output"],
+            "outputs": ["manifest JSON on stdout or output path"],
+            "gates": ["tool_catalog_available"],
+        },
+        {
             "id": "doodle_editor",
             "cli_subcommand": "doodle-editor",
             "description": "Print or open the browser-based SVG doodle editor for sketch JSON capture.",
@@ -3114,6 +3123,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
             "revision_loop": ["prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
             "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
+            "mcp_server_bootstrap": ["mcp_manifest", "doctor"],
         },
         "security": {
             "source_svg_in_package": "opt-in via export-package --include-source-svg",
