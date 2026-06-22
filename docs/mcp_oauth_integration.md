@@ -8,7 +8,7 @@ The integration boundary is:
 Codex / MCP wrapper / OAuth worker
   -> crab-archi-design mcp-manifest
   -> crab-archi-design-mcp --stdio
-  -> selected CLI tool calls
+  -> run_job or selected CLI tool calls
   -> project JSON artifacts
   -> export-package ZIP
   -> verify-package / doctor
@@ -108,6 +108,7 @@ Example client messages:
 The most important tools are:
 
 ```text
+run_job
 workflow_run
 opencrab_sync
 prompt_edit
@@ -135,11 +136,32 @@ Use this pattern:
 3. Call OpenCrab MCP and save the MCP result JSON.
 4. Load the generated `mcp-config` and start `crab-archi-design-mcp --stdio` in the sandbox.
 5. Run `mcp-smoke --strict`.
-6. Run `workflow-run` with `--opencrab-result-file`.
-7. Run `export-package`.
-8. Run `verify-package --strict`.
-9. Run `doctor --strict`.
-10. Upload only the validated ZIP or selected JSON/SVG artifacts.
+6. Write a `crab-archi-design-job-spec-v1` JSON file.
+7. Run `run-job --job <job.json> --strict`.
+8. Upload only the validated ZIP or selected JSON/SVG artifacts from the job report.
+
+Example job spec:
+
+```json
+{
+  "schema": "crab-archi-design-job-spec-v1",
+  "project_root": "projects",
+  "project_id": "demo",
+  "source_svg": "/path/to/original.svg",
+  "households": 900,
+  "standards": ["/path/to/area_standard.csv"],
+  "ontology_pack": "community_svg_topology_ontology_v2",
+  "opencrab_result_file": ["/path/to/opencrab_mcp_result.json"],
+  "constraint_sketch": "/path/to/constraint_sketch.json",
+  "prompt": "Improve the greenery lounge and fitness connection while preserving protected geometry.",
+  "engine_adapter": "reference-svg-engine",
+  "skip_preview": true,
+  "export_package": true,
+  "verify_package": true,
+  "doctor": true,
+  "strict": true
+}
+```
 
 By default, `export-package` excludes the original source SVG. Include it only with `--include-source-svg` when the receiving environment is allowed to hold proprietary drawings.
 
@@ -151,9 +173,10 @@ Codex can use the same manifest without a custom server:
 crab-archi-design mcp-manifest
 crab-archi-design mcp-config --project-root projects
 crab-archi-design mcp-smoke --strict
-crab-archi-design --project-root projects workflow-run ...
-crab-archi-design --project-root projects doctor --project-id <project> --zip <zip> --strict
+crab-archi-design run-job --job examples/job_spec_sample.json --strict
 ```
+
+For debugging, Codex can still call the lower-level manual sequence: `workflow-run`, `export-package`, `verify-package --strict`, and `doctor --strict`.
 
 The LLM should produce structured intent and handoff artifacts. Native SVG mutation should remain in deterministic adapters such as `reference-svg-engine` or a production room-envelope solver.
 

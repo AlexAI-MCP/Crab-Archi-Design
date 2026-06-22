@@ -53,8 +53,9 @@ GitHub Actions runs the same core contract used by local handoff:
 5. Generate the MCP/OAuth exec manifest with `mcp-manifest`.
 6. Generate MCP client and OAuth worker runtime config with `mcp-config`.
 7. Verify the generated MCP runtime with `mcp-smoke`.
-8. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
-9. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
+8. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
+9. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
+10. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
 
 The CI sample uses:
 
@@ -62,6 +63,7 @@ The CI sample uses:
 - `examples/area_standard_sample.csv`
 - `examples/constraint_sketch_sample.json`
 - `examples/opencrab_mcp_result_sample.json`
+- `examples/job_spec_sample.json`
 
 ## CLI
 
@@ -86,6 +88,10 @@ crab-archi-design workflow-run \
   --prompt "Open the greenery lounge more toward the main hall and keep parking/core locked." \
   --engine-adapter reference-svg-engine \
   --skip-preview
+
+crab-archi-design run-job \
+  --job examples/job_spec_sample.json \
+  --strict
 
 crab-archi-design recognize-svg \
   --project-id demo
@@ -168,6 +174,8 @@ crab-archi-design-mcp --stdio
 
 crab-archi-design qa --project-id demo
 ```
+
+`run-job` is the SaaS/OAuth/MCP worker entry point. It reads a `crab-archi-design-job-spec-v1` JSON file containing the source SVG path, standards, OpenCrab MCP result files, doodle constraints, natural-language prompt, engine adapter, and export/verification policy. It then runs `workflow-run`, `export-package`, `verify-package`, and `doctor`, and writes a `projects/<project>/jobs/job_run_###.json` report.
 
 `workflow-run` executes the normal project path in one command: init if needed, recognize source SVG, attach standards, sync or attach evidence, attach constraints, create prompt/sketch intents, write the edit brief, status, design handoff, apply edit, review panel, final status, and a `projects/<project>/workflow/workflow_run_###.json` report.
 

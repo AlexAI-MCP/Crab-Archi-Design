@@ -51,6 +51,11 @@ jobs:
             --output-dir .ci-projects/diagnostics \
             --strict
 
+          crab-archi-design run-job \
+            --job examples/job_spec_sample.json \
+            --output-dir .ci-projects/job-reports \
+            --strict
+
           crab-archi-design --project-root .ci-projects workflow-run \
             --project-id ci-demo \
             --source-svg examples/original_sample.svg \

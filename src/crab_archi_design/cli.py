@@ -2532,6 +2532,245 @@ def command_workflow_run(args: argparse.Namespace) -> None:
     )
 
 
+def job_value_list(job: dict[str, Any], key: str) -> list[str]:
+    value = job.get(key)
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def job_bool(job: dict[str, Any], key: str, default: bool = False) -> bool:
+    value = job.get(key, default)
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def job_path_value(job: dict[str, Any], key: str, path_base: Path) -> str | None:
+    value = job.get(key)
+    if value is None:
+        return None
+    path = Path(str(value)).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str(path_base / path)
+
+
+def job_path_list(job: dict[str, Any], key: str, path_base: Path) -> list[str]:
+    paths = []
+    for value in job_value_list(job, key):
+        path = Path(value).expanduser()
+        paths.append(str(path if path.is_absolute() else path_base / path))
+    return paths
+
+
+def workflow_namespace_from_job(job: dict[str, Any], project_root: Path, path_base: Path) -> argparse.Namespace:
+    return argparse.Namespace(
+        project_root=str(project_root),
+        project_id=str(job["project_id"]),
+        source_svg=job_path_value(job, "source_svg", path_base),
+        households=job.get("households"),
+        standards=job_path_list(job, "standards", path_base),
+        standards_summary=job.get("standards_summary"),
+        standards_metadata=job_value_list(job, "standards_metadata"),
+        ontology_pack=job.get("ontology_pack"),
+        engine_adapter=job.get("engine_adapter") or "reference-svg-engine",
+        engine_arg=job_value_list(job, "engine_arg"),
+        opencrab_mcp_server=job.get("opencrab_mcp_server") or "opencrab",
+        opencrab_homepage=job.get("opencrab_homepage") or OPENCRAB_HOMEPAGE,
+        opencrab_result_file=job_path_list(job, "opencrab_result_file", path_base),
+        opencrab_result_json=job_value_list(job, "opencrab_result_json"),
+        opencrab_source_tool=job.get("opencrab_source_tool") or "opencrab_mcp",
+        opencrab_query=job.get("opencrab_query"),
+        workspace_id=job.get("workspace_id"),
+        evidence_source=job.get("evidence_source") or "localcrab",
+        evidence_source_file=job_path_value(job, "evidence_source_file", path_base),
+        evidence_summary=job.get("evidence_summary"),
+        evidence_metadata=job_value_list(job, "evidence_metadata"),
+        constraint_sketch=job_path_value(job, "constraint_sketch", path_base),
+        constraint_role=job.get("constraint_role"),
+        prompt=job.get("prompt"),
+        sketch=job_path_value(job, "sketch", path_base),
+        task=job.get("task"),
+        max_labels=int(job.get("max_labels", 500)),
+        timeout=int(job.get("timeout", 300)),
+        skip_preview=job_bool(job, "skip_preview"),
+        skip_apply=job_bool(job, "skip_apply"),
+        skip_review_panel=job_bool(job, "skip_review_panel"),
+        replace_standards=job_bool(job, "replace_standards"),
+        replace_evidence=job_bool(job, "replace_evidence"),
+        replace_constraints=job_bool(job, "replace_constraints"),
+        reinit=job_bool(job, "reinit"),
+    )
+
+
+def step_primary_stdout(step: dict[str, Any], line_index: int = 0) -> str | None:
+    stdout = step.get("stdout") or []
+    if len(stdout) > line_index:
+        return str(stdout[line_index])
+    return None
+
+
+def path_exists_string(value: str | None) -> bool:
+    return bool(value and Path(value).expanduser().exists())
+
+
+def require_step_report_value(step: dict[str, Any], artifact_path: str | None, key: str, expected: str = "pass") -> None:
+    if step.get("status") != "pass":
+        return
+    if not artifact_path:
+        step["status"] = "error"
+        step["error"] = f"Missing expected artifact path for {key}."
+        return
+    path = Path(artifact_path).expanduser()
+    if not path.exists():
+        step["status"] = "error"
+        step["error"] = f"Missing expected artifact file: {artifact_path}"
+        return
+    try:
+        report = read_json(path)
+    except (OSError, json.JSONDecodeError) as exc:
+        step["status"] = "error"
+        step["error"] = f"Could not read artifact report {artifact_path}: {exc}"
+        return
+    actual = report.get(key)
+    if actual != expected:
+        step["status"] = "error"
+        step["error"] = f"Report {key} was {actual!r}; expected {expected!r}."
+
+
+def command_run_job(args: argparse.Namespace) -> None:
+    job_path = Path(args.job).expanduser()
+    if not job_path.exists():
+        raise SystemExit(f"Missing job spec: {job_path}")
+    job = read_json(job_path)
+    project_id = job.get("project_id")
+    if not project_id:
+        raise SystemExit("Job spec requires project_id.")
+    if job.get("schema") not in {None, "crab-archi-design-job-spec-v1"}:
+        raise SystemExit(f"Unsupported job schema: {job.get('schema')}")
+
+    path_base = Path(job.get("path_base") or ".").expanduser()
+    if not path_base.is_absolute():
+        path_base = Path.cwd() / path_base
+    project_root = Path(job.get("project_root") or args.project_root).expanduser()
+    if not project_root.is_absolute():
+        project_root = Path.cwd() / project_root
+    strict = bool(args.strict or job_bool(job, "strict"))
+    steps: list[dict[str, Any]] = []
+    artifacts: dict[str, str | None] = {
+        "workflow_report": None,
+        "export_manifest": None,
+        "export_zip": None,
+        "verify_report": None,
+        "doctor_report": None,
+    }
+
+    def add_step(name: str, func: Any, namespace: argparse.Namespace) -> dict[str, Any]:
+        step = capture_command_step(name, func, namespace)
+        steps.append(step)
+        return step
+
+    workflow_step = add_step("workflow-run", command_workflow_run, workflow_namespace_from_job(job, project_root, path_base))
+    artifacts["workflow_report"] = step_primary_stdout(workflow_step)
+    require_step_report_value(workflow_step, artifacts["workflow_report"], "status", "pass")
+
+    export_requested = job_bool(job, "export_package", True)
+    verify_requested = job_bool(job, "verify_package", True)
+    doctor_requested = job_bool(job, "doctor", True)
+    check_local_files = job_bool(job, "check_local_files")
+    workflow_passed = workflow_step["status"] == "pass"
+
+    if export_requested and workflow_passed:
+        export_step = add_step(
+            "export-package",
+            command_export_package,
+            argparse.Namespace(
+                project_root=str(project_root),
+                project_id=str(project_id),
+                include_source_svg=job_bool(job, "include_source_svg"),
+                only_latest=job_bool(job, "only_latest"),
+                skip_opencrab_sync=job_bool(job, "skip_opencrab_sync"),
+            ),
+        )
+        artifacts["export_manifest"] = step_primary_stdout(export_step)
+        artifacts["export_zip"] = step_primary_stdout(export_step, 1)
+        require_step_report_value(export_step, artifacts["export_manifest"], "package_status", "pass")
+    elif export_requested:
+        steps.append(skipped_workflow_step("export-package", "Skipped because workflow-run did not pass."))
+    else:
+        steps.append(skipped_workflow_step("export-package", "Skipped by job export_package=false."))
+
+    zip_path = artifacts["export_zip"] or job_path_value(job, "zip", path_base)
+    if verify_requested and zip_path and path_exists_string(zip_path):
+        verify_step = add_step(
+            "verify-package",
+            command_verify_package,
+            argparse.Namespace(zip=zip_path, manifest=None, output_dir=None, check_local_files=check_local_files, strict=strict),
+        )
+        artifacts["verify_report"] = step_primary_stdout(verify_step)
+        require_step_report_value(verify_step, artifacts["verify_report"], "status", "pass")
+    elif verify_requested:
+        steps.append(skipped_workflow_step("verify-package", "Skipped because no export ZIP is available."))
+    else:
+        steps.append(skipped_workflow_step("verify-package", "Skipped by job verify_package=false."))
+
+    if doctor_requested:
+        doctor_step = add_step(
+            "doctor",
+            command_doctor,
+            argparse.Namespace(
+                project_root=str(project_root),
+                project_id=str(project_id),
+                zip=zip_path if zip_path and path_exists_string(zip_path) else None,
+                manifest=None,
+                output_dir=None,
+                check_local_files=check_local_files,
+                strict=strict,
+            ),
+        )
+        artifacts["doctor_report"] = step_primary_stdout(doctor_step)
+        require_step_report_value(doctor_step, artifacts["doctor_report"], "status", "pass")
+    else:
+        steps.append(skipped_workflow_step("doctor", "Skipped by job doctor=false."))
+
+    failed_steps = [step for step in steps if step.get("status") == "error"]
+    skipped_required = [
+        step
+        for step in steps
+        if step.get("name") in {"workflow-run", "export-package", "verify-package", "doctor"}
+        and step.get("status") == "skipped"
+        and not str(step.get("reason", "")).endswith("=false.")
+    ]
+    status = "pass" if not failed_steps and not skipped_required else "review_required"
+    report = {
+        "schema": "crab-archi-design-job-run-report-v1",
+        "created_at": now(),
+        "status": status,
+        "project_id": str(project_id),
+        "job_spec": str(job_path),
+        "project_root": str(project_root),
+        "path_base": str(path_base),
+        "strict": strict,
+        "steps": steps,
+        "artifacts": artifacts,
+        "failed_steps": [step.get("name") for step in failed_steps],
+        "skipped_required_steps": [step.get("name") for step in skipped_required],
+    }
+    out_dir = Path(args.output_dir).expanduser() if args.output_dir else project_dir(str(project_id), project_root) / "jobs"
+    if not out_dir.is_absolute():
+        out_dir = Path.cwd() / out_dir
+    seq = next_sequence(out_dir, "job_run_*.json")
+    out = out_dir / f"job_run_{seq:03d}.json"
+    write_json(out, report)
+    print(out)
+    print(json.dumps({"status": status, "project_id": str(project_id), "artifacts": artifacts, "failed_steps": report["failed_steps"]}, ensure_ascii=False))
+    if strict and status != "pass":
+        raise SystemExit(f"run-job failed; report: {out}")
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -2964,6 +3203,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
     }
     tools = [
         {
+            "id": "run_job",
+            "cli_subcommand": "run-job",
+            "description": "Run workflow/export/verify/doctor from a single JSON job spec for SaaS, OAuth, or MCP workers.",
+            "required_args": ["--job"],
+            "optional_args": ["--output-dir", "--strict"],
+            "outputs": ["jobs/job_run_###.json", "workflow/workflow_run_###.json", "exports/<project>_export_###.zip", "diagnostics/doctor_report_###.json"],
+            "gates": ["workflow_run_pass", "package_verify_pass", "doctor_pass"],
+        },
+        {
             "id": "workflow_run",
             "cli_subcommand": "workflow-run",
             "description": "Run the full source SVG to evidence-backed candidate workflow.",
@@ -3138,6 +3386,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
         "defaults": tool_defaults,
         "tools": tools,
         "recommended_sequences": {
+            "saas_job_runner": ["run_job"],
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
             "revision_loop": ["prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
             "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
@@ -3206,7 +3455,8 @@ def build_mcp_runtime_config(server_name: str, project_root_value: str, cwd_valu
                 ["crab-archi-design", "mcp-manifest"],
                 ["crab-archi-design", "--project-root", project_root_value, "doctor", "--strict"],
             ],
-            "handoff_sequence": ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"],
+            "handoff_sequence": ["run-job --job <job.json> --strict"],
+            "manual_handoff_sequence": ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"],
             "package_policy": "Do not include source SVG unless the receiving system is authorized; export-package requires --include-source-svg for that.",
         },
         "smoke_test_messages": [
@@ -3319,6 +3569,7 @@ def run_mcp_smoke(config: dict[str, Any], server_name: str | None, timeout: int)
         "process_exit_ok": process.returncode == 0,
         "initialize_ok": initialize.get("result", {}).get("serverInfo", {}).get("name") == "crab-archi-design-mcp",
         "tools_list_ok": bool(tools),
+        "run_job_tool_available": "run_job" in tool_names,
         "doctor_tool_available": "doctor" in tool_names,
         "workflow_run_tool_available": "workflow_run" in tool_names,
     }
@@ -3507,6 +3758,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_workflow.add_argument("--replace-constraints", action="store_true")
     p_workflow.add_argument("--reinit", action="store_true")
     p_workflow.set_defaults(func=command_workflow_run)
+
+    p_job = sub.add_parser("run-job", help="Run workflow/export/verify/doctor from a JSON job spec.")
+    p_job.add_argument("--job", required=True, help="Path to a crab-archi-design-job-spec-v1 JSON file.")
+    p_job.add_argument("--output-dir", help="Directory for job_run_###.json. Defaults to the project jobs directory.")
+    p_job.add_argument("--strict", action="store_true", help="Exit non-zero unless the job report status is pass.")
+    p_job.set_defaults(func=command_run_job)
 
     p_export = sub.add_parser("export-package", help="Create a ZIP package of latest project artifacts for handoff or SaaS upload.")
     p_export.add_argument("--project-id", required=True)

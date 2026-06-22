@@ -34,6 +34,10 @@ The solver consumes recognition IR, constraints, standards, ontology evidence, a
 The first executable loop is:
 
 ```text
+run-job
+  -> jobs/job_run_###.json
+  -> workflow/export/verify/doctor artifacts
+
 workflow-run
   -> workflow/workflow_run_###.json
 
@@ -63,6 +67,8 @@ recognize-svg
   -> verify-package
   -> doctor
 ```
+
+`run-job` is the product-facing job contract. A UI, OAuth worker, or MCP wrapper can write one `crab-archi-design-job-spec-v1` JSON file with source SVG, household count, standards, OpenCrab MCP result JSON, doodle constraints, prompt, engine adapter, and verification policy. The command then executes `workflow-run`, `export-package`, `verify-package`, and `doctor`, and records every step in a job report.
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints.
 

@@ -8,7 +8,7 @@ OpenCrab MCP is the required knowledge path for Crab Archi Design.
 
 ## Required Flow
 
-The full flow can be run manually step by step, or through `workflow-run` once the source SVG, standards, OpenCrab MCP result JSON, constraints, and prompt are available.
+The full flow can be run manually step by step, through `workflow-run`, or through `run-job` once the source SVG, standards, OpenCrab MCP result JSON, constraints, and prompt are available.
 
 1. Load the original SVG and build recognition IR.
 2. Attach a source recognition manifest with primitive counts, labels, and program role hints.
@@ -30,8 +30,9 @@ The full flow can be run manually step by step, or through `workflow-run` once t
 18. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
 19. Run `verify-package` to validate the exported ZIP before handoff or upload.
 20. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
-21. Run `mcp-manifest`, `mcp-config`, and `mcp-smoke` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog, runtime configuration, and connection smoke test.
-22. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+21. Use `run-job` when a SaaS, OAuth, or MCP worker needs to execute the whole sequence from a single JSON job spec.
+22. Run `mcp-manifest`, `mcp-config`, and `mcp-smoke` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog, runtime configuration, and connection smoke test.
+23. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -56,6 +57,8 @@ projects/<project>/opencrab/opencrab_sync_###.json
 Then it appends normalized `opencrab_query` or `opencrab_search_documents` evidence to the same evidence manifest used by `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit`.
 
 `workflow-run` can call `opencrab-sync` as part of the full sequence when `--opencrab-result-file` or `--opencrab-result-json` is supplied. The workflow report records whether each required gate passed, failed, or was skipped.
+
+`run-job` wraps the OpenCrab-backed workflow for product integrations. The job spec should include the OpenCrab MCP result file paths, constraint sketch JSON, source SVG, standards, prompt, and strict verification settings. The job report records the workflow report, export ZIP, verification report, and doctor report paths.
 
 `edit-brief` should be run after natural-language or doodle input and before `apply-edit`. It does not replace OpenCrab MCP. It confirms the OpenCrab evidence gate, summarizes the requested operations, and catches basic drawing-coordinate mistakes such as doodle strokes outside the source SVG viewBox.
 

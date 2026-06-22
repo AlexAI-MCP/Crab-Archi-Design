@@ -26,9 +26,10 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"workflow_run", "opencrab_sync", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
+    assert {"run_job", "workflow_run", "opencrab_sync", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
+    assert manifest["recommended_sequences"]["saas_job_runner"] == ["run_job"]
     assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor"]
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
@@ -51,7 +52,8 @@ def test_mcp_config_writes_runtime_config(tmp_path: Path) -> None:
     assert server["command"] == "crab-archi-design-mcp"
     assert server["args"] == ["--stdio"]
     assert server["env"]["CRAB_ARCHI_PROJECT_ROOT"] == "sandbox-projects"
-    assert config["oauth_worker"]["handoff_sequence"] == ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"]
+    assert config["oauth_worker"]["handoff_sequence"] == ["run-job --job <job.json> --strict"]
+    assert config["oauth_worker"]["manual_handoff_sequence"] == ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"]
     assert config["smoke_test_messages"][0]["method"] == "initialize"
 
     out = tmp_path / "mcp_runtime_config.json"
@@ -75,6 +77,8 @@ def test_mcp_smoke_validates_runtime_config(tmp_path: Path) -> None:
     assert report["status"] == "pass"
     assert report["checks"]["initialize_ok"] is True
     assert report["checks"]["tools_list_ok"] is True
+    assert report["checks"]["run_job_tool_available"] is True
+    assert "run_job" in report["tool_names"]
     assert "workflow_run" in report["tool_names"]
 
 
@@ -120,6 +124,7 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         write_json_line(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         list_response = read_json_line(process)
         tools = {tool["name"]: tool for tool in list_response["result"]["tools"]}
+        assert "run_job" in tools
         assert "doctor" in tools
         assert "mcp_manifest" in tools
         assert "mcp_config" in tools
@@ -725,6 +730,53 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     assert doctor_report["project_checks"]["project_candidate_ready"] is True
     assert doctor_report["package_verification"]["status"] == "pass"
     assert doctor_report["required_checks"]["package.package_verify_pass"] is True
+
+
+def test_run_job_executes_sample_pipeline(tmp_path: Path) -> None:
+    job_path = tmp_path / "job.json"
+    job = {
+        "schema": "crab-archi-design-job-spec-v1",
+        "project_root": str(tmp_path / "projects"),
+        "project_id": "job-demo",
+        "source_svg": str(ROOT / "examples" / "original_sample.svg"),
+        "households": 900,
+        "standards": [str(ROOT / "examples" / "area_standard_sample.csv")],
+        "ontology_pack": "community_svg_topology_ontology_v2",
+        "opencrab_result_file": [str(ROOT / "examples" / "opencrab_mcp_result_sample.json")],
+        "opencrab_source_tool": "opencrab_search_documents",
+        "constraint_sketch": str(ROOT / "examples" / "constraint_sketch_sample.json"),
+        "prompt": "Improve the greenery lounge hierarchy while preserving protected geometry.",
+        "engine_adapter": "reference-svg-engine",
+        "skip_preview": True,
+        "export_package": True,
+        "verify_package": True,
+        "doctor": True,
+        "strict": True,
+    }
+    job_path.write_text(json.dumps(job), encoding="utf-8")
+
+    result = run_cli("run-job", "--job", str(job_path), "--strict", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    report_path = Path(result.stdout.splitlines()[0])
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["schema"] == "crab-archi-design-job-run-report-v1"
+    assert report["status"] == "pass"
+    assert report["failed_steps"] == []
+    step_status = {step["name"]: step["status"] for step in report["steps"]}
+    assert step_status["workflow-run"] == "pass"
+    assert step_status["export-package"] == "pass"
+    assert step_status["verify-package"] == "pass"
+    assert step_status["doctor"] == "pass"
+    assert Path(report["artifacts"]["workflow_report"]).exists()
+    assert Path(report["artifacts"]["export_manifest"]).exists()
+    assert Path(report["artifacts"]["export_zip"]).exists()
+    assert Path(report["artifacts"]["verify_report"]).exists()
+    assert Path(report["artifacts"]["doctor_report"]).exists()
+
+    workflow = json.loads(Path(report["artifacts"]["workflow_report"]).read_text(encoding="utf-8"))
+    assert workflow["status"] == "pass"
+    doctor = json.loads(Path(report["artifacts"]["doctor_report"]).read_text(encoding="utf-8"))
+    assert doctor["status"] == "pass"
 
 
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
