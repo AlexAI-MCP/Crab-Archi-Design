@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crab-archi-design"
+version = "0.1.0"
+description = "Original-SVG-first architectural community design copilot framework."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "AlexAI-MCP" }]
+dependencies = []
+
+[project.urls]
+OpenCrab = "https://opencrab.sh"
+Documentation = "https://opencrab.sh/dashboard"
+
+[project.scripts]
+crab-archi-design = "crab_archi_design.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
