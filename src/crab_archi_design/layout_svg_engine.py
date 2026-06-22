@@ -752,6 +752,48 @@ def add_polygon(parent: ET.Element, points: list[tuple[float, float]], attrs: di
     return ET.SubElement(parent, qname("polygon"), attr)
 
 
+def add_redesign_cleanup_mask(
+    parent: ET.Element,
+    points: list[tuple[float, float]],
+    fallback_box: tuple[float, float, float, float],
+    mask_source: str,
+) -> dict[str, Any]:
+    attrs = {
+        "fill": "#ffffff",
+        "stroke": "none",
+        "data-role": "source-redesign-cleanup-mask",
+        "data-mask-source": mask_source,
+    }
+    if points:
+        add_polygon(parent, points, attrs)
+        return {
+            "applied": True,
+            "mask_source": mask_source,
+            "geometry": "polygon",
+            "area": polygon_area(points),
+            "point_count": len(points),
+        }
+    x, y, w, h = fallback_box
+    ET.SubElement(
+        parent,
+        qname("rect"),
+        {
+            **attrs,
+            "x": f"{x:.3f}",
+            "y": f"{y:.3f}",
+            "width": f"{w:.3f}",
+            "height": f"{h:.3f}",
+        },
+    )
+    return {
+        "applied": True,
+        "mask_source": mask_source,
+        "geometry": "rect",
+        "area": bbox_area(fallback_box),
+        "point_count": 0,
+    }
+
+
 def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any]:
     viewbox = parse_viewbox(root.attrib.get("viewBox"))
     min_x, min_y, width, height = viewbox
@@ -802,6 +844,12 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
     )
     wall = max(width, height) * 0.0024
     x, y, w, h = layout
+    if mutable_points:
+        cleanup_mask = add_redesign_cleanup_mask(group, mutable_points, layout, "mutable_zone")
+    elif shell_points:
+        cleanup_mask = add_redesign_cleanup_mask(group, shell_points, layout, "community_shell")
+    else:
+        cleanup_mask = add_redesign_cleanup_mask(group, [], layout, "layout_box")
     ET.SubElement(
         group,
         qname("rect"),
@@ -914,6 +962,7 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
         "no_go_intrusions": no_go_intrusions,
         "room_shell_violations": shell_violations,
         "room_aspect_violations": aspect_violations,
+        "redesign_cleanup_mask": cleanup_mask,
         "plan_detail": plan_detail_summary,
         "program_areas": program_areas,
         "rooms": rooms,
@@ -969,6 +1018,7 @@ def main() -> None:
                 "no_go_intrusion_free": not summary["no_go_intrusions"],
                 "layout_coverage_sufficient": summary["layout_fill_ratio"] >= 0.98,
                 "room_aspect_efficiency": not summary["room_aspect_violations"],
+                "redesign_cleanup_mask_applied": summary["redesign_cleanup_mask"]["applied"],
                 "plan_detail_layer_added": summary["plan_detail"]["partition_wall_count"] >= summary["room_count"],
                 "door_openings_planned": summary["plan_detail"]["door_opening_count"] >= 4,
                 "corridor_axis_planned": summary["plan_detail"]["corridor_axis_count"] >= 1,

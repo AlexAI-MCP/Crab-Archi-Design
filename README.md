@@ -241,7 +241,7 @@ crab-archi-design qa --project-id demo
 
 `apply-edit` reads structured natural-language and doodle intents plus recognition, topology, evidence, standards, and constraints, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
 
-`layout-svg-engine` is the built-in room-envelope adapter. It reads the community shell, mutable zone, no-go constraints, recognized column candidates, standards rows, and OpenCrab-backed intent, then creates a native SVG redraw layer with program rooms, partition walls, door openings, a corridor axis, interior glazing at the lounge/hall connection, labels, preserved shell/column markup, and no raster overlay.
+`layout-svg-engine` is the built-in room-envelope adapter. It reads the community shell, mutable zone, no-go constraints, recognized column candidates, standards rows, and OpenCrab-backed intent, then creates a native SVG redraw layer with a cleanup mask for the old mutable/internal layout, program rooms, partition walls, door openings, a corridor axis, interior glazing at the lounge/hall connection, labels, preserved shell/column markup, and no raster overlay.
 
 `reference-svg-engine` remains available as a diagnostic adapter. It consumes the same solver input and emits a native SVG candidate plus engine report, using only additive SVG elements and no raster overlay.
 

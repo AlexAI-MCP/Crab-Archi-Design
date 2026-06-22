@@ -842,6 +842,8 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     assert 'data-engine="layout-svg-engine"' in alternative_text
     assert 'data-role="recognized-column-preserved"' in alternative_text
     assert 'id="crab_archi_design_plan_detail_layer"' in alternative_text
+    assert 'data-role="source-redesign-cleanup-mask"' in alternative_text
+    assert 'data-mask-source="mutable_zone"' in alternative_text
     assert 'data-role="partition-wall"' in alternative_text
     assert 'data-role="door-opening"' in alternative_text
     assert 'data-role="corridor-axis"' in alternative_text
@@ -860,6 +862,7 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     assert gates["no_go_intrusion_free"] is True
     assert gates["layout_coverage_sufficient"] is True
     assert gates["room_aspect_efficiency"] is True
+    assert gates["redesign_cleanup_mask_applied"] is True
     assert gates["plan_detail_layer_added"] is True
     assert gates["door_openings_planned"] is True
     assert gates["corridor_axis_planned"] is True
@@ -871,6 +874,9 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     assert engine_report["summary"]["room_count"] >= 7
     assert engine_report["summary"]["layout_coverage_ratio"] >= 0.78
     assert engine_report["summary"]["room_shell_violations"] == []
+    assert engine_report["summary"]["redesign_cleanup_mask"]["applied"] is True
+    assert engine_report["summary"]["redesign_cleanup_mask"]["mask_source"] == "mutable_zone"
+    assert engine_report["summary"]["redesign_cleanup_mask"]["geometry"] == "polygon"
     assert engine_report["summary"]["plan_detail"]["partition_wall_count"] >= engine_report["summary"]["room_count"]
     assert engine_report["summary"]["plan_detail"]["door_opening_count"] >= 4
     assert engine_report["summary"]["plan_detail"]["corridor_axis_count"] >= 1
@@ -920,6 +926,8 @@ def test_layout_engine_repairs_rooms_inside_community_shell() -> None:
     assert summary["layout_repair"]["feasible_layout_boxes"] > 0
     assert summary["room_plan"]["selected_room_plan_shell_violation_count"] == 0
     assert summary["layout_fill_ratio"] >= 0.98
+    assert summary["redesign_cleanup_mask"]["applied"] is True
+    assert summary["redesign_cleanup_mask"]["mask_source"] == "community_shell"
     assert summary["plan_detail"]["door_opening_count"] >= 4
 
 
