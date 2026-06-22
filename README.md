@@ -67,6 +67,10 @@ crab-archi-design sketch-intent \
 
 crab-archi-design doodle-editor
 
+crab-archi-design edit-brief \
+  --project-id demo \
+  --intent all
+
 crab-archi-design apply-edit \
   --project-id demo \
   --intent all \
@@ -83,6 +87,8 @@ crab-archi-design qa --project-id demo
 `evidence-attach` writes `projects/<project>/evidence/evidence_manifest.json`. `qa` and `apply-edit` require this manifest to be verified before a final SVG alternative can pass.
 
 `doodle-editor` prints the local SVG doodle editor path and `file://` URL. The editor loads a source SVG from your machine, records vector strokes in source viewBox coordinates, and downloads sketch JSON for `sketch-intent`.
+
+`edit-brief` summarizes natural-language and doodle intents before SVG mutation. It writes JSON and Markdown briefs, checks OpenCrab evidence, and flags doodle strokes outside the source SVG viewBox.
 
 `review-panel` generates a local before/after HTML panel with original SVG, alternative SVG, intent summary, apply checks, and engine QA gates.
 
@@ -101,6 +107,7 @@ Original SVG
   -> OpenCrab MCP Ontology Evidence
   -> Standards Evidence
   -> Design Intent JSON
+  -> Edit Brief
   -> Native SVG Solver
   -> QA
   -> Natural Language / Doodle Edit Loop

@@ -91,6 +91,7 @@ def command_init(args: argparse.Namespace) -> None:
             "alternatives_dir": str(out_dir / "alternatives"),
             "edit_intents_dir": str(out_dir / "edit_intents"),
             "evidence_dir": str(out_dir / "evidence"),
+            "briefs_dir": str(out_dir / "briefs"),
             "runs_dir": str(out_dir / "runs"),
             "qa_dir": str(out_dir / "qa"),
         },
@@ -195,7 +196,7 @@ def command_sketch_intent(args: argparse.Namespace) -> None:
         "schema": "crab-archi-design-doodle-edit-intent-v1",
         "created_at": now(),
         "project_id": args.project_id,
-        "source": {"type": "vector_sketch_layer", "path": str(sketch_path)},
+        "source": {"type": "vector_sketch_layer", "path": str(sketch_path.resolve())},
         "coordinate_space": sketch.get("coordinate_space", "source_svg_viewbox"),
         "operations": operations,
         "hard_constraints": manifest.get("hard_constraints", []),
@@ -433,6 +434,8 @@ def local_tag(el: ET.Element) -> str:
 def inspect_svg(path: Path) -> dict[str, Any]:
     try:
         root = ET.parse(path).getroot()
+    except OSError as exc:
+        return {"xml_parse": "missing", "error": str(exc), "image_elements": None}
     except ET.ParseError as exc:
         return {"xml_parse": "error", "error": str(exc), "image_elements": None}
     return {
@@ -441,6 +444,204 @@ def inspect_svg(path: Path) -> dict[str, Any]:
         "image_elements": sum(1 for el in root.iter() if local_tag(el) == "image"),
         "text_elements": sum(1 for el in root.iter() if local_tag(el) == "text"),
     }
+
+
+def parse_viewbox(raw: Any) -> list[float] | None:
+    if isinstance(raw, list) and len(raw) == 4:
+        try:
+            values = [float(item) for item in raw]
+        except (TypeError, ValueError):
+            return None
+        return values if values[2] > 0 and values[3] > 0 else None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        values = [float(item) for item in re.split(r"[,\s]+", raw.strip()) if item]
+    except ValueError:
+        return None
+    if len(values) != 4 or values[2] <= 0 or values[3] <= 0:
+        return None
+    return values
+
+
+def point_inside_viewbox(point: Any, viewbox: list[float] | None) -> bool:
+    if viewbox is None:
+        return True
+    if not isinstance(point, (list, tuple)) or len(point) < 2:
+        return False
+    try:
+        x = float(point[0])
+        y = float(point[1])
+    except (TypeError, ValueError):
+        return False
+    min_x, min_y, width, height = viewbox
+    return min_x <= x <= min_x + width and min_y <= y <= min_y + height
+
+
+def load_sketch_from_intent(intent: dict[str, Any]) -> tuple[Path | None, dict[str, Any] | None]:
+    if intent.get("source", {}).get("type") != "vector_sketch_layer":
+        return None, None
+    raw_path = intent.get("source", {}).get("path")
+    if not raw_path:
+        return None, None
+    path = Path(raw_path).expanduser()
+    if not path.exists():
+        return path, None
+    return path, read_json(path)
+
+
+def analyze_sketch(sketch: dict[str, Any] | None, fallback_viewbox: list[float] | None) -> dict[str, Any]:
+    if sketch is None:
+        return {
+            "source_available": False,
+            "stroke_count": 0,
+            "point_count": 0,
+            "out_of_bounds_points": 0,
+            "viewBox": fallback_viewbox,
+            "modes": [],
+            "target_hints": [],
+        }
+    viewbox = parse_viewbox(sketch.get("viewBox")) or fallback_viewbox
+    stroke_count = 0
+    point_count = 0
+    out_of_bounds = 0
+    modes: set[str] = set()
+    target_hints: set[str] = set()
+    for stroke in sketch.get("strokes", []):
+        stroke_count += 1
+        mode = stroke.get("mode") or stroke.get("tool")
+        if mode:
+            modes.add(str(mode))
+        target_hint = stroke.get("target_hint")
+        if target_hint:
+            target_hints.add(str(target_hint))
+        for point in stroke.get("points", []):
+            point_count += 1
+            if not point_inside_viewbox(point, viewbox):
+                out_of_bounds += 1
+    return {
+        "source_available": True,
+        "stroke_count": stroke_count,
+        "point_count": point_count,
+        "out_of_bounds_points": out_of_bounds,
+        "viewBox": viewbox,
+        "modes": sorted(modes),
+        "target_hints": sorted(target_hints),
+    }
+
+
+def flatten_operations(intents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for intent in intents:
+        for op in intent.get("operations", []):
+            rows.append(
+                {
+                    "schema": intent.get("schema"),
+                    "source": intent.get("source", {}).get("type"),
+                    "target": op.get("target") or op.get("target_hint"),
+                    "action": op.get("action") or op.get("edit_type"),
+                    "method": op.get("method") or op.get("snap_policy"),
+                    "stroke_id": op.get("stroke_id"),
+                }
+            )
+    return rows
+
+
+def build_edit_brief_markdown(brief: dict[str, Any]) -> str:
+    lines = [
+        f"# {brief['project_id']} Edit Brief",
+        "",
+        f"- Status: `{brief['status']}`",
+        f"- Created: `{brief['created_at']}`",
+        f"- Intent count: `{brief['intent_count']}`",
+        f"- Evidence status: `{brief['evidence_status']}`",
+        "",
+        "## Checks",
+        "",
+    ]
+    for key, value in brief["checks"].items():
+        lines.append(f"- `{key}`: `{str(value).lower()}`")
+    lines.extend(["", "## Operations", ""])
+    if brief["operations"]:
+        for op in brief["operations"]:
+            label = op.get("target") or op.get("action") or "operation"
+            detail = ", ".join(str(item) for item in [op.get("action"), op.get("method"), op.get("stroke_id")] if item)
+            lines.append(f"- `{label}`: {detail or 'review'}")
+    else:
+        lines.append("- No operations.")
+    lines.extend(["", "## Sketch Analysis", ""])
+    if brief["sketch_analysis"]:
+        for item in brief["sketch_analysis"]:
+            lines.append(
+                f"- `{item['path']}`: strokes `{item['stroke_count']}`, points `{item['point_count']}`, "
+                f"out_of_bounds `{item['out_of_bounds_points']}`, modes `{', '.join(item['modes']) or '-'}"
+            )
+    else:
+        lines.append("- No sketch intent attached.")
+    lines.extend(["", "## Next Solver Instruction", "", brief["next_solver_instruction"], ""])
+    return "\n".join(lines)
+
+
+def command_edit_brief(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    base = project_dir(args.project_id, root)
+    intent_paths = resolve_intent_paths(base, args.intent)
+    intents = [read_json(path) for path in intent_paths]
+    source_info = inspect_svg(Path(manifest["source_svg"]).expanduser())
+    fallback_viewbox = parse_viewbox(source_info.get("viewBox"))
+    sketch_analysis = []
+
+    for intent in intents:
+        sketch_path, sketch = load_sketch_from_intent(intent)
+        if sketch_path is None:
+            continue
+        analysis = analyze_sketch(sketch, fallback_viewbox)
+        analysis["path"] = str(sketch_path)
+        sketch_analysis.append(analysis)
+
+    evidence_manifest = load_evidence_manifest(args.project_id, root)
+    checks = {
+        "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
+        "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
+        "intent_count_positive": len(intent_paths) > 0,
+        "sketch_sources_available": all(item["source_available"] for item in sketch_analysis),
+        "sketch_points_inside_viewbox": all(item["out_of_bounds_points"] == 0 for item in sketch_analysis),
+    }
+    operations = flatten_operations(intents)
+    brief = {
+        "schema": "crab-archi-design-edit-brief-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "status": "pass" if all(checks.values()) else "review_required",
+        "manifest": {
+            "source_svg": manifest.get("source_svg"),
+            "household_count": manifest.get("household_count"),
+            "ontology_pack": manifest.get("ontology_pack"),
+        },
+        "intent_paths": [str(path) for path in intent_paths],
+        "intent_count": len(intent_paths),
+        "operations": operations,
+        "source_svg_info": source_info,
+        "evidence_status": evidence_status(evidence_manifest),
+        "evidence_count": count_evidence_items(evidence_manifest),
+        "checks": checks,
+        "sketch_analysis": sketch_analysis,
+        "hard_constraints": manifest.get("hard_constraints", []),
+        "next_solver_instruction": (
+            "Apply only native SVG edits inside mutable community zones. Preserve parking count, columns, cores, "
+            "stairs, ramps, egress, and the community outer shell. Treat doodle strokes as intent anchors, not final geometry."
+        ),
+    }
+    briefs_dir = base / "briefs"
+    seq = next_sequence(briefs_dir, "edit_brief_*.json")
+    json_path = briefs_dir / f"edit_brief_{seq:03d}.json"
+    md_path = briefs_dir / f"edit_brief_{seq:03d}.md"
+    write_json(json_path, brief)
+    md_path.write_text(build_edit_brief_markdown(brief), encoding="utf-8")
+    print(json_path)
+    print(md_path)
+    print(json.dumps({"status": brief["status"], "checks": checks}, ensure_ascii=False))
 
 
 def read_text_file(path: Path) -> str:
@@ -972,6 +1173,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_evidence.add_argument("--evidence-id")
     p_evidence.add_argument("--metadata", action="append", default=[])
     p_evidence.set_defaults(func=command_evidence_attach)
+
+    p_brief = sub.add_parser("edit-brief", help="Summarize natural-language and doodle intents before SVG mutation.")
+    p_brief.add_argument("--project-id", required=True)
+    p_brief.add_argument("--intent", default="all", help="latest, all, or a project-relative/absolute intent JSON path.")
+    p_brief.set_defaults(func=command_edit_brief)
 
     p_apply = sub.add_parser("apply-edit", help="Run an engine adapter from structured edit intent and collect a native SVG alternative.")
     p_apply.add_argument("--project-id", required=True)

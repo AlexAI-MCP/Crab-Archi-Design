@@ -116,6 +116,78 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     assert '"status": "pass"' in result.stdout
     assert '"opencrab_evidence_verified": true' in result.stdout
 
+    result = run_cli("--project-root", str(tmp_path / "projects"), "edit-brief", "--project-id", "demo", "--intent", "all", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    brief_json = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    brief_md = Path(result.stdout.splitlines()[1]).read_text(encoding="utf-8")
+    assert brief_json["status"] == "pass"
+    assert brief_json["checks"]["opencrab_evidence_verified"] is True
+    assert brief_json["checks"]["sketch_points_inside_viewbox"] is True
+    assert "greenery_lounge" in brief_md
+
+
+def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
+    source_svg = tmp_path / "original.svg"
+    source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'></svg>", encoding="utf-8")
+    sketch = tmp_path / "outside_sketch.json"
+    sketch.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [{"stroke_id": "s1", "mode": "program_shift", "points": [[0, 0], [12, 12]]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "init",
+        "--project-id",
+        "demo",
+        "--source-svg",
+        str(source_svg),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    evidence_source = tmp_path / "evidence.json"
+    evidence_source.write_text(json.dumps({"quality_status": "pass"}), encoding="utf-8")
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "evidence-attach",
+        "--project-id",
+        "demo",
+        "--source-file",
+        str(evidence_source),
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "sketch-intent",
+        "--project-id",
+        "demo",
+        "--sketch",
+        str(sketch),
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "edit-brief", "--project-id", "demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    brief_json = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert brief_json["status"] == "review_required"
+    assert brief_json["checks"]["opencrab_evidence_verified"] is True
+    assert brief_json["checks"]["sketch_points_inside_viewbox"] is False
+    assert brief_json["sketch_analysis"][0]["out_of_bounds_points"] == 1
+
 
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"

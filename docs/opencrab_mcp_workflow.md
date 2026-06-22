@@ -15,9 +15,10 @@ OpenCrab MCP is the required knowledge path for Crab Archi Design.
 5. Retrieve precedent topology, program hierarchy, adjacency levers, area standards, claims, and evidence references.
 6. Project the superior-case ontology onto the target drawing's mutable zones.
 7. Compile a `DesignIntent` JSON with OpenCrab evidence references.
-8. Generate native SVG geometry through a deterministic solver.
-9. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
-10. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+8. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
+9. Generate native SVG geometry through a deterministic solver.
+10. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
+11. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -32,6 +33,8 @@ projects/<project>/evidence/evidence_manifest.json
 ```
 
 `qa` and `apply-edit` treat the candidate as `review_required` until that manifest has `status: verified`. The `opencrab_evidence_verified` check must pass before a generated SVG can be treated as an evidence-backed alternative.
+
+`edit-brief` should be run after natural-language or doodle input and before `apply-edit`. It does not replace OpenCrab MCP. It confirms the OpenCrab evidence gate, summarizes the requested operations, and catches basic drawing-coordinate mistakes such as doodle strokes outside the source SVG viewBox.
 
 ## Community Layout Pack Expectations
 

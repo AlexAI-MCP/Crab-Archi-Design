@@ -92,6 +92,25 @@ crab-archi-design --project-root projects sketch-intent \
 
 Natural language and doodles can be combined. For example, use natural language to state the design rule, then use a doodle to point to the exact wall, door, or corridor segment.
 
+## Review the Edit Brief
+
+Before mutating SVG geometry, compile the current natural-language and doodle intents into a reviewable brief:
+
+```bash
+crab-archi-design --project-root projects edit-brief \
+  --project-id a801-802-opencrab-test \
+  --intent all
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/briefs/edit_brief_###.json
+projects/a801-802-opencrab-test/briefs/edit_brief_###.md
+```
+
+The brief checks whether OpenCrab evidence is verified, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
+
 ## Apply the Edit
 
 ```bash
@@ -133,9 +152,10 @@ For architectural layout revisions, use this order:
 
 1. Natural language: describe the intent and constraints.
 2. Doodle: mark the exact edge, room, circulation line, or wall segment.
-3. `apply-edit`: generate a native SVG candidate.
-4. `review-panel`: inspect before/after.
-5. Repeat with another short prompt or doodle repair intent.
+3. `edit-brief`: check evidence, source SVG parse, and sketch bounds.
+4. `apply-edit`: generate a native SVG candidate.
+5. `review-panel`: inspect before/after.
+6. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 
