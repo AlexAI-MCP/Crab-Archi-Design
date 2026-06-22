@@ -40,6 +40,7 @@ prompt-edit / sketch-intent
   -> engine adapter
   -> alternatives/alternative_###.svg
   -> apply_edit_report.json
+  -> review-panel
 ```
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.

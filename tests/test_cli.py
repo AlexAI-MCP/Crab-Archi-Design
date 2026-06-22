@@ -155,6 +155,23 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     solver_input = json.loads(Path(report["solver_input"]).read_text(encoding="utf-8"))
     assert solver_input["intents"][0]["schema"] == "crab-archi-design-natural-language-edit-intent-v1"
 
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "review-panel",
+        "--project-id",
+        "demo",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    panel_path = Path(result.stdout.splitlines()[0])
+    panel = panel_path.read_text(encoding="utf-8")
+    assert "demo Review Panel" in panel
+    assert "Original" in panel
+    assert "Alternative" in panel
+    assert "native_svg_no_images" in panel
+    assert "greenery_lounge" in panel
+
 
 def test_doodle_editor_command_prints_local_editor() -> None:
     result = run_cli("doodle-editor", cwd=ROOT)

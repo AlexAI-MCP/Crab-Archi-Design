@@ -81,6 +81,21 @@ crab-archi-design --project-root projects apply-edit \
 6. Copies the generated SVG to `alternatives/alternative_###.svg`.
 7. Writes `runs/apply_edit_###/apply_edit_report.json`.
 
+## Review the Alternative
+
+```bash
+crab-archi-design --project-root projects review-panel \
+  --project-id a801-802-opencrab-test
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/panels/review_panel_###.html
+```
+
+The panel embeds the original SVG and generated alternative SVG side by side, then shows the intent summary, apply checks, engine QA gates, and SVG inspection counts.
+
 ## Safety Order
 
 The solver should apply instructions in this priority:

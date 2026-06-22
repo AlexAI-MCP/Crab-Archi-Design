@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -212,6 +213,11 @@ def sorted_json_files(path: Path, pattern: str) -> list[Path]:
     return sorted(path.glob(pattern), key=lambda item: (item.stat().st_mtime, item.name))
 
 
+def latest_file(path: Path, pattern: str) -> Path | None:
+    candidates = sorted(path.glob(pattern), key=lambda item: (item.stat().st_mtime, item.name))
+    return candidates[-1] if candidates else None
+
+
 def resolve_intent_paths(base: Path, selector: str) -> list[Path]:
     intent_dir = base / "edit_intents"
     if selector == "latest":
@@ -350,6 +356,288 @@ def inspect_svg(path: Path) -> dict[str, Any]:
         "image_elements": sum(1 for el in root.iter() if local_tag(el) == "image"),
         "text_elements": sum(1 for el in root.iter() if local_tag(el) == "text"),
     }
+
+
+def read_text_file(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def resolve_project_path(base: Path, value: str | None) -> Path | None:
+    if not value:
+        return None
+    path = Path(value).expanduser()
+    if path.is_absolute() or path.exists():
+        return path
+    return base / value
+
+
+def resolve_apply_report(base: Path, selector: str) -> Path:
+    if selector == "latest":
+        report = latest_file(base / "runs", "apply_edit_*/apply_edit_report.json")
+        if report is None:
+            raise SystemExit(f"No apply-edit report found under {base / 'runs'}")
+        return report
+    path = resolve_project_path(base, selector)
+    if path is None or not path.exists():
+        raise SystemExit(f"Missing apply-edit report: {selector}")
+    return path
+
+
+def resolve_alternative_svg(base: Path, selector: str, apply_report: dict[str, Any]) -> Path:
+    if selector == "from-report":
+        items = apply_report.get("copied_artifacts", {}).get("svg", [])
+        if items:
+            path = resolve_project_path(base, items[0])
+            if path is not None and path.exists():
+                return path
+    elif selector == "latest":
+        path = latest_file(base / "alternatives", "alternative_*.svg")
+        if path is not None:
+            return path
+    else:
+        path = resolve_project_path(base, selector)
+        if path is not None and path.exists():
+            return path
+    raise SystemExit("Missing alternative SVG")
+
+
+def collect_intent_summary(intent_paths: list[str]) -> list[dict[str, Any]]:
+    rows = []
+    for raw_path in intent_paths:
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        data = read_json(path)
+        rows.append(
+            {
+                "file": path.name,
+                "schema": data.get("schema"),
+                "source": data.get("source", {}).get("type"),
+                "strategy": data.get("strategy"),
+                "operations": data.get("operations", []),
+            }
+        )
+    return rows
+
+
+def summarize_checks(checks: dict[str, Any]) -> tuple[int, int]:
+    total = 0
+    passed = 0
+
+    def walk(value: Any) -> None:
+        nonlocal total, passed
+        if isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        else:
+            total += 1
+            if value is True:
+                passed += 1
+
+    walk(checks)
+    return passed, total
+
+
+def render_check_list(checks: dict[str, Any]) -> str:
+    lines = []
+    for key, value in checks.items():
+        if isinstance(value, dict):
+            passed, total = summarize_checks(value)
+            label = f"{passed}/{total}"
+            state = "pass" if passed == total else "review"
+        else:
+            label = "pass" if value is True else "review"
+            state = label
+        lines.append(f'<li class="{state}"><span>{html.escape(str(key))}</span><strong>{html.escape(label)}</strong></li>')
+    return "\n".join(lines)
+
+
+def render_intent_list(intents: list[dict[str, Any]]) -> str:
+    rows = []
+    for intent in intents:
+        ops = intent.get("operations") or []
+        op_labels = []
+        for op in ops:
+            target = op.get("target") or op.get("target_hint") or op.get("edit_type") or "operation"
+            action = op.get("action") or op.get("method") or op.get("edit_type") or ""
+            op_labels.append(f"{target}: {action}".strip(": "))
+        rows.append(
+            "<li>"
+            f"<strong>{html.escape(intent.get('file') or 'intent')}</strong>"
+            f"<span>{html.escape(intent.get('schema') or '')}</span>"
+            f"<p>{html.escape('; '.join(op_labels) or 'No operations')}</p>"
+            "</li>"
+        )
+    return "\n".join(rows)
+
+
+def build_review_panel_html(context: dict[str, Any]) -> str:
+    source_svg = context["source_svg_markup"]
+    alternative_svg = context["alternative_svg_markup"]
+    apply_checks = render_check_list(context["apply_checks"])
+    engine_checks = render_check_list(context["engine_quality_gates"])
+    intent_list = render_intent_list(context["intents"])
+    source_info = html.escape(json.dumps(context["source_svg_info"], ensure_ascii=False, indent=2))
+    alt_info = html.escape(json.dumps(context["alternative_svg_info"], ensure_ascii=False, indent=2))
+    title = html.escape(context["title"])
+    generated_at = html.escape(context["generated_at"])
+    project_id = html.escape(context["project_id"])
+    source_path = html.escape(context["source_svg_path"])
+    alternative_path = html.escape(context["alternative_svg_path"])
+    report_path = html.escape(context["apply_report_path"])
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #f6f7f4;
+      --panel: #fff;
+      --ink: #171717;
+      --muted: #687076;
+      --line: #d9ded8;
+      --accent: #0f766e;
+      --warn: #b45309;
+      --ok: #15803d;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; background: var(--bg); color: var(--ink); }}
+    header {{ padding: 18px 22px; border-bottom: 1px solid var(--line); background: var(--panel); }}
+    h1 {{ margin: 0; font-size: 20px; letter-spacing: 0; }}
+    .meta {{ display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 8px; color: var(--muted); font-size: 12px; }}
+    main {{ display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; padding: 16px; }}
+    .comparison {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; min-width: 0; }}
+    section {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0; overflow: hidden; }}
+    h2 {{ margin: 0; padding: 11px 13px; font-size: 13px; border-bottom: 1px solid var(--line); }}
+    .viewport {{ height: 72vh; overflow: auto; background: #fff; }}
+    .viewport svg {{ display: block; width: 100%; height: auto; }}
+    aside {{ display: grid; gap: 16px; align-content: start; }}
+    .box {{ padding: 12px; }}
+    ul {{ list-style: none; padding: 0; margin: 0; display: grid; gap: 7px; }}
+    li {{ border: 1px solid var(--line); border-radius: 8px; padding: 9px; }}
+    li.pass strong {{ color: var(--ok); }}
+    li.review strong {{ color: var(--warn); }}
+    li span {{ display: block; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }}
+    li p {{ margin: 6px 0 0; font-size: 12px; line-height: 1.4; color: #30343a; overflow-wrap: anywhere; }}
+    pre {{ white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.4; margin: 0; color: #30343a; }}
+    .paths {{ color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }}
+    @media (max-width: 1180px) {{
+      main {{ grid-template-columns: 1fr; }}
+      .comparison {{ grid-template-columns: 1fr; }}
+      .viewport {{ height: 56vh; }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{title}</h1>
+    <div class="meta">
+      <span>Project: {project_id}</span>
+      <span>Generated: {generated_at}</span>
+    </div>
+  </header>
+  <main>
+    <div class="comparison">
+      <section>
+        <h2>Original</h2>
+        <div class="viewport">{source_svg}</div>
+      </section>
+      <section>
+        <h2>Alternative</h2>
+        <div class="viewport">{alternative_svg}</div>
+      </section>
+    </div>
+    <aside>
+      <section>
+        <h2>Apply Checks</h2>
+        <div class="box"><ul>{apply_checks}</ul></div>
+      </section>
+      <section>
+        <h2>Engine Gates</h2>
+        <div class="box"><ul>{engine_checks}</ul></div>
+      </section>
+      <section>
+        <h2>Intent</h2>
+        <div class="box"><ul>{intent_list}</ul></div>
+      </section>
+      <section>
+        <h2>SVG Info</h2>
+        <div class="box"><pre>{source_info}</pre><pre>{alt_info}</pre></div>
+      </section>
+      <section>
+        <h2>Files</h2>
+        <div class="box paths">
+          <div>Source: {source_path}</div>
+          <div>Alternative: {alternative_path}</div>
+          <div>Apply report: {report_path}</div>
+        </div>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>
+"""
+
+
+def command_review_panel(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    base = project_dir(args.project_id, root)
+    apply_report_path = resolve_apply_report(base, args.apply_report)
+    apply_report = read_json(apply_report_path)
+    source_svg = Path(manifest["source_svg"]).expanduser()
+    alternative_svg = resolve_alternative_svg(base, args.alternative, apply_report)
+    source_info = inspect_svg(source_svg)
+    alternative_info = inspect_svg(alternative_svg)
+
+    engine_quality = {}
+    for report_path in apply_report.get("copied_artifacts", {}).get("report", []):
+        path = resolve_project_path(base, report_path)
+        if path is None or path.suffix.lower() != ".json" or not path.exists():
+            continue
+        try:
+            data = read_json(path)
+        except json.JSONDecodeError:
+            continue
+        quality = data.get("quality", {})
+        gates = quality.get("gates")
+        if isinstance(gates, dict):
+            engine_quality = gates
+            break
+
+    if not engine_quality:
+        engine_quality = {"engine_report_quality_gates_found": False}
+
+    panel_dir = base / "panels"
+    panel_seq = next_sequence(panel_dir, "review_panel_*.html")
+    panel_path = panel_dir / f"review_panel_{panel_seq:03d}.html"
+    context = {
+        "title": args.title or f"{args.project_id} Review Panel",
+        "generated_at": now(),
+        "project_id": args.project_id,
+        "source_svg_path": str(source_svg),
+        "alternative_svg_path": str(alternative_svg),
+        "apply_report_path": str(apply_report_path),
+        "source_svg_markup": read_text_file(source_svg),
+        "alternative_svg_markup": read_text_file(alternative_svg),
+        "source_svg_info": source_info,
+        "alternative_svg_info": alternative_info,
+        "apply_checks": apply_report.get("checks", {}),
+        "engine_quality_gates": engine_quality,
+        "intents": collect_intent_summary(apply_report.get("intent_paths", [])),
+    }
+    html_text = build_review_panel_html(context)
+    panel_path.parent.mkdir(parents=True, exist_ok=True)
+    panel_path.write_text(html_text, encoding="utf-8")
+    print(panel_path)
+    print(panel_path.resolve().as_uri())
+    if args.open:
+        webbrowser.open(panel_path.resolve().as_uri())
 
 
 def copy_artifact(src: Path, dest_dir: Path, prefix: str) -> Path:
@@ -575,6 +863,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_editor = sub.add_parser("doodle-editor", help="Print or open the local SVG doodle editor.")
     p_editor.add_argument("--open", action="store_true")
     p_editor.set_defaults(func=command_doodle_editor)
+
+    p_review = sub.add_parser("review-panel", help="Generate a local before/after SVG review panel.")
+    p_review.add_argument("--project-id", required=True)
+    p_review.add_argument("--apply-report", default="latest", help="latest or a project-relative/absolute apply_edit_report.json path.")
+    p_review.add_argument("--alternative", default="from-report", help="from-report, latest, or a project-relative/absolute SVG path.")
+    p_review.add_argument("--title")
+    p_review.add_argument("--open", action="store_true")
+    p_review.set_defaults(func=command_review_panel)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

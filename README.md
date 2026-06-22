@@ -66,12 +66,17 @@ crab-archi-design apply-edit \
   --intent all \
   --skip-preview
 
+crab-archi-design review-panel \
+  --project-id demo
+
 crab-archi-design qa --project-id demo
 ```
 
 `apply-edit` reads structured natural-language and doodle intents, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
 
 `doodle-editor` prints the local SVG doodle editor path and `file://` URL. The editor loads a source SVG from your machine, records vector strokes in source viewBox coordinates, and downloads sketch JSON for `sketch-intent`.
+
+`review-panel` generates a local before/after HTML panel with original SVG, alternative SVG, intent summary, apply checks, and engine QA gates.
 
 For the full revision loop, see [docs/edit_loop.md](docs/edit_loop.md).
 
