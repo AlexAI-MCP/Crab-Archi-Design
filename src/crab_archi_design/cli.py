@@ -3546,6 +3546,13 @@ def create_job_output_path(project_id: str, output: str | None, output_dir: str 
     return path
 
 
+def create_job_brief_path(job_path: Path, brief_output: str | None) -> Path:
+    path = Path(brief_output).expanduser() if brief_output else job_path.with_suffix(".md")
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
+
+
 def write_job_validation_report_file(report: dict[str, Any], output_dir: str | None) -> Path:
     out_dir = Path(output_dir).expanduser() if output_dir else Path("diagnostics")
     if not out_dir.is_absolute():
@@ -3562,10 +3569,92 @@ def write_validation_report(job_path: Path, job: dict[str, Any], default_project
     return out, report
 
 
+def md_cell(value: Any) -> str:
+    return str(value if value is not None else "n/a").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def bool_label(value: Any) -> str:
+    return "yes" if bool(value) else "no"
+
+
+def build_job_brief_markdown(job_path: Path, job: dict[str, Any], validation_path: Path | None, validation_report: dict[str, Any] | None) -> str:
+    validation_status = validation_report.get("status") if validation_report else "not_run"
+    files = validation_report.get("files", []) if validation_report else []
+    checks = validation_report.get("checks", {}) if validation_report else {}
+    lines = [
+        f"# Crab Archi Design Job Brief: {job.get('project_id')}",
+        "",
+        "## Job",
+        "",
+        f"- Job spec: `{job_path}`",
+        f"- Validation report: `{validation_path}`" if validation_path else "- Validation report: not generated",
+        f"- Validation status: `{validation_status}`",
+        f"- Project root: `{job.get('project_root')}`",
+        f"- Path base: `{job.get('path_base')}`",
+        f"- Source SVG: `{job.get('source_svg')}`",
+        f"- Households: `{job.get('households') if job.get('households') is not None else 'n/a'}`",
+        f"- Engine adapter: `{job.get('engine_adapter')}`",
+        "",
+        "## Knowledge And Constraints",
+        "",
+        f"- OpenCrab MCP server: `{job.get('opencrab_mcp_server')}`",
+        f"- OpenCrab homepage: `{job.get('opencrab_homepage')}`",
+        f"- OpenCrab source tool: `{job.get('opencrab_source_tool')}`",
+        f"- Ontology pack: `{job.get('ontology_pack') or 'n/a'}`",
+        f"- Standards files: `{len(job_value_list(job, 'standards'))}`",
+        f"- OpenCrab result files: `{len(job_value_list(job, 'opencrab_result_file'))}`",
+        f"- Constraint sketch: `{job.get('constraint_sketch') or 'n/a'}`",
+        f"- Edit sketch: `{job.get('sketch') or 'n/a'}`",
+        "",
+        "## Execution Policy",
+        "",
+        f"- Skip preview: `{bool_label(job.get('skip_preview'))}`",
+        f"- Skip apply: `{bool_label(job.get('skip_apply'))}`",
+        f"- Skip review panel: `{bool_label(job.get('skip_review_panel'))}`",
+        f"- Export package: `{bool_label(job.get('export_package', True))}`",
+        f"- Verify package: `{bool_label(job.get('verify_package', True))}`",
+        f"- Doctor: `{bool_label(job.get('doctor', True))}`",
+        f"- Include source SVG in export: `{bool_label(job.get('include_source_svg'))}`",
+        f"- Strict run: `{bool_label(job.get('strict'))}`",
+        "",
+        "## Validation Checks",
+        "",
+        "| Check | Status |",
+        "| --- | --- |",
+    ]
+    if checks:
+        for key in sorted(checks):
+            lines.append(f"| {md_cell(key)} | {md_cell(bool_label(checks[key]))} |")
+    else:
+        lines.append("| validation | not run |")
+
+    lines.extend(["", "## Referenced Files", "", "| Role | Exists | Path |", "| --- | --- | --- |"])
+    if files:
+        for item in files:
+            lines.append(f"| {md_cell(item.get('key'))} | {md_cell(bool_label(item.get('exists')))} | `{md_cell(item.get('path'))}` |")
+    else:
+        lines.append("| n/a | n/a | n/a |")
+
+    prompt = str(job.get("prompt") or "").strip()
+    lines.extend(["", "## Prompt", "", prompt or "No prompt supplied.", "", "## Next Commands", "", "```bash"])
+    lines.append(f"crab-archi-design validate-job --job {shlex.quote(str(job_path))} --strict")
+    lines.append(f"crab-archi-design run-job --job {shlex.quote(str(job_path))} --strict")
+    lines.extend(["```", ""])
+    return "\n".join(lines)
+
+
+def write_job_brief(path: Path, job_path: Path, job: dict[str, Any], validation_path: Path | None, validation_report: dict[str, Any] | None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(build_job_brief_markdown(job_path, job, validation_path, validation_report), encoding="utf-8")
+
+
 def command_create_job(args: argparse.Namespace) -> None:
     out = create_job_output_path(args.project_id, args.output, args.output_dir)
     if out.exists() and not args.force:
         raise SystemExit(f"Job spec already exists: {out}. Use --force to overwrite.")
+    brief_path = create_job_brief_path(out, args.brief_output) if args.brief else None
+    if brief_path and brief_path.exists() and not args.force:
+        raise SystemExit(f"Job brief already exists: {brief_path}. Use --force to overwrite.")
 
     job: dict[str, Any] = {
         "schema": "crab-archi-design-job-spec-v1",
@@ -3630,12 +3719,19 @@ def command_create_job(args: argparse.Namespace) -> None:
         )
         print(validation_path)
 
+    if brief_path:
+        if validation_report is None:
+            validation_report = build_job_validation_report(out, job, args.project_root, check_files=not args.no_validate_file_checks)
+        write_job_brief(brief_path, out, job, validation_path, validation_report)
+        print(brief_path)
+
     summary = {
         "status": "created",
         "job_spec": str(out),
         "project_id": args.project_id,
         "validation_report": str(validation_path) if validation_path else None,
         "validation_status": validation_report.get("status") if validation_report else None,
+        "job_brief": str(brief_path) if brief_path else None,
     }
     print(json.dumps(summary, ensure_ascii=False))
     if args.strict_validation and validation_report and validation_report.get("status") != "pass":
@@ -4331,8 +4427,10 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
                 "--validation-output-dir",
                 "--no-validate-file-checks",
                 "--strict-validation",
+                "--brief",
+                "--brief-output",
             ],
-            "outputs": ["job_specs/<project>_job.json", "diagnostics/job_validation_###.json when --validate is used"],
+            "outputs": ["job_specs/<project>_job.json", "diagnostics/job_validation_###.json when --validate is used", "job_specs/<project>_job.md when --brief is used"],
             "gates": ["job_spec_created", "job_spec_valid"],
         },
         {
@@ -4632,7 +4730,7 @@ def build_mcp_runtime_config(server_name: str, project_root_value: str, cwd_valu
                 ["crab-archi-design", "--project-root", project_root_value, "doctor", "--strict"],
             ],
             "handoff_sequence": [
-                "create-job --project-id <project-id> --source-svg <source.svg> --standards <standards.csv> --ontology-pack <pack-id> --opencrab-result-file <opencrab.json> --constraint-sketch <constraints.json> --output <job.json> --validate --strict-validation",
+                "create-job --project-id <project-id> --source-svg <source.svg> --standards <standards.csv> --ontology-pack <pack-id> --opencrab-result-file <opencrab.json> --constraint-sketch <constraints.json> --output <job.json> --validate --strict-validation --brief",
                 "validate-job --job <job.json> --strict",
                 "run-job --job <job.json> --strict",
             ],
@@ -5018,6 +5116,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_create_job.add_argument("--validation-output-dir", help="Directory for job_validation_###.json when --validate is used.")
     p_create_job.add_argument("--no-validate-file-checks", action="store_true", help="Skip local file existence checks during --validate.")
     p_create_job.add_argument("--strict-validation", action="store_true", help="Exit non-zero if --validate does not pass.")
+    p_create_job.add_argument("--brief", action="store_true", help="Write a Markdown job brief next to the generated job spec.")
+    p_create_job.add_argument("--brief-output", help="Explicit Markdown brief path. Defaults to the job spec path with .md suffix.")
     p_create_job.set_defaults(func=command_create_job)
 
     p_job = sub.add_parser("run-job", help="Run workflow/export/verify/doctor from a JSON job spec.")

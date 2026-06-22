@@ -35,6 +35,7 @@ BOOLEAN_FIELDS = {
     "force",
     "validate",
     "strict_validation",
+    "brief",
     "no_export_package",
     "no_verify_package",
     "no_doctor",

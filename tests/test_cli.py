@@ -29,6 +29,9 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
+    create_job_tool = next(tool for tool in manifest["tools"] if tool["id"] == "create_job")
+    assert "--brief" in create_job_tool["optional_args"]
+    assert any("job.md" in output or "_job.md" in output for output in create_job_tool["outputs"])
     assert manifest["recommended_sequences"]["saas_job_runner"] == ["create_job", "validate_job", "run_job"]
     assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor"]
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
@@ -53,7 +56,7 @@ def test_mcp_config_writes_runtime_config(tmp_path: Path) -> None:
     assert server["args"] == ["--stdio"]
     assert server["env"]["CRAB_ARCHI_PROJECT_ROOT"] == "sandbox-projects"
     assert config["oauth_worker"]["handoff_sequence"] == [
-        "create-job --project-id <project-id> --source-svg <source.svg> --standards <standards.csv> --ontology-pack <pack-id> --opencrab-result-file <opencrab.json> --constraint-sketch <constraints.json> --output <job.json> --validate --strict-validation",
+        "create-job --project-id <project-id> --source-svg <source.svg> --standards <standards.csv> --ontology-pack <pack-id> --opencrab-result-file <opencrab.json> --constraint-sketch <constraints.json> --output <job.json> --validate --strict-validation --brief",
         "validate-job --job <job.json> --strict",
         "run-job --job <job.json> --strict",
     ]
@@ -144,6 +147,7 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         assert "doctor" in tools
         assert "mcp_manifest" in tools
         assert "mcp_config" in tools
+        assert tools["create_job"]["inputSchema"]["properties"]["brief"]["type"] == "boolean"
         assert "project_id" in tools["workflow_run"]["inputSchema"]["properties"]
 
         write_json_line(
@@ -1124,16 +1128,20 @@ def test_create_job_writes_validatable_spec(tmp_path: Path) -> None:
         str(tmp_path / "diagnostics"),
         "--strict-validation",
         "--skip-preview",
+        "--brief",
         cwd=ROOT,
     )
     assert result.returncode == 0, result.stderr
     stdout = result.stdout.splitlines()
     assert Path(stdout[0]) == job_path
     validation_path = Path(stdout[1])
-    summary = json.loads(stdout[2])
+    brief_path = Path(stdout[2])
+    summary = json.loads(stdout[3])
     job = json.loads(job_path.read_text(encoding="utf-8"))
     validation = json.loads(validation_path.read_text(encoding="utf-8"))
+    brief = brief_path.read_text(encoding="utf-8")
     assert summary["validation_status"] == "pass"
+    assert summary["job_brief"] == str(brief_path)
     assert job["schema"] == "crab-archi-design-job-spec-v1"
     assert job["project_root"] == str(tmp_path / "projects")
     assert job["project_id"] == "generated-demo"
@@ -1142,6 +1150,9 @@ def test_create_job_writes_validatable_spec(tmp_path: Path) -> None:
     assert job["opencrab_source_tool"] == "opencrab_search_documents"
     assert job["skip_preview"] is True
     assert validation["status"] == "pass"
+    assert "# Crab Archi Design Job Brief: generated-demo" in brief
+    assert "Validation status: `pass`" in brief
+    assert "crab-archi-design run-job --job" in brief
 
     result = run_cli("validate-job", "--job", str(job_path), "--output-dir", str(tmp_path / "diagnostics_again"), "--strict", cwd=ROOT)
     assert result.returncode == 0, result.stderr

@@ -54,7 +54,7 @@ GitHub Actions runs the same core contract used by local handoff:
 5. Generate the MCP/OAuth exec manifest with `mcp-manifest`.
 6. Generate MCP client and OAuth worker runtime config with `mcp-config`.
 7. Verify the generated MCP runtime with `mcp-smoke`.
-8. Generate a JSON job spec with `create-job --validate --strict-validation`.
+8. Generate a JSON job spec and Markdown review brief with `create-job --validate --strict-validation --brief`.
 9. Validate the JSON job spec with `validate-job --strict`.
 10. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
 11. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
@@ -112,7 +112,8 @@ crab-archi-design create-job \
   --output job_specs/demo-job.json \
   --validate \
   --strict-validation \
-  --skip-preview
+  --skip-preview \
+  --brief
 
 crab-archi-design validate-job \
   --job job_specs/demo-job.json \
@@ -207,7 +208,7 @@ crab-archi-design-mcp --stdio
 crab-archi-design qa --project-id demo
 ```
 
-`create-job` writes a `crab-archi-design-job-spec-v1` file from CLI, MCP, OAuth, or SaaS upload inputs. It accepts the original SVG, standards, OpenCrab MCP result files, doodle constraints, prompt, engine adapter, export policy, and optional validation flags, then prints the job spec path as the first stdout line. Use `--validate --strict-validation` to fail fast before `run-job`.
+`create-job` writes a `crab-archi-design-job-spec-v1` file from CLI, MCP, OAuth, or SaaS upload inputs. It accepts the original SVG, standards, OpenCrab MCP result files, doodle constraints, prompt, engine adapter, export policy, and optional validation flags, then prints the job spec path as the first stdout line. Use `--validate --strict-validation` to fail fast before `run-job`, and `--brief` to write a Markdown review brief next to the job spec.
 
 `validate-job` checks a `crab-archi-design-job-spec-v1` file before execution. It verifies required project inputs, source SVG, standards, OpenCrab/evidence input, constraint sketch, engine adapter, ontology pack, and referenced local file paths, then writes `diagnostics/job_validation_###.json`.
 

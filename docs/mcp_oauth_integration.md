@@ -44,7 +44,7 @@ The manifest records:
 - Recommended command sequences for first-run design, revision loops, and OpenCrab-first manual workflows.
 - Security policy for source SVG packaging, native SVG output, raster overlays, and secrets.
 
-`mcp-config` also exposes worker-oriented sequences: `handoff_sequence` for first-run job creation, validation, and execution, plus `revision_sequence` for existing-project `revision-run` execution followed by package export, verification, and doctor checks. Run `create-job --validate --strict-validation` when a worker receives upload fields, and run `validate-job --strict` before `run-job` when a worker receives user-authored JSON.
+`mcp-config` also exposes worker-oriented sequences: `handoff_sequence` for first-run job creation, validation, and execution, plus `revision_sequence` for existing-project `revision-run` execution followed by package export, verification, and doctor checks. Run `create-job --validate --strict-validation --brief` when a worker receives upload fields, and run `validate-job --strict` before `run-job` when a worker receives user-authored JSON.
 
 ## Recommended MCP Tool Mapping
 
@@ -142,7 +142,7 @@ Use this pattern:
 3. Call OpenCrab MCP and save the MCP result JSON.
 4. Load the generated `mcp-config` and start `crab-archi-design-mcp --stdio` in the sandbox.
 5. Run `mcp-smoke --strict`.
-6. Run `create-job --validate --strict-validation` to write a `crab-archi-design-job-spec-v1` JSON file.
+6. Run `create-job --validate --strict-validation --brief` to write a `crab-archi-design-job-spec-v1` JSON file and Markdown review brief.
 7. Run `validate-job --job <job.json> --strict`.
 8. Run `run-job --job <job.json> --strict`.
 9. Upload only the validated ZIP or selected JSON/SVG artifacts from the job report.
@@ -163,7 +163,8 @@ crab-archi-design --project-root projects create-job \
   --output /path/to/job.json \
   --validate \
   --strict-validation \
-  --skip-preview
+  --skip-preview \
+  --brief
 ```
 
 The generated job spec has this shape:
@@ -210,7 +211,8 @@ crab-archi-design create-job \
   --output job_specs/demo-job.json \
   --validate \
   --strict-validation \
-  --skip-preview
+  --skip-preview \
+  --brief
 crab-archi-design validate-job --job job_specs/demo-job.json --strict
 crab-archi-design run-job --job job_specs/demo-job.json --strict
 ```

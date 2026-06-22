@@ -80,7 +80,7 @@ recognize-svg
 
 `topology-build` converts recognition, standards, OpenCrab evidence, and drawing constraints into a target topology manifest. It creates nodes for program labels, room envelopes, structural columns, wall candidates, standards roles, and constraints, then links them with edges such as label-inside-envelope, column-inside-envelope, standard-applies-to-program, protected-geometry, and OpenCrab adjacency targets.
 
-`create-job` is the product-facing first-run entry point. It turns uploaded source SVG, standards, OpenCrab MCP evidence, doodle constraints, prompt text, engine policy, and export settings into a `crab-archi-design-job-spec-v1` file that can be validated and executed by workers without hand-written JSON.
+`create-job` is the product-facing first-run entry point. It turns uploaded source SVG, standards, OpenCrab MCP evidence, doodle constraints, prompt text, engine policy, and export settings into a `crab-archi-design-job-spec-v1` file that can be validated and executed by workers without hand-written JSON. With `--brief`, it also writes a Markdown review brief summarizing the job, referenced files, validation checks, and next commands.
 
 `workflow-run` orchestrates the same manual commands in a single run. It initializes the project when needed, executes the gates in order, writes all normal artifacts, and records the step-by-step result in a workflow report.
 
