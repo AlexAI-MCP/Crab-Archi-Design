@@ -3088,6 +3088,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["tool_catalog_available"],
         },
         {
+            "id": "mcp_config",
+            "cli_subcommand": "mcp-config",
+            "description": "Print or write MCP client and OAuth worker runtime configuration.",
+            "required_args": [],
+            "optional_args": ["--output", "--server-name", "--project-root", "--cwd"],
+            "outputs": ["runtime configuration JSON on stdout or output path"],
+            "gates": ["mcp_server_config_available"],
+        },
+        {
             "id": "doodle_editor",
             "cli_subcommand": "doodle-editor",
             "description": "Print or open the browser-based SVG doodle editor for sketch JSON capture.",
@@ -3123,7 +3132,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
             "revision_loop": ["prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
             "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
-            "mcp_server_bootstrap": ["mcp_manifest", "doctor"],
+            "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "doctor"],
         },
         "security": {
             "source_svg_in_package": "opt-in via export-package --include-source-svg",
@@ -3143,6 +3152,76 @@ def command_mcp_manifest(args: argparse.Namespace) -> None:
         print(json.dumps({"status": "pass", "tool_count": len(manifest["tools"])}, ensure_ascii=False))
         return
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
+
+
+def build_mcp_runtime_config(server_name: str, project_root_value: str, cwd_value: str | None = None) -> dict[str, Any]:
+    repo_root = Path(__file__).resolve().parents[2]
+    cwd = str(Path(cwd_value).expanduser()) if cwd_value else str(repo_root)
+    env = {
+        "CRAB_ARCHI_PROJECT_ROOT": project_root_value,
+        "PYTHONPATH": str(repo_root / "src"),
+    }
+    server = {
+        "command": "crab-archi-design-mcp",
+        "args": ["--stdio"],
+        "cwd": cwd,
+        "env": env,
+    }
+    return {
+        "schema": "crab-archi-design-mcp-runtime-config-v1",
+        "created_at": now(),
+        "name": PROJECT_NAME,
+        "version": PROJECT_VERSION,
+        "server_name": server_name,
+        "description": "Runtime configuration for connecting Crab Archi Design to MCP clients, Codex exec runners, and OAuth/SaaS workers.",
+        "opencrab": {
+            "required": True,
+            "homepage": OPENCRAB_HOMEPAGE,
+            "evidence_gate": "opencrab_evidence_verified",
+        },
+        "mcp_server": server,
+        "codex": {
+            "mcpServers": {
+                server_name: server,
+            }
+        },
+        "generic_mcp_client": {
+            "servers": {
+                server_name: server,
+            }
+        },
+        "oauth_worker": {
+            "recommended_environment": env,
+            "preflight_commands": [
+                ["crab-archi-design-mcp", "--help"],
+                ["crab-archi-design", "mcp-manifest"],
+                ["crab-archi-design", "--project-root", project_root_value, "doctor", "--strict"],
+            ],
+            "handoff_sequence": ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"],
+            "package_policy": "Do not include source SVG unless the receiving system is authorized; export-package requires --include-source-svg for that.",
+        },
+        "smoke_test_messages": [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}},
+            },
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        ],
+    }
+
+
+def command_mcp_config(args: argparse.Namespace) -> None:
+    config = build_mcp_runtime_config(args.server_name, args.config_project_root, args.cwd)
+    if args.output:
+        out = Path(args.output).expanduser()
+        write_json(out, config)
+        print(out)
+        print(json.dumps({"status": "pass", "server_name": args.server_name}, ensure_ascii=False))
+        return
+    print(json.dumps(config, ensure_ascii=False, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3326,6 +3405,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp_manifest = sub.add_parser("mcp-manifest", help="Print or write the MCP/OAuth exec tool manifest.")
     p_mcp_manifest.add_argument("--output", help="Optional path for the tool manifest JSON. Defaults to stdout.")
     p_mcp_manifest.set_defaults(func=command_mcp_manifest)
+
+    p_mcp_config = sub.add_parser("mcp-config", help="Print or write MCP client and OAuth worker runtime configuration.")
+    p_mcp_config.add_argument("--output", help="Optional path for runtime config JSON. Defaults to stdout.")
+    p_mcp_config.add_argument("--server-name", default="crab-archi-design")
+    p_mcp_config.add_argument("--project-root", dest="config_project_root", default=str(DEFAULT_PROJECT_ROOT), help="Default project root for MCP tool calls.")
+    p_mcp_config.add_argument("--cwd", help="Working directory for the MCP server process. Defaults to repository root.")
+    p_mcp_config.set_defaults(func=command_mcp_config)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

@@ -23,6 +23,14 @@ crab-archi-design mcp-manifest \
   --output integrations/crab_archi_design_mcp_manifest.json
 ```
 
+Generate runtime configuration for MCP clients and OAuth workers:
+
+```bash
+crab-archi-design mcp-config \
+  --output integrations/crab_archi_design_mcp_config.json \
+  --project-root projects
+```
+
 The manifest records:
 
 - CLI subcommands that should be exposed as MCP tools.
@@ -62,6 +70,26 @@ ping
 
 `tools/list` is generated from `crab-archi-design mcp-manifest`, so the CLI manifest and MCP server stay aligned. `tools/call` maps each tool id back to the corresponding CLI subcommand and returns both text content and `structuredContent` with command, stdout, stderr, return code, and primary artifact path.
 
+`mcp-config` emits a Codex-style block such as:
+
+```json
+{
+  "mcpServers": {
+    "crab-archi-design": {
+      "command": "crab-archi-design-mcp",
+      "args": ["--stdio"],
+      "cwd": "/path/to/Crab-Archi-Design",
+      "env": {
+        "CRAB_ARCHI_PROJECT_ROOT": "projects",
+        "PYTHONPATH": "/path/to/Crab-Archi-Design/src"
+      }
+    }
+  }
+}
+```
+
+The stdio bridge uses `CRAB_ARCHI_PROJECT_ROOT` as the default project root when a tool call does not pass `project_root` explicitly.
+
 Example client messages:
 
 ```json
@@ -99,11 +127,12 @@ Use this pattern:
 1. Receive user-owned SVG, standards, doodle JSON, and prompt through the product UI.
 2. Store them in a sandboxed job directory.
 3. Call OpenCrab MCP and save the MCP result JSON.
-4. Run `workflow-run` with `--opencrab-result-file`.
-5. Run `export-package`.
-6. Run `verify-package --strict`.
-7. Run `doctor --strict`.
-8. Upload only the validated ZIP or selected JSON/SVG artifacts.
+4. Load the generated `mcp-config` and start `crab-archi-design-mcp --stdio` in the sandbox.
+5. Run `workflow-run` with `--opencrab-result-file`.
+6. Run `export-package`.
+7. Run `verify-package --strict`.
+8. Run `doctor --strict`.
+9. Upload only the validated ZIP or selected JSON/SVG artifacts.
 
 By default, `export-package` excludes the original source SVG. Include it only with `--include-source-svg` when the receiving environment is allowed to hold proprietary drawings.
 
@@ -113,6 +142,7 @@ Codex can use the same manifest without a custom server:
 
 ```bash
 crab-archi-design mcp-manifest
+crab-archi-design mcp-config --project-root projects
 crab-archi-design --project-root projects workflow-run ...
 crab-archi-design --project-root projects doctor --project-id <project> --zip <zip> --strict
 ```

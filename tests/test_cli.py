@@ -27,7 +27,9 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
     assert {"workflow_run", "opencrab_sync", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
+    assert "mcp_config" in tool_ids
     assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor"]
+    assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
 
     out = tmp_path / "mcp_manifest.json"
@@ -36,6 +38,27 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     written = json.loads(out.read_text(encoding="utf-8"))
     assert written["schema"] == "crab-archi-design-mcp-tool-manifest-v1"
     assert '"tool_count"' in result.stdout
+
+
+def test_mcp_config_writes_runtime_config(tmp_path: Path) -> None:
+    result = run_cli("mcp-config", "--server-name", "crab-test", "--project-root", "sandbox-projects", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    config = json.loads(result.stdout)
+    assert config["schema"] == "crab-archi-design-mcp-runtime-config-v1"
+    assert config["server_name"] == "crab-test"
+    server = config["codex"]["mcpServers"]["crab-test"]
+    assert server["command"] == "crab-archi-design-mcp"
+    assert server["args"] == ["--stdio"]
+    assert server["env"]["CRAB_ARCHI_PROJECT_ROOT"] == "sandbox-projects"
+    assert config["oauth_worker"]["handoff_sequence"] == ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"]
+    assert config["smoke_test_messages"][0]["method"] == "initialize"
+
+    out = tmp_path / "mcp_runtime_config.json"
+    result = run_cli("mcp-config", "--output", str(out), "--server-name", "crab-test", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["schema"] == "crab-archi-design-mcp-runtime-config-v1"
+    assert '"server_name": "crab-test"' in result.stdout
 
 
 def read_json_line(process: subprocess.Popen[str]) -> dict[str, object]:
@@ -82,6 +105,7 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         tools = {tool["name"]: tool for tool in list_response["result"]["tools"]}
         assert "doctor" in tools
         assert "mcp_manifest" in tools
+        assert "mcp_config" in tools
         assert "project_id" in tools["workflow_run"]["inputSchema"]["properties"]
 
         write_json_line(

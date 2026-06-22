@@ -119,7 +119,7 @@ def mcp_tools() -> list[dict[str, Any]]:
                 "description": tool["description"],
                 "inputSchema": tool_input_schema(tool),
                 "annotations": {
-                    "readOnlyHint": tool["id"] in {"project_status", "verify_package", "doctor", "doodle_editor"},
+                    "readOnlyHint": tool["id"] in {"project_status", "verify_package", "doctor", "mcp_manifest", "mcp_config", "doodle_editor"},
                     "destructiveHint": False,
                     "openWorldHint": tool["id"] in {"workflow_run", "opencrab_sync", "apply_edit"},
                 },
@@ -170,7 +170,7 @@ def append_cli_argument(command: list[str], key: str, value: Any) -> None:
 
 
 def build_cli_command(tool: dict[str, Any], arguments: dict[str, Any]) -> tuple[list[str], Path | None, int]:
-    project_root = str(arguments.get("project_root") or "projects")
+    project_root = str(arguments.get("project_root") or os.environ.get("CRAB_ARCHI_PROJECT_ROOT") or "projects")
     command = [sys.executable, "-m", "crab_archi_design.cli", "--project-root", project_root, tool["cli_subcommand"]]
     for flag in unique_flags(tool):
         key = flag_to_key(flag)
