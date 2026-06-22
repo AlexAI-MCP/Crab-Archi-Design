@@ -4,6 +4,27 @@ Crab Archi Design separates user direction from SVG mutation.
 
 Natural language and doodles are first converted into structured intent JSON. A deterministic engine adapter then reads the intent, OpenCrab evidence, standards, and drawing constraints before writing native SVG geometry.
 
+## Attach OpenCrab Evidence
+
+Every edit loop should start with verified ontology evidence. Natural language and doodles can steer the edit, but the solver should not pass a final alternative until OpenCrab/LocalCrab evidence is attached.
+
+```bash
+crab-archi-design --project-root projects evidence-attach \
+  --project-id a801-802-opencrab-test \
+  --source localcrab \
+  --pack-id community_svg_topology_ontology_v2 \
+  --query "community SVG topology, 900 household standards, protected zones, precedent adjacency" \
+  --summary "LocalCrab verified the precedent community topology, evidence chunks, protected geometry, mutable zones, and 900-household program targets."
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/evidence/evidence_manifest.json
+```
+
+`qa` reports `review_required` until this evidence manifest is verified.
+
 ## Natural Language
 
 ```bash
@@ -34,6 +55,13 @@ The editor is also available directly at:
 tools/doodle_editor.html
 ```
 
+In the editor, load the original SVG, draw only the change intent, then export the sketch JSON. Recommended stroke modes are:
+
+- `lock_boundary`: mark community shell, parking edge, core, column, ramp, stair, or other no-go edges.
+- `open_connection`: mark where two programs should visually or physically connect.
+- `program_shift`: mark a room or cluster that should move inside the mutable community shell.
+- `partition_rework`: mark internal wall lines that may be redrawn.
+
 ```json
 {
   "coordinate_space": "source_svg_viewbox",
@@ -62,6 +90,8 @@ crab-archi-design --project-root projects sketch-intent \
   --sketch /path/to/downloaded_sketch.json
 ```
 
+Natural language and doodles can be combined. For example, use natural language to state the design rule, then use a doodle to point to the exact wall, door, or corridor segment.
+
 ## Apply the Edit
 
 ```bash
@@ -74,12 +104,13 @@ crab-archi-design --project-root projects apply-edit \
 `apply-edit` performs the handoff:
 
 1. Selects the requested edit intents.
-2. Writes `runs/apply_edit_###/solver_input.json`.
-3. Runs the project `engine_adapter`.
-4. Discovers native SVG/report/preview outputs.
-5. Ignores the original source SVG when choosing the candidate.
-6. Copies the generated SVG to `alternatives/alternative_###.svg`.
-7. Writes `runs/apply_edit_###/apply_edit_report.json`.
+2. Loads `evidence/evidence_manifest.json`.
+3. Writes `runs/apply_edit_###/solver_input.json`.
+4. Runs the project `engine_adapter`.
+5. Discovers native SVG/report/preview outputs.
+6. Ignores the original source SVG when choosing the candidate.
+7. Copies the generated SVG to `alternatives/alternative_###.svg`.
+8. Writes `runs/apply_edit_###/apply_edit_report.json`.
 
 ## Review the Alternative
 
@@ -95,6 +126,16 @@ projects/a801-802-opencrab-test/panels/review_panel_###.html
 ```
 
 The panel embeds the original SVG and generated alternative SVG side by side, then shows the intent summary, apply checks, engine QA gates, and SVG inspection counts.
+
+## Practical Revision Pattern
+
+For architectural layout revisions, use this order:
+
+1. Natural language: describe the intent and constraints.
+2. Doodle: mark the exact edge, room, circulation line, or wall segment.
+3. `apply-edit`: generate a native SVG candidate.
+4. `review-panel`: inspect before/after.
+5. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

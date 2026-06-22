@@ -81,7 +81,40 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
 
     result = run_cli("--project-root", str(tmp_path / "projects"), "qa", "--project-id", "demo", cwd=ROOT)
     assert result.returncode == 0, result.stderr
+    assert '"status": "review_required"' in result.stdout
+
+    evidence_source = tmp_path / "evidence.json"
+    evidence_source.write_text(
+        json.dumps({"node_id": "resource:dataset:community_svg_topology_ontology_v2", "quality_status": "pass"}),
+        encoding="utf-8",
+    )
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "evidence-attach",
+        "--project-id",
+        "demo",
+        "--source",
+        "localcrab",
+        "--pack-id",
+        "community_svg_topology_ontology_v2",
+        "--summary",
+        "LocalCrab pack quality gate passed.",
+        "--source-file",
+        str(evidence_source),
+        "--metadata",
+        "node_count=36168",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    evidence_manifest = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert evidence_manifest["status"] == "verified"
+    assert evidence_manifest["evidence_count"] == 1
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "qa", "--project-id", "demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
     assert '"status": "pass"' in result.stdout
+    assert '"opencrab_evidence_verified": true' in result.stdout
 
 
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
@@ -122,6 +155,26 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
 
+    evidence_source = tmp_path / "engine_evidence.json"
+    evidence_source.write_text(json.dumps({"pack_id": "community_svg_topology_ontology_v2", "quality_status": "pass"}), encoding="utf-8")
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "evidence-attach",
+        "--project-id",
+        "demo",
+        "--source",
+        "localcrab",
+        "--pack-id",
+        "community_svg_topology_ontology_v2",
+        "--summary",
+        "Topology pack evidence verified.",
+        "--source-file",
+        str(evidence_source),
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
     result = run_cli(
         "--project-root",
         str(tmp_path / "projects"),
@@ -147,6 +200,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["status"] == "pass"
     assert report["checks"]["native_svg_no_images"] is True
+    assert report["checks"]["opencrab_evidence_verified"] is True
     assert report["copied_artifacts"]["svg"]
     alternative = Path(report["copied_artifacts"]["svg"][0])
     assert alternative.name == "alternative_001.svg"
@@ -154,6 +208,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
 
     solver_input = json.loads(Path(report["solver_input"]).read_text(encoding="utf-8"))
     assert solver_input["intents"][0]["schema"] == "crab-archi-design-natural-language-edit-intent-v1"
+    assert solver_input["evidence_manifest"]["status"] == "verified"
 
     result = run_cli(
         "--project-root",
@@ -170,6 +225,8 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert "Original" in panel
     assert "Alternative" in panel
     assert "native_svg_no_images" in panel
+    assert "Evidence" in panel
+    assert "community_svg_topology_ontology_v2" in panel
     assert "greenery_lounge" in panel
 
 

@@ -90,6 +90,7 @@ def command_init(args: argparse.Namespace) -> None:
             "constraints_dir": str(out_dir / "constraints"),
             "alternatives_dir": str(out_dir / "alternatives"),
             "edit_intents_dir": str(out_dir / "edit_intents"),
+            "evidence_dir": str(out_dir / "evidence"),
             "runs_dir": str(out_dir / "runs"),
             "qa_dir": str(out_dir / "qa"),
         },
@@ -207,6 +208,90 @@ def command_sketch_intent(args: argparse.Namespace) -> None:
     out = intent_dir / f"sketch_edit_{seq:03d}.json"
     write_json(out, intent)
     print(out)
+
+
+def evidence_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
+    return project_dir(project_id, root) / "evidence" / "evidence_manifest.json"
+
+
+def load_evidence_manifest(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> dict[str, Any] | None:
+    path = evidence_manifest_path(project_id, root)
+    if not path.exists():
+        return None
+    return read_json(path)
+
+
+def count_evidence_items(manifest: dict[str, Any] | None) -> int:
+    if not manifest:
+        return 0
+    return len(manifest.get("evidence_items", []))
+
+
+def evidence_status(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return "missing"
+    if manifest.get("status"):
+        return str(manifest["status"])
+    return "verified" if count_evidence_items(manifest) > 0 else "missing"
+
+
+def parse_metadata(items: list[str]) -> dict[str, str]:
+    metadata = {}
+    for item in items:
+        if "=" not in item:
+            raise SystemExit(f"Metadata must use key=value format: {item}")
+        key, value = item.split("=", 1)
+        metadata[key] = value
+    return metadata
+
+
+def command_evidence_attach(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    evidence_dir = project_dir(args.project_id, root) / "evidence"
+    existing = load_evidence_manifest(args.project_id, root) or {
+        "schema": "crab-archi-design-evidence-manifest-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "opencrab_mcp": manifest.get("opencrab_mcp"),
+        "evidence_items": [],
+    }
+
+    source_file = Path(args.source_file).expanduser() if args.source_file else None
+    source_payload: dict[str, Any] = {}
+    if source_file:
+        if not source_file.exists():
+            raise SystemExit(f"Missing evidence source file: {source_file}")
+        if source_file.suffix.lower() == ".json":
+            try:
+                source_payload = read_json(source_file)
+            except json.JSONDecodeError:
+                source_payload = {"text": source_file.read_text(encoding="utf-8")}
+        else:
+            source_payload = {"text": source_file.read_text(encoding="utf-8")}
+
+    metadata = parse_metadata(args.metadata or [])
+    item = {
+        "id": args.evidence_id or f"evidence_{len(existing.get('evidence_items', [])) + 1:03d}",
+        "attached_at": now(),
+        "source": args.source,
+        "source_file": str(source_file) if source_file else None,
+        "pack_id": args.pack_id or manifest.get("ontology_pack"),
+        "query": args.query,
+        "summary": args.summary,
+        "metadata": metadata,
+        "payload": source_payload,
+    }
+    existing.setdefault("evidence_items", []).append(item)
+    existing["updated_at"] = now()
+    existing["status"] = "verified" if existing["evidence_items"] else "missing"
+    existing["evidence_count"] = len(existing["evidence_items"])
+    existing["required_for_final_svg"] = True
+
+    out = evidence_dir / "evidence_manifest.json"
+    write_json(out, existing)
+    print(out)
+    print(json.dumps({"status": existing["status"], "evidence_count": existing["evidence_count"]}, ensure_ascii=False))
 
 
 def sorted_json_files(path: Path, pattern: str) -> list[Path]:
@@ -471,12 +556,33 @@ def render_intent_list(intents: list[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
+def render_evidence_list(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return '<li class="review"><span>evidence_manifest</span><strong>missing</strong></li>'
+    rows = [
+        f'<li class="pass"><span>status</span><strong>{html.escape(evidence_status(manifest))}</strong></li>',
+        f'<li class="pass"><span>evidence_count</span><strong>{count_evidence_items(manifest)}</strong></li>',
+    ]
+    for item in manifest.get("evidence_items", []):
+        label = item.get("pack_id") or item.get("id") or "evidence"
+        summary = item.get("summary") or item.get("query") or ""
+        rows.append(
+            "<li>"
+            f"<strong>{html.escape(str(label))}</strong>"
+            f"<span>{html.escape(str(item.get('source') or ''))}</span>"
+            f"<p>{html.escape(str(summary))}</p>"
+            "</li>"
+        )
+    return "\n".join(rows)
+
+
 def build_review_panel_html(context: dict[str, Any]) -> str:
     source_svg = context["source_svg_markup"]
     alternative_svg = context["alternative_svg_markup"]
     apply_checks = render_check_list(context["apply_checks"])
     engine_checks = render_check_list(context["engine_quality_gates"])
     intent_list = render_intent_list(context["intents"])
+    evidence_list = render_evidence_list(context["evidence_manifest"])
     source_info = html.escape(json.dumps(context["source_svg_info"], ensure_ascii=False, indent=2))
     alt_info = html.escape(json.dumps(context["alternative_svg_info"], ensure_ascii=False, indent=2))
     title = html.escape(context["title"])
@@ -566,6 +672,10 @@ def build_review_panel_html(context: dict[str, Any]) -> str:
         <div class="box"><ul>{intent_list}</ul></div>
       </section>
       <section>
+        <h2>Evidence</h2>
+        <div class="box"><ul>{evidence_list}</ul></div>
+      </section>
+      <section>
         <h2>SVG Info</h2>
         <div class="box"><pre>{source_info}</pre><pre>{alt_info}</pre></div>
       </section>
@@ -629,6 +739,7 @@ def command_review_panel(args: argparse.Namespace) -> None:
         "alternative_svg_info": alternative_info,
         "apply_checks": apply_report.get("checks", {}),
         "engine_quality_gates": engine_quality,
+        "evidence_manifest": load_evidence_manifest(args.project_id, root),
         "intents": collect_intent_summary(apply_report.get("intent_paths", [])),
     }
     html_text = build_review_panel_html(context)
@@ -668,6 +779,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
     base = project_dir(args.project_id, root)
     intent_paths = resolve_intent_paths(base, args.intent)
     intents = [read_json(path) for path in intent_paths]
+    evidence_manifest = load_evidence_manifest(args.project_id, root)
 
     runs_dir = base / "runs"
     run_seq = next_sequence(runs_dir, "apply_edit_*")
@@ -684,6 +796,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "intent_paths": [str(path) for path in intent_paths],
         "intents": intents,
         "hard_constraints": manifest.get("hard_constraints", []),
+        "evidence_manifest": evidence_manifest,
         "opencrab_mcp": manifest.get("opencrab_mcp"),
         "solver_contract": {
             "must_preserve": manifest.get("hard_constraints", []),
@@ -759,6 +872,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "candidate_svg_exists": alternative_svg is not None and alternative_svg.exists(),
         "native_svg_no_images": svg_info.get("xml_parse") == "ok" and svg_info.get("image_elements") == 0,
         "opencrab_mcp_required": bool(manifest.get("opencrab_mcp", {}).get("required")),
+        "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "intent_count_positive": len(intent_paths) > 0,
     }
     report = {
@@ -791,6 +905,7 @@ def command_qa(args: argparse.Namespace) -> None:
         "opencrab_mcp_required": bool(manifest.get("opencrab_mcp", {}).get("required")),
         "opencrab_mcp_server_configured": bool(manifest.get("opencrab_mcp", {}).get("mcp_server")),
         "opencrab_ontology_pack_attached": bool(manifest.get("opencrab_mcp", {}).get("ontology_pack")),
+        "opencrab_evidence_verified": evidence_status(load_evidence_manifest(args.project_id, root)) == "verified",
         "has_edit_intent_dir": Path(manifest["artifacts"]["edit_intents_dir"]).exists(),
     }
     qa = {
@@ -846,6 +961,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_sketch.add_argument("--project-id", required=True)
     p_sketch.add_argument("--sketch", required=True)
     p_sketch.set_defaults(func=command_sketch_intent)
+
+    p_evidence = sub.add_parser("evidence-attach", help="Attach OpenCrab/LocalCrab evidence to a project.")
+    p_evidence.add_argument("--project-id", required=True)
+    p_evidence.add_argument("--source", default="localcrab")
+    p_evidence.add_argument("--pack-id")
+    p_evidence.add_argument("--query")
+    p_evidence.add_argument("--summary")
+    p_evidence.add_argument("--source-file")
+    p_evidence.add_argument("--evidence-id")
+    p_evidence.add_argument("--metadata", action="append", default=[])
+    p_evidence.set_defaults(func=command_evidence_attach)
 
     p_apply = sub.add_parser("apply-edit", help="Run an engine adapter from structured edit intent and collect a native SVG alternative.")
     p_apply.add_argument("--project-id", required=True)

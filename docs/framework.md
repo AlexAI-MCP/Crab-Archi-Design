@@ -34,7 +34,9 @@ The solver consumes recognition IR, constraints, standards, ontology evidence, a
 The first executable loop is:
 
 ```text
-prompt-edit / sketch-intent
+evidence-attach
+  -> evidence/evidence_manifest.json
+  -> prompt-edit / sketch-intent
   -> apply-edit
   -> solver_input.json
   -> engine adapter

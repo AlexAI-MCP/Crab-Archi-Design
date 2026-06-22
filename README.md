@@ -51,6 +51,12 @@ crab-archi-design init \
   --ontology-pack community_svg_topology_ontology_v2 \
   --opencrab-mcp-server opencrab
 
+crab-archi-design evidence-attach \
+  --project-id demo \
+  --source localcrab \
+  --pack-id community_svg_topology_ontology_v2 \
+  --summary "OpenCrab/LocalCrab verified the precedent topology, evidence chunks, protected zones, and 900-household program targets."
+
 crab-archi-design prompt-edit \
   --project-id demo \
   --text "Open the greenery lounge more toward the main hall and keep parking/core locked."
@@ -73,6 +79,8 @@ crab-archi-design qa --project-id demo
 ```
 
 `apply-edit` reads structured natural-language and doodle intents, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
+
+`evidence-attach` writes `projects/<project>/evidence/evidence_manifest.json`. `qa` and `apply-edit` require this manifest to be verified before a final SVG alternative can pass.
 
 `doodle-editor` prints the local SVG doodle editor path and `file://` URL. The editor loads a source SVG from your machine, records vector strokes in source viewBox coordinates, and downloads sketch JSON for `sketch-intent`.
 

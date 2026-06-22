@@ -23,6 +23,16 @@ OpenCrab MCP is the required knowledge path for Crab Archi Design.
 
 The agent may explain options before querying OpenCrab MCP, but it must not produce a final layout alternative until OpenCrab ontology evidence has been attached to the project manifest and design intent.
 
+## Evidence Gate
+
+`evidence-attach` records the OpenCrab/LocalCrab pack, query, summary, source file, and metadata in:
+
+```text
+projects/<project>/evidence/evidence_manifest.json
+```
+
+`qa` and `apply-edit` treat the candidate as `review_required` until that manifest has `status: verified`. The `opencrab_evidence_verified` check must pass before a generated SVG can be treated as an evidence-backed alternative.
+
 ## Community Layout Pack Expectations
 
 The community design ontology pack should expose:
