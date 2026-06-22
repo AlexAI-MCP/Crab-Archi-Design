@@ -3527,6 +3527,121 @@ def build_job_validation_report(job_path: Path, job: dict[str, Any], default_pro
     }
 
 
+def maybe_set_job_value(job: dict[str, Any], key: str, value: Any) -> None:
+    if value is None:
+        return
+    if isinstance(value, list) and not value:
+        return
+    job[key] = value
+
+
+def create_job_output_path(project_id: str, output: str | None, output_dir: str | None) -> Path:
+    if output:
+        path = Path(output).expanduser()
+    else:
+        base = Path(output_dir).expanduser() if output_dir else Path("job_specs")
+        path = base / f"{slugify(project_id)}_job.json"
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
+
+
+def write_job_validation_report_file(report: dict[str, Any], output_dir: str | None) -> Path:
+    out_dir = Path(output_dir).expanduser() if output_dir else Path("diagnostics")
+    if not out_dir.is_absolute():
+        out_dir = Path.cwd() / out_dir
+    seq = next_sequence(out_dir, "job_validation_*.json")
+    out = out_dir / f"job_validation_{seq:03d}.json"
+    write_json(out, report)
+    return out
+
+
+def write_validation_report(job_path: Path, job: dict[str, Any], default_project_root: str, output_dir: str | None, check_files: bool) -> tuple[Path, dict[str, Any]]:
+    report = build_job_validation_report(job_path, job, default_project_root, check_files=check_files)
+    out = write_job_validation_report_file(report, output_dir)
+    return out, report
+
+
+def command_create_job(args: argparse.Namespace) -> None:
+    out = create_job_output_path(args.project_id, args.output, args.output_dir)
+    if out.exists() and not args.force:
+        raise SystemExit(f"Job spec already exists: {out}. Use --force to overwrite.")
+
+    job: dict[str, Any] = {
+        "schema": "crab-archi-design-job-spec-v1",
+        "project_root": str(args.project_root),
+        "path_base": args.path_base,
+        "project_id": args.project_id,
+        "source_svg": args.source_svg,
+        "engine_adapter": args.engine_adapter,
+        "opencrab_mcp_server": args.opencrab_mcp_server,
+        "opencrab_homepage": args.opencrab_homepage,
+        "opencrab_source_tool": args.opencrab_source_tool,
+        "evidence_source": args.evidence_source,
+        "max_labels": args.max_labels,
+        "timeout": args.timeout,
+        "skip_preview": args.skip_preview,
+        "skip_apply": args.skip_apply,
+        "skip_review_panel": args.skip_review_panel,
+        "replace_standards": args.replace_standards,
+        "replace_evidence": args.replace_evidence,
+        "replace_constraints": args.replace_constraints,
+        "reinit": args.reinit,
+        "export_package": not args.no_export_package,
+        "verify_package": not args.no_verify_package,
+        "doctor": not args.no_doctor,
+        "include_source_svg": args.include_source_svg,
+        "only_latest": args.only_latest,
+        "skip_opencrab_sync": args.skip_opencrab_sync,
+        "check_local_files": args.check_local_files,
+        "strict": args.strict,
+    }
+    maybe_set_job_value(job, "households", args.households)
+    maybe_set_job_value(job, "standards", args.standards)
+    maybe_set_job_value(job, "standards_summary", args.standards_summary)
+    maybe_set_job_value(job, "standards_metadata", args.standards_metadata)
+    maybe_set_job_value(job, "ontology_pack", args.ontology_pack)
+    maybe_set_job_value(job, "engine_arg", args.engine_arg)
+    maybe_set_job_value(job, "opencrab_result_file", args.opencrab_result_file)
+    maybe_set_job_value(job, "opencrab_result_json", args.opencrab_result_json)
+    maybe_set_job_value(job, "opencrab_query", args.opencrab_query)
+    maybe_set_job_value(job, "workspace_id", args.workspace_id)
+    maybe_set_job_value(job, "evidence_source_file", args.evidence_source_file)
+    maybe_set_job_value(job, "evidence_summary", args.evidence_summary)
+    maybe_set_job_value(job, "evidence_metadata", args.evidence_metadata)
+    maybe_set_job_value(job, "constraint_sketch", args.constraint_sketch)
+    maybe_set_job_value(job, "constraint_role", args.constraint_role)
+    maybe_set_job_value(job, "prompt", args.prompt)
+    maybe_set_job_value(job, "sketch", args.sketch)
+    maybe_set_job_value(job, "task", args.task)
+
+    write_json(out, job)
+    print(out)
+
+    validation_path: Path | None = None
+    validation_report: dict[str, Any] | None = None
+    if args.validate:
+        validation_path, validation_report = write_validation_report(
+            out,
+            job,
+            args.project_root,
+            args.validation_output_dir,
+            check_files=not args.no_validate_file_checks,
+        )
+        print(validation_path)
+
+    summary = {
+        "status": "created",
+        "job_spec": str(out),
+        "project_id": args.project_id,
+        "validation_report": str(validation_path) if validation_path else None,
+        "validation_status": validation_report.get("status") if validation_report else None,
+    }
+    print(json.dumps(summary, ensure_ascii=False))
+    if args.strict_validation and validation_report and validation_report.get("status") != "pass":
+        raise SystemExit(f"create-job validation failed; report: {validation_path}")
+
+
 def command_validate_job(args: argparse.Namespace) -> None:
     job_path = Path(args.job).expanduser()
     if not job_path.exists():
@@ -3550,12 +3665,7 @@ def command_validate_job(args: argparse.Namespace) -> None:
         job = read_json(job_path)
         report = build_job_validation_report(job_path, job, args.project_root, check_files=not args.no_check_files)
 
-    out_dir = Path(args.output_dir).expanduser() if args.output_dir else Path("diagnostics")
-    if not out_dir.is_absolute():
-        out_dir = Path.cwd() / out_dir
-    seq = next_sequence(out_dir, "job_validation_*.json")
-    out = out_dir / f"job_validation_{seq:03d}.json"
-    write_json(out, report)
+    out = write_job_validation_report_file(report, args.output_dir)
     print(out)
     print(json.dumps({"status": report["status"], "checks": report["checks"], "missing_file_count": len(report["missing_files"])}, ensure_ascii=False))
     if args.strict and report["status"] != "pass":
@@ -4168,6 +4278,64 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
     }
     tools = [
         {
+            "id": "create_job",
+            "cli_subcommand": "create-job",
+            "description": "Create a validated crab-archi-design job spec from uploaded SVG, standards, OpenCrab evidence, constraints, and prompt inputs.",
+            "required_args": ["--project-id", "--source-svg"],
+            "optional_args": [
+                "--output",
+                "--output-dir",
+                "--path-base",
+                "--households",
+                "--standards",
+                "--standards-summary",
+                "--standards-metadata",
+                "--ontology-pack",
+                "--engine-adapter",
+                "--engine-arg",
+                "--opencrab-mcp-server",
+                "--opencrab-homepage",
+                "--opencrab-result-file",
+                "--opencrab-result-json",
+                "--opencrab-source-tool",
+                "--opencrab-query",
+                "--workspace-id",
+                "--evidence-source",
+                "--evidence-source-file",
+                "--evidence-summary",
+                "--evidence-metadata",
+                "--constraint-sketch",
+                "--constraint-role",
+                "--prompt",
+                "--sketch",
+                "--task",
+                "--max-labels",
+                "--timeout",
+                "--skip-preview",
+                "--skip-apply",
+                "--skip-review-panel",
+                "--replace-standards",
+                "--replace-evidence",
+                "--replace-constraints",
+                "--reinit",
+                "--no-export-package",
+                "--no-verify-package",
+                "--no-doctor",
+                "--include-source-svg",
+                "--only-latest",
+                "--skip-opencrab-sync",
+                "--check-local-files",
+                "--strict",
+                "--force",
+                "--validate",
+                "--validation-output-dir",
+                "--no-validate-file-checks",
+                "--strict-validation",
+            ],
+            "outputs": ["job_specs/<project>_job.json", "diagnostics/job_validation_###.json when --validate is used"],
+            "gates": ["job_spec_created", "job_spec_valid"],
+        },
+        {
             "id": "run_job",
             "cli_subcommand": "run-job",
             "description": "Run workflow/export/verify/doctor from a single JSON job spec for SaaS, OAuth, or MCP workers.",
@@ -4393,7 +4561,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
         "defaults": tool_defaults,
         "tools": tools,
         "recommended_sequences": {
-            "saas_job_runner": ["validate_job", "run_job"],
+            "saas_job_runner": ["create_job", "validate_job", "run_job"],
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
             "revision_loop": ["revision_run", "export_package", "verify_package", "doctor"],
             "manual_revision_loop": ["topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
@@ -4463,7 +4631,11 @@ def build_mcp_runtime_config(server_name: str, project_root_value: str, cwd_valu
                 ["crab-archi-design", "mcp-manifest"],
                 ["crab-archi-design", "--project-root", project_root_value, "doctor", "--strict"],
             ],
-            "handoff_sequence": ["validate-job --job <job.json> --strict", "run-job --job <job.json> --strict"],
+            "handoff_sequence": [
+                "create-job --project-id <project-id> --source-svg <source.svg> --standards <standards.csv> --ontology-pack <pack-id> --opencrab-result-file <opencrab.json> --constraint-sketch <constraints.json> --output <job.json> --validate --strict-validation",
+                "validate-job --job <job.json> --strict",
+                "run-job --job <job.json> --strict",
+            ],
             "manual_handoff_sequence": ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"],
             "revision_sequence": ["revision-run", "export-package", "verify-package --strict", "doctor --strict"],
             "package_policy": "Do not include source SVG unless the receiving system is authorized; export-package requires --include-source-svg for that.",
@@ -4578,6 +4750,7 @@ def run_mcp_smoke(config: dict[str, Any], server_name: str | None, timeout: int)
         "process_exit_ok": process.returncode == 0,
         "initialize_ok": initialize.get("result", {}).get("serverInfo", {}).get("name") == "crab-archi-design-mcp",
         "tools_list_ok": bool(tools),
+        "create_job_tool_available": "create_job" in tool_names,
         "run_job_tool_available": "run_job" in tool_names,
         "validate_job_tool_available": "validate_job" in tool_names,
         "doctor_tool_available": "doctor" in tool_names,
@@ -4793,6 +4966,59 @@ def build_parser() -> argparse.ArgumentParser:
     p_revision.add_argument("--skip-apply", action="store_true")
     p_revision.add_argument("--skip-review-panel", action="store_true")
     p_revision.set_defaults(func=command_revision_run)
+
+    p_create_job = sub.add_parser("create-job", help="Create a JSON job spec for validate-job and run-job.")
+    p_create_job.add_argument("--project-id", required=True)
+    p_create_job.add_argument("--source-svg", required=True)
+    p_create_job.add_argument("--output", help="Explicit job spec path. Defaults to job_specs/<project>_job.json.")
+    p_create_job.add_argument("--output-dir", help="Directory for the generated job spec when --output is omitted.")
+    p_create_job.add_argument("--path-base", default=".", help="Base directory for relative file paths stored in the job spec.")
+    p_create_job.add_argument("--households", type=int)
+    p_create_job.add_argument("--standards", action="append", default=[])
+    p_create_job.add_argument("--standards-summary")
+    p_create_job.add_argument("--standards-metadata", action="append", default=[])
+    p_create_job.add_argument("--ontology-pack")
+    p_create_job.add_argument("--engine-adapter", default="layout-svg-engine")
+    p_create_job.add_argument("--engine-arg", action="append", default=[])
+    p_create_job.add_argument("--opencrab-mcp-server", default="opencrab")
+    p_create_job.add_argument("--opencrab-homepage", default=OPENCRAB_HOMEPAGE)
+    p_create_job.add_argument("--opencrab-result-file", action="append", default=[])
+    p_create_job.add_argument("--opencrab-result-json", action="append", default=[])
+    p_create_job.add_argument("--opencrab-source-tool", default="opencrab_mcp")
+    p_create_job.add_argument("--opencrab-query")
+    p_create_job.add_argument("--workspace-id")
+    p_create_job.add_argument("--evidence-source", default="localcrab")
+    p_create_job.add_argument("--evidence-source-file")
+    p_create_job.add_argument("--evidence-summary")
+    p_create_job.add_argument("--evidence-metadata", action="append", default=[])
+    p_create_job.add_argument("--constraint-sketch")
+    p_create_job.add_argument("--constraint-role")
+    p_create_job.add_argument("--prompt")
+    p_create_job.add_argument("--sketch", help="Optional edit sketch JSON for sketch-intent.")
+    p_create_job.add_argument("--task", help="Optional design handoff task.")
+    p_create_job.add_argument("--max-labels", type=int, default=500)
+    p_create_job.add_argument("--timeout", type=int, default=300)
+    p_create_job.add_argument("--skip-preview", action="store_true")
+    p_create_job.add_argument("--skip-apply", action="store_true")
+    p_create_job.add_argument("--skip-review-panel", action="store_true")
+    p_create_job.add_argument("--replace-standards", action="store_true")
+    p_create_job.add_argument("--replace-evidence", action="store_true")
+    p_create_job.add_argument("--replace-constraints", action="store_true")
+    p_create_job.add_argument("--reinit", action="store_true")
+    p_create_job.add_argument("--no-export-package", action="store_true")
+    p_create_job.add_argument("--no-verify-package", action="store_true")
+    p_create_job.add_argument("--no-doctor", action="store_true")
+    p_create_job.add_argument("--include-source-svg", action="store_true")
+    p_create_job.add_argument("--only-latest", action="store_true")
+    p_create_job.add_argument("--skip-opencrab-sync", action="store_true")
+    p_create_job.add_argument("--check-local-files", action="store_true")
+    p_create_job.add_argument("--strict", action="store_true", help="Store strict=true for run-job.")
+    p_create_job.add_argument("--force", action="store_true", help="Overwrite an existing job spec path.")
+    p_create_job.add_argument("--validate", action="store_true", help="Write a validation report immediately after creating the job spec.")
+    p_create_job.add_argument("--validation-output-dir", help="Directory for job_validation_###.json when --validate is used.")
+    p_create_job.add_argument("--no-validate-file-checks", action="store_true", help="Skip local file existence checks during --validate.")
+    p_create_job.add_argument("--strict-validation", action="store_true", help="Exit non-zero if --validate does not pass.")
+    p_create_job.set_defaults(func=command_create_job)
 
     p_job = sub.add_parser("run-job", help="Run workflow/export/verify/doctor from a JSON job spec.")
     p_job.add_argument("--job", required=True, help="Path to a crab-archi-design-job-spec-v1 JSON file.")

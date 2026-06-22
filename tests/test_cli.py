@@ -26,10 +26,10 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"run_job", "validate_job", "workflow_run", "revision_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
+    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
-    assert manifest["recommended_sequences"]["saas_job_runner"] == ["validate_job", "run_job"]
+    assert manifest["recommended_sequences"]["saas_job_runner"] == ["create_job", "validate_job", "run_job"]
     assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor"]
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
@@ -52,7 +52,11 @@ def test_mcp_config_writes_runtime_config(tmp_path: Path) -> None:
     assert server["command"] == "crab-archi-design-mcp"
     assert server["args"] == ["--stdio"]
     assert server["env"]["CRAB_ARCHI_PROJECT_ROOT"] == "sandbox-projects"
-    assert config["oauth_worker"]["handoff_sequence"] == ["validate-job --job <job.json> --strict", "run-job --job <job.json> --strict"]
+    assert config["oauth_worker"]["handoff_sequence"] == [
+        "create-job --project-id <project-id> --source-svg <source.svg> --standards <standards.csv> --ontology-pack <pack-id> --opencrab-result-file <opencrab.json> --constraint-sketch <constraints.json> --output <job.json> --validate --strict-validation",
+        "validate-job --job <job.json> --strict",
+        "run-job --job <job.json> --strict",
+    ]
     assert config["oauth_worker"]["manual_handoff_sequence"] == ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"]
     assert config["oauth_worker"]["revision_sequence"] == ["revision-run", "export-package", "verify-package --strict", "doctor --strict"]
     assert config["smoke_test_messages"][0]["method"] == "initialize"
@@ -78,10 +82,12 @@ def test_mcp_smoke_validates_runtime_config(tmp_path: Path) -> None:
     assert report["status"] == "pass"
     assert report["checks"]["initialize_ok"] is True
     assert report["checks"]["tools_list_ok"] is True
+    assert report["checks"]["create_job_tool_available"] is True
     assert report["checks"]["run_job_tool_available"] is True
     assert report["checks"]["validate_job_tool_available"] is True
     assert report["checks"]["revision_run_tool_available"] is True
     assert report["checks"]["topology_build_tool_available"] is True
+    assert "create_job" in report["tool_names"]
     assert "run_job" in report["tool_names"]
     assert "revision_run" in report["tool_names"]
     assert "workflow_run" in report["tool_names"]
@@ -130,6 +136,7 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         write_json_line(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         list_response = read_json_line(process)
         tools = {tool["name"]: tool for tool in list_response["result"]["tools"]}
+        assert "create_job" in tools
         assert "run_job" in tools
         assert "validate_job" in tools
         assert "revision_run" in tools
@@ -1082,6 +1089,62 @@ def test_validate_job_spec_checks_inputs(tmp_path: Path) -> None:
     assert report["status"] == "review_required"
     assert report["checks"]["required_files_exist"] is False
     assert {item["key"] for item in report["missing_files"]} >= {"source_svg", "standards", "opencrab_result_file", "constraint_sketch"}
+
+
+def test_create_job_writes_validatable_spec(tmp_path: Path) -> None:
+    job_path = tmp_path / "job_specs" / "generated_job.json"
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "create-job",
+        "--project-id",
+        "generated-demo",
+        "--source-svg",
+        "examples/original_sample.svg",
+        "--households",
+        "900",
+        "--standards",
+        "examples/area_standard_sample.csv",
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        "--opencrab-result-file",
+        "examples/opencrab_mcp_result_sample.json",
+        "--opencrab-source-tool",
+        "opencrab_search_documents",
+        "--constraint-sketch",
+        "examples/constraint_sketch_sample.json",
+        "--prompt",
+        "Improve the greenery lounge hierarchy while preserving protected geometry.",
+        "--engine-adapter",
+        "layout-svg-engine",
+        "--output",
+        str(job_path),
+        "--validate",
+        "--validation-output-dir",
+        str(tmp_path / "diagnostics"),
+        "--strict-validation",
+        "--skip-preview",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    stdout = result.stdout.splitlines()
+    assert Path(stdout[0]) == job_path
+    validation_path = Path(stdout[1])
+    summary = json.loads(stdout[2])
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    validation = json.loads(validation_path.read_text(encoding="utf-8"))
+    assert summary["validation_status"] == "pass"
+    assert job["schema"] == "crab-archi-design-job-spec-v1"
+    assert job["project_root"] == str(tmp_path / "projects")
+    assert job["project_id"] == "generated-demo"
+    assert job["households"] == 900
+    assert job["standards"] == ["examples/area_standard_sample.csv"]
+    assert job["opencrab_source_tool"] == "opencrab_search_documents"
+    assert job["skip_preview"] is True
+    assert validation["status"] == "pass"
+
+    result = run_cli("validate-job", "--job", str(job_path), "--output-dir", str(tmp_path / "diagnostics_again"), "--strict", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
 
 
 def test_run_job_executes_sample_pipeline(tmp_path: Path) -> None:

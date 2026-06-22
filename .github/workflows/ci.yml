@@ -51,6 +51,23 @@ jobs:
             --output-dir .ci-projects/diagnostics \
             --strict
 
+          crab-archi-design --project-root .ci-projects/generated-job-run create-job \
+            --project-id ci-generated-job \
+            --source-svg examples/original_sample.svg \
+            --households 900 \
+            --standards examples/area_standard_sample.csv \
+            --ontology-pack community_svg_topology_ontology_v2 \
+            --opencrab-result-file examples/opencrab_mcp_result_sample.json \
+            --opencrab-source-tool opencrab_search_documents \
+            --constraint-sketch examples/constraint_sketch_sample.json \
+            --prompt "Improve the greenery lounge hierarchy while preserving protected geometry." \
+            --engine-adapter layout-svg-engine \
+            --output .ci-projects/generated_job.json \
+            --validate \
+            --validation-output-dir .ci-projects/generated-job-validations \
+            --strict-validation \
+            --skip-preview
+
           crab-archi-design validate-job \
             --job examples/job_spec_sample.json \
             --output-dir .ci-projects/job-validations \

@@ -54,11 +54,12 @@ GitHub Actions runs the same core contract used by local handoff:
 5. Generate the MCP/OAuth exec manifest with `mcp-manifest`.
 6. Generate MCP client and OAuth worker runtime config with `mcp-config`.
 7. Verify the generated MCP runtime with `mcp-smoke`.
-8. Validate the JSON job spec with `validate-job --strict`.
-9. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
-10. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
-11. Execute `revision-run` on the same project to verify the repeat-edit path.
-12. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
+8. Generate a JSON job spec with `create-job --validate --strict-validation`.
+9. Validate the JSON job spec with `validate-job --strict`.
+10. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
+11. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
+12. Execute `revision-run` on the same project to verify the repeat-edit path.
+13. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
 
 The CI sample uses:
 
@@ -98,12 +99,27 @@ crab-archi-design revision-run \
   --sketch examples/sketch_layer_sample.json \
   --skip-preview
 
+crab-archi-design create-job \
+  --project-id demo-job \
+  --source-svg examples/original_sample.svg \
+  --households 900 \
+  --standards examples/area_standard_sample.csv \
+  --ontology-pack community_svg_topology_ontology_v2 \
+  --opencrab-result-file examples/opencrab_mcp_result_sample.json \
+  --constraint-sketch examples/constraint_sketch_sample.json \
+  --prompt "Improve the greenery lounge hierarchy while preserving protected geometry." \
+  --engine-adapter layout-svg-engine \
+  --output job_specs/demo-job.json \
+  --validate \
+  --strict-validation \
+  --skip-preview
+
 crab-archi-design validate-job \
-  --job examples/job_spec_sample.json \
+  --job job_specs/demo-job.json \
   --strict
 
 crab-archi-design run-job \
-  --job examples/job_spec_sample.json \
+  --job job_specs/demo-job.json \
   --strict
 
 crab-archi-design recognize-svg \
@@ -190,6 +206,8 @@ crab-archi-design-mcp --stdio
 
 crab-archi-design qa --project-id demo
 ```
+
+`create-job` writes a `crab-archi-design-job-spec-v1` file from CLI, MCP, OAuth, or SaaS upload inputs. It accepts the original SVG, standards, OpenCrab MCP result files, doodle constraints, prompt, engine adapter, export policy, and optional validation flags, then prints the job spec path as the first stdout line. Use `--validate --strict-validation` to fail fast before `run-job`.
 
 `validate-job` checks a `crab-archi-design-job-spec-v1` file before execution. It verifies required project inputs, source SVG, standards, OpenCrab/evidence input, constraint sketch, engine adapter, ontology pack, and referenced local file paths, then writes `diagnostics/job_validation_###.json`.
 

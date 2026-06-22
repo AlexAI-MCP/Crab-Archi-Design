@@ -32,6 +32,13 @@ BOOLEAN_FIELDS = {
     "skip_opencrab_sync",
     "check_local_files",
     "strict",
+    "force",
+    "validate",
+    "strict_validation",
+    "no_export_package",
+    "no_verify_package",
+    "no_doctor",
+    "no_validate_file_checks",
     "open",
 }
 INTEGER_FIELDS = {"households", "max_labels", "timeout"}

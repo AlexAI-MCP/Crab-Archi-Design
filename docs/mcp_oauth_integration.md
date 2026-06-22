@@ -8,7 +8,7 @@ The integration boundary is:
 Codex / MCP wrapper / OAuth worker
   -> crab-archi-design mcp-manifest
   -> crab-archi-design-mcp --stdio
-  -> run_job or selected CLI tool calls
+  -> create_job / validate_job / run_job or selected CLI tool calls
   -> project JSON artifacts
   -> export-package ZIP
   -> verify-package / doctor
@@ -44,7 +44,7 @@ The manifest records:
 - Recommended command sequences for first-run design, revision loops, and OpenCrab-first manual workflows.
 - Security policy for source SVG packaging, native SVG output, raster overlays, and secrets.
 
-`mcp-config` also exposes two worker-oriented sequences: `handoff_sequence` for first-run job execution and `revision_sequence` for existing-project `revision-run` execution followed by package export, verification, and doctor checks. Run `validate-job --strict` before `run-job` when a worker receives user-authored JSON.
+`mcp-config` also exposes worker-oriented sequences: `handoff_sequence` for first-run job creation, validation, and execution, plus `revision_sequence` for existing-project `revision-run` execution followed by package export, verification, and doctor checks. Run `create-job --validate --strict-validation` when a worker receives upload fields, and run `validate-job --strict` before `run-job` when a worker receives user-authored JSON.
 
 ## Recommended MCP Tool Mapping
 
@@ -110,6 +110,7 @@ Example client messages:
 The most important tools are:
 
 ```text
+create_job
 run_job
 validate_job
 workflow_run
@@ -141,12 +142,31 @@ Use this pattern:
 3. Call OpenCrab MCP and save the MCP result JSON.
 4. Load the generated `mcp-config` and start `crab-archi-design-mcp --stdio` in the sandbox.
 5. Run `mcp-smoke --strict`.
-6. Write a `crab-archi-design-job-spec-v1` JSON file.
+6. Run `create-job --validate --strict-validation` to write a `crab-archi-design-job-spec-v1` JSON file.
 7. Run `validate-job --job <job.json> --strict`.
 8. Run `run-job --job <job.json> --strict`.
 9. Upload only the validated ZIP or selected JSON/SVG artifacts from the job report.
 
-Example job spec:
+Example job creation:
+
+```bash
+crab-archi-design --project-root projects create-job \
+  --project-id demo \
+  --source-svg /path/to/original.svg \
+  --households 900 \
+  --standards /path/to/area_standard.csv \
+  --ontology-pack community_svg_topology_ontology_v2 \
+  --opencrab-result-file /path/to/opencrab_mcp_result.json \
+  --constraint-sketch /path/to/constraint_sketch.json \
+  --prompt "Improve the greenery lounge and fitness connection while preserving protected geometry." \
+  --engine-adapter layout-svg-engine \
+  --output /path/to/job.json \
+  --validate \
+  --strict-validation \
+  --skip-preview
+```
+
+The generated job spec has this shape:
 
 ```json
 {
@@ -179,8 +199,20 @@ Codex can use the same manifest without a custom server:
 crab-archi-design mcp-manifest
 crab-archi-design mcp-config --project-root projects
 crab-archi-design mcp-smoke --strict
-crab-archi-design validate-job --job examples/job_spec_sample.json --strict
-crab-archi-design run-job --job examples/job_spec_sample.json --strict
+crab-archi-design create-job \
+  --project-id demo \
+  --source-svg examples/original_sample.svg \
+  --households 900 \
+  --standards examples/area_standard_sample.csv \
+  --ontology-pack community_svg_topology_ontology_v2 \
+  --opencrab-result-file examples/opencrab_mcp_result_sample.json \
+  --constraint-sketch examples/constraint_sketch_sample.json \
+  --output job_specs/demo-job.json \
+  --validate \
+  --strict-validation \
+  --skip-preview
+crab-archi-design validate-job --job job_specs/demo-job.json --strict
+crab-archi-design run-job --job job_specs/demo-job.json --strict
 ```
 
 For first-run debugging, Codex can still call the lower-level manual sequence: `workflow-run`, `export-package`, `verify-package --strict`, and `doctor --strict`. For repeated design edits on an existing project, call `revision-run` with `--text`, `--sketch`, or `--constraint-sketch`, then export and verify the package again.
