@@ -4,6 +4,32 @@ Crab Archi Design separates user direction from SVG mutation.
 
 Natural language and doodles are first converted into structured intent JSON. A deterministic engine adapter then reads the intent, OpenCrab evidence, standards, and drawing constraints before writing native SVG geometry.
 
+## One Command Workflow
+
+Use `workflow-run` when you want the standard path to run from source SVG to reviewable alternative in one command:
+
+```bash
+crab-archi-design --project-root projects workflow-run \
+  --project-id a801-802-opencrab-test \
+  --source-svg "/path/to/original.svg" \
+  --households 900 \
+  --standards "/path/to/area_standard.csv" \
+  --ontology-pack community_svg_topology_ontology_v2 \
+  --opencrab-result-file /path/to/opencrab_mcp_result.json \
+  --constraint-sketch /path/to/constraint_sketch.json \
+  --prompt "Open the greenery lounge toward the main hall while preserving parking, cores, columns, ramps, and the community shell." \
+  --engine-adapter reference-svg-engine \
+  --skip-preview
+```
+
+This creates a workflow report:
+
+```text
+projects/a801-802-opencrab-test/workflow/workflow_run_###.json
+```
+
+The command runs the same gates as the manual loop: source recognition, standards, OpenCrab evidence sync, constraints, intent, edit brief, project status, design handoff, apply edit, review panel, and final project status. Existing project manifests can be reused; pass `--reinit` only when you intentionally want to recreate the project manifest.
+
 ## Recognize Source SVG
 
 Start by converting the original SVG into a lightweight recognition manifest:
@@ -292,19 +318,20 @@ The panel embeds the original SVG and generated alternative SVG side by side, th
 
 For architectural layout revisions, use this order:
 
-1. `recognize-svg`: attach source SVG parse, primitives, and labels.
-2. `standards-attach`: attach household-count standards and selected rows.
-3. `evidence-attach` or `opencrab-sync`: attach OpenCrab/LocalCrab ontology evidence.
-4. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
-5. Natural language: describe the design intent and constraints.
-6. Doodle: mark the exact edge, room, circulation line, or wall segment.
-7. `edit-brief`: check recognition, evidence, standards, constraints, source SVG parse, and sketch bounds.
-8. `project-status`: confirm the project is ready for solver handoff.
-9. `design-handoff`: package the current evidence, standards, constraints, and prompt blocks.
-10. `apply-edit`: generate a native SVG candidate.
-11. `review-panel`: inspect before/after.
-12. `project-status`: confirm the latest candidate and review artifacts are complete.
-13. Repeat with another short prompt or doodle repair intent.
+1. `workflow-run`: use this for the normal full path when all inputs are ready.
+2. `recognize-svg`: attach source SVG parse, primitives, and labels.
+3. `standards-attach`: attach household-count standards and selected rows.
+4. `evidence-attach` or `opencrab-sync`: attach OpenCrab/LocalCrab ontology evidence.
+5. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
+6. Natural language: describe the design intent and constraints.
+7. Doodle: mark the exact edge, room, circulation line, or wall segment.
+8. `edit-brief`: check recognition, evidence, standards, constraints, source SVG parse, and sketch bounds.
+9. `project-status`: confirm the project is ready for solver handoff.
+10. `design-handoff`: package the current evidence, standards, constraints, and prompt blocks.
+11. `apply-edit`: generate a native SVG candidate.
+12. `review-panel`: inspect before/after.
+13. `project-status`: confirm the latest candidate and review artifacts are complete.
+14. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

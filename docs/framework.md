@@ -34,6 +34,10 @@ The solver consumes recognition IR, constraints, standards, ontology evidence, a
 The first executable loop is:
 
 ```text
+workflow-run
+  -> workflow/workflow_run_###.json
+
+Manual loop:
 recognize-svg
   -> recognition/recognition_manifest.json
   -> evidence-attach
@@ -58,6 +62,8 @@ recognize-svg
 ```
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints.
+
+`workflow-run` orchestrates the same manual commands in a single run. It initializes the project when needed, executes the gates in order, writes all normal artifacts, and records the step-by-step result in a workflow report.
 
 `opencrab-sync` is the MCP bridge. It normalizes `opencrab_query`, `opencrab_search_documents`, or similar OpenCrab MCP JSON results into a project sync artifact and appends the extracted evidence to the evidence manifest.
 

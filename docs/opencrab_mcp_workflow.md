@@ -8,6 +8,8 @@ OpenCrab MCP is the required knowledge path for Crab Archi Design.
 
 ## Required Flow
 
+The full flow can be run manually step by step, or through `workflow-run` once the source SVG, standards, OpenCrab MCP result JSON, constraints, and prompt are available.
+
 1. Load the original SVG and build recognition IR.
 2. Attach a source recognition manifest with primitive counts, labels, and program role hints.
 3. Classify protected geometry: parking, parking count, columns, cores, ramps, stairs, egress, wet cores, machine rooms, and outer shell.
@@ -48,6 +50,8 @@ projects/<project>/opencrab/opencrab_sync_###.json
 ```
 
 Then it appends normalized `opencrab_query` or `opencrab_search_documents` evidence to the same evidence manifest used by `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit`.
+
+`workflow-run` can call `opencrab-sync` as part of the full sequence when `--opencrab-result-file` or `--opencrab-result-json` is supplied. The workflow report records whether each required gate passed, failed, or was skipped.
 
 `edit-brief` should be run after natural-language or doodle input and before `apply-edit`. It does not replace OpenCrab MCP. It confirms the OpenCrab evidence gate, summarizes the requested operations, and catches basic drawing-coordinate mistakes such as doodle strokes outside the source SVG viewBox.
 

@@ -52,6 +52,18 @@ crab-archi-design init \
   --opencrab-mcp-server opencrab \
   --engine-adapter reference-svg-engine
 
+crab-archi-design workflow-run \
+  --project-id demo \
+  --source-svg /path/to/original.svg \
+  --households 900 \
+  --standards examples/area_standard_sample.csv \
+  --ontology-pack community_svg_topology_ontology_v2 \
+  --opencrab-result-file /path/to/opencrab_mcp_result.json \
+  --constraint-sketch examples/constraint_sketch_sample.json \
+  --prompt "Open the greenery lounge more toward the main hall and keep parking/core locked." \
+  --engine-adapter reference-svg-engine \
+  --skip-preview
+
 crab-archi-design recognize-svg \
   --project-id demo
 
@@ -108,6 +120,8 @@ crab-archi-design review-panel \
 crab-archi-design qa --project-id demo
 ```
 
+`workflow-run` executes the normal project path in one command: init if needed, recognize source SVG, attach standards, sync or attach evidence, attach constraints, create prompt/sketch intents, write the edit brief, status, design handoff, apply edit, review panel, final status, and a `projects/<project>/workflow/workflow_run_###.json` report.
+
 `apply-edit` reads structured natural-language and doodle intents, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
 
 `reference-svg-engine` is the built-in reference adapter. It consumes the same solver input as a production engine and emits a native SVG candidate plus engine report, using only additive SVG elements and no raster overlay. It is intended for end-to-end workflow validation before connecting a project-specific geometry solver.
@@ -150,6 +164,7 @@ Original SVG
   -> Standards Evidence
   -> Standards Manifest
   -> Design Intent JSON
+  -> Workflow Run
   -> Edit Brief
   -> Project Status
   -> Design Handoff

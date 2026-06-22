@@ -449,6 +449,80 @@ def test_apply_edit_runs_builtin_reference_engine(tmp_path: Path) -> None:
     assert engine_report["summary"]["operation_count"] >= 1
 
 
+def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
+    source_svg = tmp_path / "original.svg"
+    source_svg.write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 80'><rect x='8' y='8' width='104' height='64'/><text x='16' y='20'>fitness</text></svg>",
+        encoding="utf-8",
+    )
+    standards = tmp_path / "standards.csv"
+    standards.write_text("households,program,area\n900,greenery_lounge,80\n900,fitness,70\n", encoding="utf-8")
+    constraint = tmp_path / "constraint.json"
+    constraint.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [{"stroke_id": "shell", "mode": "community_shell", "target_hint": "community_shell", "points": [[0, 0], [120, 0], [120, 80], [0, 80]]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    opencrab_result = tmp_path / "opencrab.json"
+    opencrab_result.write_text(
+        json.dumps({"status": "ok", "query": "fitness lounge topology", "evidence": [{"id": "e1", "text": "Fitness and lounge evidence.", "source": "OpenCrab"}]}),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "--project-root",
+        "projects",
+        "workflow-run",
+        "--project-id",
+        "demo",
+        "--source-svg",
+        str(source_svg),
+        "--households",
+        "900",
+        "--standards",
+        str(standards),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        "--opencrab-result-file",
+        str(opencrab_result),
+        "--opencrab-source-tool",
+        "opencrab_search_documents",
+        "--constraint-sketch",
+        str(constraint),
+        "--prompt",
+        "Improve the greenery lounge and fitness connection while preserving protected geometry.",
+        "--engine-adapter",
+        "reference-svg-engine",
+        "--skip-preview",
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    workflow_path = tmp_path / result.stdout.splitlines()[0]
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    assert workflow["schema"] == "crab-archi-design-workflow-run-v1"
+    assert workflow["status"] == "pass"
+    assert workflow["final_project_status"]["overall_status"] == "complete_candidate_ready"
+    step_status = {step["name"]: step["status"] for step in workflow["steps"]}
+    assert step_status["init"] == "pass"
+    assert step_status["recognize-svg"] == "pass"
+    assert step_status["standards-attach"] == "pass"
+    assert step_status["opencrab-sync"] == "pass"
+    assert step_status["constraint-attach"] == "pass"
+    assert step_status["edit-brief"] == "pass"
+    assert step_status["design-handoff"] == "pass"
+    assert step_status["apply-edit"] == "pass"
+    assert step_status["review-panel"] == "pass"
+    alternative = tmp_path / workflow["latest_artifacts"]["alternative_svg"]
+    panel = tmp_path / workflow["latest_artifacts"]["review_panel"]
+    assert alternative.exists()
+    assert panel.exists()
+    assert "crab_archi_design_reference_engine_candidate" in alternative.read_text(encoding="utf-8")
+
+
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
     source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><text x='2' y='2'>fitness</text></svg>", encoding="utf-8")

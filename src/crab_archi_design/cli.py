@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import html
+import io
 import json
 import os
 import re
@@ -2213,6 +2215,319 @@ def command_design_handoff(args: argparse.Namespace) -> None:
     print(json.dumps({"status": handoff["status"], "checks": handoff_checks}, ensure_ascii=False))
 
 
+def capture_command_step(name: str, func: Any, args: argparse.Namespace) -> dict[str, Any]:
+    buffer = io.StringIO()
+    started_at = now()
+    try:
+        with contextlib.redirect_stdout(buffer):
+            func(args)
+    except SystemExit as exc:
+        return {
+            "name": name,
+            "status": "error",
+            "started_at": started_at,
+            "finished_at": now(),
+            "stdout": buffer.getvalue().splitlines(),
+            "error": str(exc),
+        }
+    except Exception as exc:  # pragma: no cover - defensive workflow report path
+        return {
+            "name": name,
+            "status": "error",
+            "started_at": started_at,
+            "finished_at": now(),
+            "stdout": buffer.getvalue().splitlines(),
+            "error": f"{exc.__class__.__name__}: {exc}",
+        }
+    return {
+        "name": name,
+        "status": "pass",
+        "started_at": started_at,
+        "finished_at": now(),
+        "stdout": buffer.getvalue().splitlines(),
+    }
+
+
+def skipped_workflow_step(name: str, reason: str) -> dict[str, Any]:
+    return {"name": name, "status": "skipped", "created_at": now(), "reason": reason}
+
+
+def workflow_manifest_exists(project_id: str, root: Path) -> bool:
+    return manifest_path(project_id, root).exists()
+
+
+def workflow_has_edit_intents(project_id: str, root: Path) -> bool:
+    return bool(sorted_json_files(project_dir(project_id, root) / "edit_intents", "*.json"))
+
+
+def write_workflow_report(project_id: str, root: Path, report: dict[str, Any]) -> Path:
+    out_dir = project_dir(project_id, root) / "workflow"
+    seq = next_sequence(out_dir, "workflow_run_*.json")
+    out = out_dir / f"workflow_run_{seq:03d}.json"
+    write_json(out, report)
+    return out
+
+
+def command_workflow_run(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    steps: list[dict[str, Any]] = []
+    project_id = args.project_id
+
+    def add_step(name: str, func: Any, namespace: argparse.Namespace, required: bool = True) -> bool:
+        step = capture_command_step(name, func, namespace)
+        step["required"] = required
+        steps.append(step)
+        return step["status"] == "pass"
+
+    def add_skipped(name: str, reason: str) -> None:
+        step = skipped_workflow_step(name, reason)
+        step["required"] = False
+        steps.append(step)
+
+    manifest_exists = workflow_manifest_exists(project_id, root)
+    if args.reinit or not manifest_exists:
+        if not args.source_svg:
+            report = {
+                "schema": "crab-archi-design-workflow-run-v1",
+                "created_at": now(),
+                "project_id": project_id,
+                "status": "error",
+                "steps": steps,
+                "error": "Missing --source-svg for new workflow project.",
+            }
+            report_path = write_workflow_report(project_id, root, report)
+            print(report_path)
+            print(json.dumps({"status": "error", "error": report["error"]}, ensure_ascii=False))
+            raise SystemExit(report["error"])
+        init_ok = add_step(
+            "init",
+            command_init,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                source_svg=args.source_svg,
+                households=args.households,
+                standards=args.standards or [],
+                ontology_pack=args.ontology_pack,
+                engine_adapter=args.engine_adapter or "reference-svg-engine",
+                opencrab_mcp_server=args.opencrab_mcp_server,
+                opencrab_homepage=args.opencrab_homepage,
+                allow_missing_source=False,
+            ),
+        )
+        if not init_ok:
+            report = {
+                "schema": "crab-archi-design-workflow-run-v1",
+                "created_at": now(),
+                "project_id": project_id,
+                "status": "error",
+                "steps": steps,
+            }
+            report_path = write_workflow_report(project_id, root, report)
+            print(report_path)
+            print(json.dumps({"status": "error", "failed_step": "init"}, ensure_ascii=False))
+            raise SystemExit(f"workflow-run failed at init; report: {report_path}")
+    else:
+        add_skipped("init", "Project manifest already exists. Pass --reinit to recreate it.")
+
+    manifest = load_manifest(project_id, root)
+    engine_adapter = args.engine_adapter or manifest.get("engine_adapter") or "reference-svg-engine"
+    households = args.households if args.households is not None else manifest.get("household_count")
+
+    required_sequence = [
+        (
+            "recognize-svg",
+            command_recognize_svg,
+            argparse.Namespace(project_root=str(root), project_id=project_id, source_svg=None, max_labels=args.max_labels),
+        )
+    ]
+    for name, func, namespace in required_sequence:
+        if not add_step(name, func, namespace):
+            report = {
+                "schema": "crab-archi-design-workflow-run-v1",
+                "created_at": now(),
+                "project_id": project_id,
+                "status": "error",
+                "steps": steps,
+            }
+            report_path = write_workflow_report(project_id, root, report)
+            print(report_path)
+            print(json.dumps({"status": "error", "failed_step": name}, ensure_ascii=False))
+            raise SystemExit(f"workflow-run failed at {name}; report: {report_path}")
+
+    standards_files = args.standards or manifest.get("standards_files", [])
+    if standards_files:
+        add_step(
+            "standards-attach",
+            command_standards_attach,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                file=args.standards or [],
+                households=households,
+                source="local_file",
+                standard_id=None,
+                summary=args.standards_summary,
+                metadata=args.standards_metadata or [],
+                replace=args.replace_standards,
+            ),
+        )
+    else:
+        add_skipped("standards-attach", "No standards files supplied or stored in manifest.")
+
+    if args.opencrab_result_file or args.opencrab_result_json:
+        add_step(
+            "opencrab-sync",
+            command_opencrab_sync,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                result_file=args.opencrab_result_file or [],
+                result_json=args.opencrab_result_json or [],
+                source_tool=args.opencrab_source_tool,
+                workspace_id=args.workspace_id,
+                pack_id=args.ontology_pack or manifest.get("ontology_pack"),
+                query=args.opencrab_query,
+                summary=args.evidence_summary,
+                evidence_id=None,
+                metadata=args.evidence_metadata or [],
+                replace=args.replace_evidence,
+            ),
+        )
+    elif args.evidence_source_file or args.evidence_summary:
+        add_step(
+            "evidence-attach",
+            command_evidence_attach,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                source=args.evidence_source,
+                pack_id=args.ontology_pack or manifest.get("ontology_pack"),
+                query=args.opencrab_query,
+                summary=args.evidence_summary,
+                source_file=args.evidence_source_file,
+                evidence_id=None,
+                metadata=args.evidence_metadata or [],
+            ),
+        )
+    elif load_evidence_manifest(project_id, root):
+        add_skipped("evidence", "Existing evidence manifest found.")
+    else:
+        add_skipped("evidence", "No evidence source supplied.")
+
+    if args.constraint_sketch:
+        add_step(
+            "constraint-attach",
+            command_constraint_attach,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                sketch=args.constraint_sketch,
+                source="doodle",
+                role=args.constraint_role,
+                replace=args.replace_constraints,
+            ),
+        )
+    elif load_constraint_manifest(project_id, root):
+        add_skipped("constraint-attach", "Existing constraint manifest found.")
+    else:
+        add_skipped("constraint-attach", "No constraint sketch supplied.")
+
+    if args.prompt:
+        add_step("prompt-edit", command_prompt_edit, argparse.Namespace(project_root=str(root), project_id=project_id, text=args.prompt))
+    elif workflow_has_edit_intents(project_id, root):
+        add_skipped("prompt-edit", "Existing edit intents found.")
+    else:
+        add_step(
+            "prompt-edit",
+            command_prompt_edit,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                text="Create an evidence-backed community layout alternative while preserving protected geometry.",
+            ),
+        )
+
+    if args.sketch:
+        add_step("sketch-intent", command_sketch_intent, argparse.Namespace(project_root=str(root), project_id=project_id, sketch=args.sketch))
+    else:
+        add_skipped("sketch-intent", "No edit sketch supplied.")
+
+    post_intent_steps = [
+        ("edit-brief", command_edit_brief, argparse.Namespace(project_root=str(root), project_id=project_id, intent="all")),
+        (
+            "project-status-before-apply",
+            command_project_status,
+            argparse.Namespace(project_root=str(root), project_id=project_id),
+        ),
+        (
+            "design-handoff",
+            command_design_handoff,
+            argparse.Namespace(project_root=str(root), project_id=project_id, intent="all", task=args.task),
+        ),
+    ]
+    for name, func, namespace in post_intent_steps:
+        add_step(name, func, namespace)
+
+    if not args.skip_apply:
+        add_step(
+            "apply-edit",
+            command_apply_edit,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                intent="all",
+                engine_adapter=engine_adapter,
+                engine_cwd=None,
+                engine_arg=args.engine_arg or [],
+                candidate_svg=None,
+                candidate_report=None,
+                preview=None,
+                skip_preview=args.skip_preview,
+                timeout=args.timeout,
+            ),
+        )
+        if not args.skip_review_panel:
+            add_step(
+                "review-panel",
+                command_review_panel,
+                argparse.Namespace(project_root=str(root), project_id=project_id, apply_report="latest", alternative="from-report", title=None, open=False),
+            )
+        else:
+            add_skipped("review-panel", "Skipped by --skip-review-panel.")
+    else:
+        add_skipped("apply-edit", "Skipped by --skip-apply.")
+
+    add_step("project-status-final", command_project_status, argparse.Namespace(project_root=str(root), project_id=project_id))
+    final_status = build_project_status(project_id, root)
+    step_errors = [step for step in steps if step["status"] == "error"]
+    expected_status = "ready_for_apply" if args.skip_apply else "complete_candidate_ready"
+    workflow_status = "pass" if not step_errors and final_status["overall_status"] == expected_status else "review_required"
+    report = {
+        "schema": "crab-archi-design-workflow-run-v1",
+        "created_at": now(),
+        "project_id": project_id,
+        "status": workflow_status,
+        "expected_final_status": expected_status,
+        "engine_adapter": engine_adapter,
+        "steps": steps,
+        "final_project_status": final_status,
+        "latest_artifacts": final_status.get("latest_artifacts", {}),
+    }
+    report_path = write_workflow_report(project_id, root, report)
+    print(report_path)
+    print(
+        json.dumps(
+            {
+                "status": workflow_status,
+                "final_project_status": final_status["overall_status"],
+                "latest_artifacts": final_status.get("latest_artifacts", {}),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def command_doodle_editor(args: argparse.Namespace) -> None:
     candidates = [
         Path(__file__).resolve().parents[2] / "tools" / "doodle_editor.html",
@@ -2343,6 +2658,43 @@ def build_parser() -> argparse.ArgumentParser:
     p_handoff.add_argument("--intent", default="all", help="latest, all, or a project-relative/absolute intent JSON path.")
     p_handoff.add_argument("--task", help="Optional design task override for the handoff prompt.")
     p_handoff.set_defaults(func=command_design_handoff)
+
+    p_workflow = sub.add_parser("workflow-run", help="Run the full recognition/evidence/constraint/intent/apply/review workflow.")
+    p_workflow.add_argument("--project-id", required=True)
+    p_workflow.add_argument("--source-svg", help="Required when creating a new project.")
+    p_workflow.add_argument("--households", type=int)
+    p_workflow.add_argument("--standards", action="append", default=[])
+    p_workflow.add_argument("--standards-summary")
+    p_workflow.add_argument("--standards-metadata", action="append", default=[])
+    p_workflow.add_argument("--ontology-pack")
+    p_workflow.add_argument("--engine-adapter")
+    p_workflow.add_argument("--engine-arg", action="append", default=[])
+    p_workflow.add_argument("--opencrab-mcp-server", default="opencrab")
+    p_workflow.add_argument("--opencrab-homepage", default=OPENCRAB_HOMEPAGE)
+    p_workflow.add_argument("--opencrab-result-file", action="append", default=[])
+    p_workflow.add_argument("--opencrab-result-json", action="append", default=[])
+    p_workflow.add_argument("--opencrab-source-tool", default="opencrab_mcp")
+    p_workflow.add_argument("--opencrab-query")
+    p_workflow.add_argument("--workspace-id")
+    p_workflow.add_argument("--evidence-source", default="localcrab")
+    p_workflow.add_argument("--evidence-source-file")
+    p_workflow.add_argument("--evidence-summary")
+    p_workflow.add_argument("--evidence-metadata", action="append", default=[])
+    p_workflow.add_argument("--constraint-sketch")
+    p_workflow.add_argument("--constraint-role")
+    p_workflow.add_argument("--prompt")
+    p_workflow.add_argument("--sketch", help="Optional edit sketch JSON for sketch-intent.")
+    p_workflow.add_argument("--task", help="Optional design handoff task.")
+    p_workflow.add_argument("--max-labels", type=int, default=500)
+    p_workflow.add_argument("--timeout", type=int, default=300)
+    p_workflow.add_argument("--skip-preview", action="store_true")
+    p_workflow.add_argument("--skip-apply", action="store_true")
+    p_workflow.add_argument("--skip-review-panel", action="store_true")
+    p_workflow.add_argument("--replace-standards", action="store_true")
+    p_workflow.add_argument("--replace-evidence", action="store_true")
+    p_workflow.add_argument("--replace-constraints", action="store_true")
+    p_workflow.add_argument("--reinit", action="store_true")
+    p_workflow.set_defaults(func=command_workflow_run)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)
