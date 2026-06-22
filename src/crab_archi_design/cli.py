@@ -787,6 +787,142 @@ def read_opencrab_result_inputs(args: argparse.Namespace) -> tuple[list[dict[str
     return raw_results, source_labels
 
 
+def opencrab_request_query(manifest: dict[str, Any], status: dict[str, Any] | None, args: argparse.Namespace) -> str:
+    if args.query:
+        return args.query
+    pack_id = args.pack_id or manifest.get("ontology_pack") or "community_svg_topology_ontology_v2"
+    households = manifest.get("household_count") or args.households or "unknown"
+    hard_constraints = ", ".join(str(item) for item in manifest.get("hard_constraints", []))
+    metrics = (status or {}).get("metrics", {})
+    metric_text = ", ".join(
+        f"{key}={value}"
+        for key, value in {
+            "program_labels": metrics.get("program_label_count"),
+            "room_envelopes": metrics.get("room_envelope_candidate_count"),
+            "columns": metrics.get("column_candidate_count"),
+            "walls": metrics.get("wall_candidate_count"),
+        }.items()
+        if value is not None
+    )
+    intent = args.intent or "Generate evidence-backed community layout topology guidance for greenery lounge, fitness/GX, golf/screen golf, sauna/locker/shower, hall/lobby, and support spaces."
+    return (
+        f"Crab Archi Design OpenCrab MCP request for project {manifest.get('project_id')}. "
+        f"Ontology pack: {pack_id}. Household target: {households}. "
+        f"Intent: {intent} "
+        f"Return precedent topology, adjacency levers, area criteria, protected/mutable zone rules, claims, and evidence references. "
+        f"Hard constraints: {hard_constraints}. "
+        f"Recognition metrics: {metric_text or 'not available'}. "
+        "The response must be usable by opencrab-sync and include answer/summary plus evidence items with source references."
+    )
+
+
+def build_opencrab_request_markdown(request: dict[str, Any]) -> str:
+    command = request["next_commands"]["sync_result"]
+    arguments = json.dumps(request["recommended_tool_call"]["arguments"], ensure_ascii=False, indent=2)
+    return "\n".join(
+        [
+            f"# OpenCrab MCP Request: {request['project_id']}",
+            "",
+            f"- Tool: `{request['recommended_tool_call']['tool']}`",
+            f"- Ontology pack: `{request.get('pack_id')}`",
+            f"- Expected result file: `{request['expected_result_file']}`",
+            f"- Next command: `{command}`",
+            "",
+            "## Tool Arguments",
+            "",
+            "```json",
+            arguments,
+            "```",
+            "",
+            "## Query",
+            "",
+            request["query"],
+            "",
+            "## Response Contract",
+            "",
+            "- Save the OpenCrab MCP response JSON to the expected result file.",
+            "- The response should include `answer` or `summary` plus `evidence`, `items`, `results`, or `chunks`.",
+            "- Run the next command to attach normalized evidence before any final SVG mutation.",
+            "",
+        ]
+    )
+
+
+def command_opencrab_request(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    status: dict[str, Any] | None = None
+    try:
+        status = build_project_status(args.project_id, root)
+    except SystemExit:
+        status = None
+    base = project_dir(args.project_id, root)
+    request_dir = Path(args.output_dir).expanduser() if args.output_dir else base / "opencrab"
+    if not request_dir.is_absolute():
+        request_dir = Path.cwd() / request_dir
+    seq = next_sequence(request_dir, "opencrab_request_*.json")
+    request_path = request_dir / f"opencrab_request_{seq:03d}.json"
+    markdown_path = request_dir / f"opencrab_request_{seq:03d}.md"
+    expected_result_file = Path(args.expected_result_file).expanduser() if args.expected_result_file else request_dir / f"opencrab_result_{seq:03d}.json"
+    if not expected_result_file.is_absolute():
+        expected_result_file = Path.cwd() / expected_result_file
+    pack_id = args.pack_id or manifest.get("ontology_pack")
+    query = opencrab_request_query(manifest, status, args)
+    sync_command = (
+        f"crab-archi-design --project-root {shlex.quote(str(root))} opencrab-sync "
+        f"--project-id {shlex.quote(args.project_id)} "
+        f"--result-file {shlex.quote(str(expected_result_file))} "
+        f"--source-tool {shlex.quote(args.source_tool)}"
+    )
+    request = {
+        "schema": "crab-archi-design-opencrab-request-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "source_tool": args.source_tool,
+        "opencrab_mcp_server": args.opencrab_mcp_server,
+        "opencrab_homepage": args.opencrab_homepage,
+        "workspace_id": args.workspace_id,
+        "pack_id": pack_id,
+        "max_results": args.max_results,
+        "query": query,
+        "recommended_tool_call": {
+            "tool": args.source_tool,
+            "arguments": {
+                "query": query,
+                "pack_id": pack_id,
+                "workspace_id": args.workspace_id,
+                "limit": args.max_results,
+            },
+        },
+        "expected_result_file": str(expected_result_file),
+        "next_commands": {
+            "sync_result": sync_command,
+            "build_topology": f"crab-archi-design --project-root {shlex.quote(str(root))} topology-build --project-id {shlex.quote(args.project_id)}",
+        },
+        "project_context": {
+            "source_svg": manifest.get("source_svg"),
+            "households": manifest.get("household_count") or args.households,
+            "hard_constraints": manifest.get("hard_constraints", []),
+            "opencrab_mcp": manifest.get("opencrab_mcp"),
+            "status": status.get("overall_status") if status else None,
+            "gates": status.get("gates") if status else {},
+            "metrics": status.get("metrics") if status else {},
+            "latest_artifacts": status.get("latest_artifacts") if status else {},
+        },
+        "response_contract": {
+            "accepted_top_level_fields": ["answer", "summary", "evidence", "items", "results", "chunks", "query", "status"],
+            "evidence_item_fields": ["id", "document_id", "workspace_id", "text", "content", "summary", "source", "title", "score", "metadata"],
+            "normalizer": "opencrab-sync",
+        },
+    }
+    write_json(request_path, request)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.write_text(build_opencrab_request_markdown(request), encoding="utf-8")
+    print(request_path)
+    print(markdown_path)
+    print(json.dumps({"status": "created", "query": query, "expected_result_file": str(expected_result_file)}, ensure_ascii=False))
+
+
 def command_opencrab_sync(args: argparse.Namespace) -> None:
     root = Path(args.project_root)
     manifest = load_manifest(args.project_id, root)
@@ -4569,6 +4705,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["topology_manifest_active"],
         },
         {
+            "id": "opencrab_request",
+            "cli_subcommand": "opencrab-request",
+            "description": "Create an OpenCrab MCP tool-call request package from the current project context before evidence sync.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--query", "--intent", "--pack-id", "--workspace-id", "--source-tool", "--opencrab-mcp-server", "--opencrab-homepage", "--households", "--max-results", "--expected-result-file", "--output-dir"],
+            "outputs": ["opencrab/opencrab_request_###.json", "opencrab/opencrab_request_###.md"],
+            "gates": ["opencrab_mcp_request_ready"],
+        },
+        {
             "id": "opencrab_sync",
             "cli_subcommand": "opencrab-sync",
             "description": "Normalize OpenCrab MCP JSON results and attach them as project evidence.",
@@ -4746,7 +4891,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"],
             "revision_loop": ["revision_run", "export_package", "verify_package", "doctor", "release_audit"],
             "manual_revision_loop": ["topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
-            "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
+            "opencrab_first_manual_loop": ["opencrab_request", "opencrab_sync", "constraint_attach", "topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
             "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
         "security": {
@@ -4934,6 +5079,7 @@ def run_mcp_smoke(config: dict[str, Any], server_name: str | None, timeout: int)
         "create_job_tool_available": "create_job" in tool_names,
         "run_job_tool_available": "run_job" in tool_names,
         "validate_job_tool_available": "validate_job" in tool_names,
+        "opencrab_request_tool_available": "opencrab_request" in tool_names,
         "doctor_tool_available": "doctor" in tool_names,
         "release_audit_tool_available": "release_audit" in tool_names,
         "workflow_run_tool_available": "workflow_run" in tool_names,
@@ -5044,6 +5190,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_opencrab_sync.add_argument("--metadata", action="append", default=[])
     p_opencrab_sync.add_argument("--replace", action="store_true")
     p_opencrab_sync.set_defaults(func=command_opencrab_sync)
+
+    p_opencrab_request = sub.add_parser("opencrab-request", help="Create an OpenCrab MCP request package from project context.")
+    p_opencrab_request.add_argument("--project-id", required=True)
+    p_opencrab_request.add_argument("--query", help="Explicit OpenCrab query. Defaults to a project-context query.")
+    p_opencrab_request.add_argument("--intent", help="Design intent to include in the generated query.")
+    p_opencrab_request.add_argument("--pack-id", help="Ontology pack id. Defaults to the project ontology pack.")
+    p_opencrab_request.add_argument("--workspace-id")
+    p_opencrab_request.add_argument("--source-tool", default="opencrab_search_documents")
+    p_opencrab_request.add_argument("--opencrab-mcp-server", default="opencrab")
+    p_opencrab_request.add_argument("--opencrab-homepage", default=OPENCRAB_HOMEPAGE)
+    p_opencrab_request.add_argument("--households", type=int)
+    p_opencrab_request.add_argument("--max-results", type=int, default=12)
+    p_opencrab_request.add_argument("--expected-result-file", help="Expected path where the OpenCrab MCP JSON response will be saved.")
+    p_opencrab_request.add_argument("--output-dir", help="Directory for opencrab_request_###.json/.md. Defaults to project opencrab directory.")
+    p_opencrab_request.set_defaults(func=command_opencrab_request)
 
     p_constraint = sub.add_parser("constraint-attach", help="Attach doodle-based lock/no-go/mutable constraints to a project.")
     p_constraint.add_argument("--project-id", required=True)

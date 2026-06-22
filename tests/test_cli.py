@@ -26,7 +26,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
+    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_request", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
     create_job_tool = next(tool for tool in manifest["tools"] if tool["id"] == "create_job")
@@ -34,6 +34,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert any("job.md" in output or "_job.md" in output for output in create_job_tool["outputs"])
     assert manifest["recommended_sequences"]["saas_job_runner"] == ["create_job", "validate_job", "run_job"]
     assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"]
+    assert manifest["recommended_sequences"]["opencrab_first_manual_loop"][0] == "opencrab_request"
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
 
@@ -88,11 +89,13 @@ def test_mcp_smoke_validates_runtime_config(tmp_path: Path) -> None:
     assert report["checks"]["create_job_tool_available"] is True
     assert report["checks"]["run_job_tool_available"] is True
     assert report["checks"]["validate_job_tool_available"] is True
+    assert report["checks"]["opencrab_request_tool_available"] is True
     assert report["checks"]["release_audit_tool_available"] is True
     assert report["checks"]["revision_run_tool_available"] is True
     assert report["checks"]["topology_build_tool_available"] is True
     assert "create_job" in report["tool_names"]
     assert "run_job" in report["tool_names"]
+    assert "opencrab_request" in report["tool_names"]
     assert "release_audit" in report["tool_names"]
     assert "revision_run" in report["tool_names"]
     assert "workflow_run" in report["tool_names"]
@@ -145,12 +148,14 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         assert "run_job" in tools
         assert "validate_job" in tools
         assert "revision_run" in tools
+        assert "opencrab_request" in tools
         assert "topology_build" in tools
         assert "doctor" in tools
         assert "release_audit" in tools
         assert "mcp_manifest" in tools
         assert "mcp_config" in tools
         assert tools["create_job"]["inputSchema"]["properties"]["brief"]["type"] == "boolean"
+        assert tools["opencrab_request"]["inputSchema"]["properties"]["max_results"]["type"] == "integer"
         assert "project_id" in tools["workflow_run"]["inputSchema"]["properties"]
 
         write_json_line(
@@ -529,6 +534,33 @@ def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
         cwd=ROOT,
     )
     assert result.returncode == 0, result.stderr
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "opencrab-request",
+        "--project-id",
+        "demo",
+        "--intent",
+        "Find precedent topology for 900-household community layout automation.",
+        "--source-tool",
+        "opencrab_search_documents",
+        "--max-results",
+        "8",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    request_path = Path(result.stdout.splitlines()[0])
+    request_md_path = Path(result.stdout.splitlines()[1])
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request_md = request_md_path.read_text(encoding="utf-8")
+    assert request["schema"] == "crab-archi-design-opencrab-request-v1"
+    assert request["recommended_tool_call"]["tool"] == "opencrab_search_documents"
+    assert request["recommended_tool_call"]["arguments"]["limit"] == 8
+    assert request["pack_id"] == "community_svg_topology_ontology_v2"
+    assert "opencrab-sync" in request["next_commands"]["sync_result"]
+    assert request["expected_result_file"].endswith("opencrab_result_001.json")
+    assert "OpenCrab MCP Request: demo" in request_md
 
     result = run_cli(
         "--project-root",

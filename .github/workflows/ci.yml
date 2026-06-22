@@ -92,6 +92,11 @@ jobs:
             --engine-adapter layout-svg-engine \
             --skip-preview
 
+          crab-archi-design --project-root .ci-projects opencrab-request \
+            --project-id ci-demo \
+            --intent "Find OpenCrab precedent topology for greenery lounge, fitness, golf, wellness, hall, and support adjacency." \
+            --max-results 8
+
           crab-archi-design --project-root .ci-projects revision-run \
             --project-id ci-demo \
             --text "Refine the greenery lounge and fitness connection while keeping protected geometry locked." \

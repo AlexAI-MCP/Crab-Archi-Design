@@ -16,24 +16,25 @@ The full flow can be run manually step by step, through `workflow-run`, or throu
 4. Classify mutable community zones: rooms, partitions, openings, program labels, secondary circulation, and finish intent.
 5. Attach household-count standards and selected area/program rows.
 6. Attach user-confirmed community shell, no-go, lock, mutable, and projectable constraints.
-7. Query OpenCrab MCP for the selected ontology pack.
-8. Retrieve precedent topology, program hierarchy, adjacency levers, area standards, claims, and evidence references.
-9. Run `opencrab-sync` to normalize MCP results into the project evidence manifest.
-10. Build the target topology manifest from recognition, standards, OpenCrab evidence, and constraints.
-11. Project the superior-case ontology onto the target drawing's mutable zones.
-12. Compile a `DesignIntent` JSON with OpenCrab evidence references.
-13. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
-14. Run `project-status` to confirm recognition, topology, standards, OpenCrab evidence, constraints, and edit intents are ready.
-15. Build a `design-handoff` package for Codex, an LLM wrapper, an MCP tool, or the deterministic solver.
-16. Generate native SVG geometry through a deterministic solver.
-17. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
-18. Run `project-status` again to confirm the latest candidate and review panel are complete.
-19. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
-20. Run `verify-package` to validate the exported ZIP before handoff or upload.
-21. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
-22. Use `run-job` when a SaaS, OAuth, or MCP worker needs to execute the whole sequence from a single JSON job spec.
-23. Run `mcp-manifest`, `mcp-config`, and `mcp-smoke` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog, runtime configuration, and connection smoke test.
-24. Accept natural-language or doodle revisions through `revision-run`, then export and verify the package again.
+7. Run `opencrab-request` to create the OpenCrab MCP tool-call request package.
+8. Query OpenCrab MCP for the selected ontology pack.
+9. Retrieve precedent topology, program hierarchy, adjacency levers, area standards, claims, and evidence references.
+10. Run `opencrab-sync` to normalize MCP results into the project evidence manifest.
+11. Build the target topology manifest from recognition, standards, OpenCrab evidence, and constraints.
+12. Project the superior-case ontology onto the target drawing's mutable zones.
+13. Compile a `DesignIntent` JSON with OpenCrab evidence references.
+14. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
+15. Run `project-status` to confirm recognition, topology, standards, OpenCrab evidence, constraints, and edit intents are ready.
+16. Build a `design-handoff` package for Codex, an LLM wrapper, an MCP tool, or the deterministic solver.
+17. Generate native SVG geometry through a deterministic solver.
+18. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
+19. Run `project-status` again to confirm the latest candidate and review panel are complete.
+20. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
+21. Run `verify-package` to validate the exported ZIP before handoff or upload.
+22. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
+23. Use `run-job` when a SaaS, OAuth, or MCP worker needs to execute the whole sequence from a single JSON job spec.
+24. Run `mcp-manifest`, `mcp-config`, and `mcp-smoke` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog, runtime configuration, and connection smoke test.
+25. Accept natural-language or doodle revisions through `revision-run`, then export and verify the package again.
 
 ## Design Rule
 
@@ -56,6 +57,8 @@ projects/<project>/opencrab/opencrab_sync_###.json
 ```
 
 Then it appends normalized `opencrab_query` or `opencrab_search_documents` evidence to the same evidence manifest used by `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit`.
+
+`opencrab-request` writes `projects/<project>/opencrab/opencrab_request_###.json` and `.md` before the MCP call. The request artifact includes the recommended OpenCrab MCP tool, arguments, generated query, expected result file, and the exact `opencrab-sync` command to run after saving the MCP response.
 
 `workflow-run` can call `opencrab-sync` as part of the full sequence when `--opencrab-result-file` or `--opencrab-result-json` is supplied. The workflow report records whether each required gate passed, failed, or was skipped.
 

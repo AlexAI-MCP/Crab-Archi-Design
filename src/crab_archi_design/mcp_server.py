@@ -42,7 +42,7 @@ BOOLEAN_FIELDS = {
     "no_validate_file_checks",
     "open",
 }
-INTEGER_FIELDS = {"households", "max_labels", "timeout"}
+INTEGER_FIELDS = {"households", "max_labels", "max_results", "timeout"}
 ARRAY_FIELDS = {
     "standards",
     "engine_arg",

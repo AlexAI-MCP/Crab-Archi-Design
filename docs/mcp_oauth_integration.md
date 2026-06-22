@@ -121,6 +121,7 @@ run_job
 validate_job
 workflow_run
 revision_run
+opencrab_request
 opencrab_sync
 topology_build
 prompt_edit

@@ -148,6 +148,11 @@ crab-archi-design evidence-attach \
   --pack-id community_svg_topology_ontology_v2 \
   --summary "OpenCrab/LocalCrab verified the precedent topology, evidence chunks, protected zones, and 900-household program targets."
 
+crab-archi-design opencrab-request \
+  --project-id demo \
+  --intent "Find evidence-backed precedent topology for the target community layout." \
+  --max-results 8
+
 crab-archi-design opencrab-sync \
   --project-id demo \
   --result-file /path/to/opencrab_mcp_result.json \
@@ -249,6 +254,8 @@ crab-archi-design qa --project-id demo
 `evidence-attach` writes `projects/<project>/evidence/evidence_manifest.json`. `qa` and `apply-edit` require this manifest to be verified before a final SVG alternative can pass.
 
 `opencrab-sync` normalizes JSON returned by OpenCrab MCP tools such as `opencrab_query` and `opencrab_search_documents`. It writes `projects/<project>/opencrab/opencrab_sync_###.json` and appends the normalized evidence to `projects/<project>/evidence/evidence_manifest.json`.
+
+`opencrab-request` writes `projects/<project>/opencrab/opencrab_request_###.json` and `.md`. It packages the recommended OpenCrab MCP tool call, query, expected result file, and next `opencrab-sync` command from the current project context.
 
 `constraint-attach` writes `projects/<project>/constraints/constraint_manifest.json`. Use it for community shell, parking/core/column/ramp no-go edges, lock boundaries, mutable zones, and projectable zones. `qa` and `apply-edit` require an active constraint manifest before a final SVG alternative can pass.
 
