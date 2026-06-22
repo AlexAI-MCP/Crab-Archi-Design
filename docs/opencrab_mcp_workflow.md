@@ -19,9 +19,11 @@ OpenCrab MCP is the required knowledge path for Crab Archi Design.
 9. Project the superior-case ontology onto the target drawing's mutable zones.
 10. Compile a `DesignIntent` JSON with OpenCrab evidence references.
 11. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
-12. Generate native SVG geometry through a deterministic solver.
-13. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
-14. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+12. Run `project-status` to confirm recognition, standards, OpenCrab evidence, constraints, and edit intents are ready.
+13. Generate native SVG geometry through a deterministic solver.
+14. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
+15. Run `project-status` again to confirm the latest candidate and review panel are complete.
+16. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -38,6 +40,8 @@ projects/<project>/evidence/evidence_manifest.json
 `qa` and `apply-edit` treat the candidate as `review_required` until that manifest has `status: verified`. The `opencrab_evidence_verified` check must pass before a generated SVG can be treated as an evidence-backed alternative.
 
 `edit-brief` should be run after natural-language or doodle input and before `apply-edit`. It does not replace OpenCrab MCP. It confirms the OpenCrab evidence gate, summarizes the requested operations, and catches basic drawing-coordinate mistakes such as doodle strokes outside the source SVG viewBox.
+
+`project-status` writes `projects/<project>/status/project_status.json` as the command-center artifact for these gates. Use it before solver handoff and after candidate review so the agent can distinguish `ready_for_apply`, `candidate_review_required`, and `complete_candidate_ready` states.
 
 ## Recognition Gate
 

@@ -181,6 +181,23 @@ projects/a801-802-opencrab-test/briefs/edit_brief_###.md
 
 The brief checks whether source recognition is active, whether OpenCrab evidence is verified, whether standards and constraints are active, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
 
+## Check Project Status
+
+Use `project-status` whenever you need a command-center view of the current project gates and latest artifacts:
+
+```bash
+crab-archi-design --project-root projects project-status \
+  --project-id a801-802-opencrab-test
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/status/project_status.json
+```
+
+The status file reports whether the project is `review_required`, `ready_for_apply`, `candidate_review_required`, or `complete_candidate_ready`. It also records the latest recognition, standards, evidence, constraint, brief, apply report, alternative SVG, and review panel paths. Use it before `apply-edit` to confirm all required gates are active, and after `review-panel` to confirm the latest candidate is a native SVG with no raster overlay.
+
 ## Apply the Edit
 
 ```bash
@@ -230,9 +247,11 @@ For architectural layout revisions, use this order:
 5. Natural language: describe the design intent and constraints.
 6. Doodle: mark the exact edge, room, circulation line, or wall segment.
 7. `edit-brief`: check recognition, evidence, standards, constraints, source SVG parse, and sketch bounds.
-8. `apply-edit`: generate a native SVG candidate.
-9. `review-panel`: inspect before/after.
-10. Repeat with another short prompt or doodle repair intent.
+8. `project-status`: confirm the project is ready for solver handoff.
+9. `apply-edit`: generate a native SVG candidate.
+10. `review-panel`: inspect before/after.
+11. `project-status`: confirm the latest candidate and review artifacts are complete.
+12. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

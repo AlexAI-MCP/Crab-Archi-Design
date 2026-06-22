@@ -44,12 +44,14 @@ recognize-svg
   -> constraints/constraint_manifest.json
   -> prompt-edit / sketch-intent
   -> edit-brief
+  -> project-status
   -> apply-edit
   -> solver_input.json
   -> engine adapter
   -> alternatives/alternative_###.svg
   -> apply_edit_report.json
   -> review-panel
+  -> project-status
 ```
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints.
@@ -59,6 +61,8 @@ recognize-svg
 `standards-attach` converts area/program standards into a project manifest. CSV files are parsed into selected household-count rows; Excel, PDF, and JSON files are attached as verified source references for the engine adapter.
 
 `edit-brief` writes JSON and Markdown review artifacts before SVG mutation. It is intentionally lightweight: it verifies source recognition, OpenCrab evidence, standards and constraint manifests, checks source SVG parsing, summarizes operations, and flags doodle strokes that fall outside the source SVG viewBox.
+
+`project-status` writes a project command-center JSON file. It summarizes recognition, OpenCrab evidence, standards, constraints, edit intents, latest apply reports, latest alternative SVGs, and review panels so an agent can decide whether the project is ready for solver handoff or candidate review.
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 

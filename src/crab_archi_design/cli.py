@@ -96,6 +96,7 @@ def command_init(args: argparse.Namespace) -> None:
             "briefs_dir": str(out_dir / "briefs"),
             "runs_dir": str(out_dir / "runs"),
             "qa_dir": str(out_dir / "qa"),
+            "status_dir": str(out_dir / "status"),
         },
         "hard_constraints": [
             "preserve parking count and parking geometry",
@@ -1686,6 +1687,122 @@ def command_qa(args: argparse.Namespace) -> None:
     print(json.dumps({"status": qa["status"], "checks": checks}, ensure_ascii=False))
 
 
+def resolve_latest_alternative(base: Path, apply_report: dict[str, Any] | None) -> Path | None:
+    if apply_report:
+        for item in apply_report.get("copied_artifacts", {}).get("svg", []):
+            path = resolve_project_path(base, item)
+            if path is not None and path.exists():
+                return path
+    return latest_file(base / "alternatives", "alternative_*.svg")
+
+
+def sum_selected_standard_rows(manifest: dict[str, Any] | None) -> int:
+    if not manifest:
+        return 0
+    total = 0
+    for item in manifest.get("standard_items", []):
+        selected = item.get("payload", {}).get("selected_row_count")
+        if isinstance(selected, int):
+            total += selected
+    return total
+
+
+def command_project_status(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    base = project_dir(args.project_id, root)
+    source_svg = Path(manifest["source_svg"]).expanduser()
+    source_info = inspect_svg(source_svg)
+
+    recognition_manifest = load_recognition_manifest(args.project_id, root)
+    evidence_manifest = load_evidence_manifest(args.project_id, root)
+    constraint_manifest = load_constraint_manifest(args.project_id, root)
+    standards_manifest = load_standards_manifest(args.project_id, root)
+    edit_intent_paths = sorted_json_files(base / "edit_intents", "*.json")
+    latest_brief = latest_file(base / "briefs", "edit_brief_*.json")
+    latest_apply = latest_file(base / "runs", "apply_edit_*/apply_edit_report.json")
+    apply_report = read_json(latest_apply) if latest_apply else None
+    latest_alternative = resolve_latest_alternative(base, apply_report)
+    latest_panel = latest_file(base / "panels", "review_panel_*.html")
+    alternative_info = inspect_svg(latest_alternative) if latest_alternative else {"xml_parse": "missing", "image_elements": None}
+
+    gates = {
+        "manifest_exists": True,
+        "source_svg_exists": source_svg.exists(),
+        "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
+        "recognition_manifest_active": recognition_status(recognition_manifest) == "active",
+        "standards_manifest_active": standards_status(standards_manifest) == "active",
+        "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
+        "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
+        "edit_intent_exists": len(edit_intent_paths) > 0,
+        "latest_apply_pass": bool(apply_report and apply_report.get("status") == "pass"),
+        "latest_alternative_exists": latest_alternative is not None and latest_alternative.exists(),
+        "latest_alternative_native_svg": alternative_info.get("xml_parse") == "ok" and alternative_info.get("image_elements") == 0,
+    }
+    ready_gate_names = [
+        "manifest_exists",
+        "source_svg_exists",
+        "source_svg_parse_ok",
+        "recognition_manifest_active",
+        "standards_manifest_active",
+        "opencrab_evidence_verified",
+        "constraint_manifest_active",
+        "edit_intent_exists",
+    ]
+    candidate_gate_names = [*ready_gate_names, "latest_apply_pass", "latest_alternative_exists", "latest_alternative_native_svg"]
+    if all(gates[name] for name in candidate_gate_names):
+        overall_status = "complete_candidate_ready"
+    elif all(gates[name] for name in ready_gate_names) and latest_apply:
+        overall_status = "candidate_review_required"
+    elif all(gates[name] for name in ready_gate_names):
+        overall_status = "ready_for_apply"
+    else:
+        overall_status = "review_required"
+
+    status = {
+        "schema": "crab-archi-design-project-status-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "overall_status": overall_status,
+        "gates": gates,
+        "gate_groups": {
+            "ready_for_apply": {name: gates[name] for name in ready_gate_names},
+            "candidate_ready": {name: gates[name] for name in candidate_gate_names},
+        },
+        "latest_artifacts": {
+            "recognition_manifest": str(recognition_manifest_path(args.project_id, root)) if recognition_manifest else None,
+            "standards_manifest": str(standards_manifest_path(args.project_id, root)) if standards_manifest else None,
+            "evidence_manifest": str(evidence_manifest_path(args.project_id, root)) if evidence_manifest else None,
+            "constraint_manifest": str(constraint_manifest_path(args.project_id, root)) if constraint_manifest else None,
+            "edit_brief": str(latest_brief) if latest_brief else None,
+            "apply_report": str(latest_apply) if latest_apply else None,
+            "alternative_svg": str(latest_alternative) if latest_alternative else None,
+            "review_panel": str(latest_panel) if latest_panel else None,
+        },
+        "metrics": {
+            "primitive_count": (recognition_manifest or {}).get("primitive_count", 0),
+            "label_count": (recognition_manifest or {}).get("label_count", 0),
+            "program_label_count": (recognition_manifest or {}).get("program_label_count", 0),
+            "source_image_elements": source_info.get("image_elements"),
+            "standard_count": count_standard_items(standards_manifest),
+            "selected_standard_row_count": sum_selected_standard_rows(standards_manifest),
+            "evidence_count": count_evidence_items(evidence_manifest),
+            "constraint_count": count_constraint_items(constraint_manifest),
+            "enforced_constraint_count": count_constraint_items(constraint_manifest, enforced_only=True),
+            "edit_intent_count": len(edit_intent_paths),
+            "latest_apply_status": apply_report.get("status") if apply_report else None,
+            "latest_alternative_image_elements": alternative_info.get("image_elements"),
+        },
+        "opencrab_mcp": manifest.get("opencrab_mcp"),
+        "source_svg_info": source_info,
+        "alternative_svg_info": alternative_info,
+    }
+    out = base / "status" / "project_status.json"
+    write_json(out, status)
+    print(out)
+    print(json.dumps({"status": overall_status, "gates": gates, "latest_artifacts": status["latest_artifacts"]}, ensure_ascii=False))
+
+
 def command_doodle_editor(args: argparse.Namespace) -> None:
     candidates = [
         Path(__file__).resolve().parents[2] / "tools" / "doodle_editor.html",
@@ -1792,6 +1909,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_review.add_argument("--title")
     p_review.add_argument("--open", action="store_true")
     p_review.set_defaults(func=command_review_panel)
+
+    p_status = sub.add_parser("project-status", help="Summarize project readiness gates and latest artifacts.")
+    p_status.add_argument("--project-id", required=True)
+    p_status.set_defaults(func=command_project_status)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

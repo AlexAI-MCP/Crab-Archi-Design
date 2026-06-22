@@ -181,6 +181,18 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     assert "Constraints" in brief_md
     assert "Standards" in brief_md
 
+    result = run_cli("--project-root", str(tmp_path / "projects"), "project-status", "--project-id", "demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    status_json = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert status_json["overall_status"] == "ready_for_apply"
+    assert status_json["gates"]["recognition_manifest_active"] is True
+    assert status_json["gates"]["opencrab_evidence_verified"] is True
+    assert status_json["gates"]["constraint_manifest_active"] is True
+    assert status_json["gates"]["standards_manifest_active"] is True
+    assert status_json["gates"]["edit_intent_exists"] is True
+    assert status_json["metrics"]["program_label_count"] == 1
+    assert status_json["metrics"]["edit_intent_count"] == 2
+
 
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
@@ -406,6 +418,19 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert "Standards" in panel
     assert "community_svg_topology_ontology_v2" in panel
     assert "greenery_lounge" in panel
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "project-status", "--project-id", "demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    status_path = Path(result.stdout.splitlines()[0])
+    status_json = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status_path.name == "project_status.json"
+    assert status_json["overall_status"] == "complete_candidate_ready"
+    assert status_json["gates"]["latest_apply_pass"] is True
+    assert status_json["gates"]["latest_alternative_exists"] is True
+    assert status_json["gates"]["latest_alternative_native_svg"] is True
+    assert status_json["latest_artifacts"]["alternative_svg"].endswith("alternative_001.svg")
+    assert status_json["latest_artifacts"]["review_panel"].endswith(".html")
+    assert status_json["metrics"]["latest_apply_status"] == "pass"
 
 
 def test_doodle_editor_command_prints_local_editor() -> None:

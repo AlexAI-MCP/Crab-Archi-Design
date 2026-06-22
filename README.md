@@ -83,6 +83,9 @@ crab-archi-design edit-brief \
   --project-id demo \
   --intent all
 
+crab-archi-design project-status \
+  --project-id demo
+
 crab-archi-design apply-edit \
   --project-id demo \
   --intent all \
@@ -108,6 +111,8 @@ crab-archi-design qa --project-id demo
 
 `edit-brief` summarizes natural-language and doodle intents before SVG mutation. It writes JSON and Markdown briefs, checks OpenCrab evidence, and flags doodle strokes outside the source SVG viewBox.
 
+`project-status` writes `projects/<project>/status/project_status.json`. It summarizes readiness gates, latest briefs, latest apply reports, latest alternatives, latest review panels, and metrics such as recognized primitive count, program labels, evidence count, standards rows, constraints, and edit intents.
+
 `review-panel` generates a local before/after HTML panel with original SVG, alternative SVG, intent summary, apply checks, and engine QA gates.
 
 For the full revision loop, see [docs/edit_loop.md](docs/edit_loop.md).
@@ -128,6 +133,7 @@ Original SVG
   -> Standards Manifest
   -> Design Intent JSON
   -> Edit Brief
+  -> Project Status
   -> Native SVG Solver
   -> QA
   -> Natural Language / Doodle Edit Loop
