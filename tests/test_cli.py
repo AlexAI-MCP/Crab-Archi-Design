@@ -26,14 +26,14 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
+    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
     create_job_tool = next(tool for tool in manifest["tools"] if tool["id"] == "create_job")
     assert "--brief" in create_job_tool["optional_args"]
     assert any("job.md" in output or "_job.md" in output for output in create_job_tool["outputs"])
     assert manifest["recommended_sequences"]["saas_job_runner"] == ["create_job", "validate_job", "run_job"]
-    assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor"]
+    assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"]
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
 
@@ -88,10 +88,12 @@ def test_mcp_smoke_validates_runtime_config(tmp_path: Path) -> None:
     assert report["checks"]["create_job_tool_available"] is True
     assert report["checks"]["run_job_tool_available"] is True
     assert report["checks"]["validate_job_tool_available"] is True
+    assert report["checks"]["release_audit_tool_available"] is True
     assert report["checks"]["revision_run_tool_available"] is True
     assert report["checks"]["topology_build_tool_available"] is True
     assert "create_job" in report["tool_names"]
     assert "run_job" in report["tool_names"]
+    assert "release_audit" in report["tool_names"]
     assert "revision_run" in report["tool_names"]
     assert "workflow_run" in report["tool_names"]
     assert "topology_build" in report["tool_names"]
@@ -145,6 +147,7 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         assert "revision_run" in tools
         assert "topology_build" in tools
         assert "doctor" in tools
+        assert "release_audit" in tools
         assert "mcp_manifest" in tools
         assert "mcp_config" in tools
         assert tools["create_job"]["inputSchema"]["properties"]["brief"]["type"] == "boolean"
@@ -968,6 +971,33 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     assert doctor_report["project_checks"]["project_candidate_ready"] is True
     assert doctor_report["package_verification"]["status"] == "pass"
     assert doctor_report["required_checks"]["package.package_verify_pass"] is True
+
+    result = run_cli(
+        "--project-root",
+        "projects",
+        "release-audit",
+        "--project-id",
+        "demo",
+        "--zip",
+        str(zip_path),
+        "--check-local-files",
+        "--strict",
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    audit_report_path = Path(result.stdout.splitlines()[0])
+    if not audit_report_path.is_absolute():
+        audit_report_path = tmp_path / audit_report_path
+    audit_report = json.loads(audit_report_path.read_text(encoding="utf-8"))
+    assert audit_report["schema"] == "crab-archi-design-release-audit-v1"
+    assert audit_report["status"] == "pass"
+    assert audit_report["checks"]["project_candidate_ready"] is True
+    assert audit_report["checks"]["opencrab_evidence_verified"] is True
+    assert audit_report["checks"]["latest_alternative_native_svg"] is True
+    assert audit_report["checks"]["package_verify_pass"] is True
+    assert audit_report["checks"]["doctor_pass"] is True
+    assert audit_report["package_verification"]["status"] == "pass"
+    assert audit_report["doctor_report"]["status"] == "pass"
 
 
 def test_revision_run_executes_existing_project_loop(tmp_path: Path) -> None:

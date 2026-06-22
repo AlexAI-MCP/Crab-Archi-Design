@@ -109,3 +109,8 @@ jobs:
             --project-id ci-demo \
             --zip .ci-projects/ci-demo/exports/ci-demo_export_001.zip \
             --strict
+
+          crab-archi-design --project-root .ci-projects release-audit \
+            --project-id ci-demo \
+            --zip .ci-projects/ci-demo/exports/ci-demo_export_001.zip \
+            --strict

@@ -128,6 +128,7 @@ project_status
 export_package
 verify_package
 doctor
+release_audit
 doodle_editor
 ```
 
@@ -145,7 +146,8 @@ Use this pattern:
 6. Run `create-job --validate --strict-validation --brief` to write a `crab-archi-design-job-spec-v1` JSON file and Markdown review brief.
 7. Run `validate-job --job <job.json> --strict`.
 8. Run `run-job --job <job.json> --strict`.
-9. Upload only the validated ZIP or selected JSON/SVG artifacts from the job report.
+9. Run `release-audit --project-id <project-id> --zip <export.zip> --strict`.
+10. Upload only the validated ZIP or selected JSON/SVG artifacts when the release audit passes.
 
 Example job creation:
 
@@ -215,9 +217,13 @@ crab-archi-design create-job \
   --brief
 crab-archi-design validate-job --job job_specs/demo-job.json --strict
 crab-archi-design run-job --job job_specs/demo-job.json --strict
+crab-archi-design release-audit \
+  --project-id demo \
+  --zip projects/demo/exports/demo_export_001.zip \
+  --strict
 ```
 
-For first-run debugging, Codex can still call the lower-level manual sequence: `workflow-run`, `export-package`, `verify-package --strict`, and `doctor --strict`. For repeated design edits on an existing project, call `revision-run` with `--text`, `--sketch`, or `--constraint-sketch`, then export and verify the package again.
+For first-run debugging, Codex can still call the lower-level manual sequence: `workflow-run`, `export-package`, `verify-package --strict`, `doctor --strict`, and `release-audit --strict`. For repeated design edits on an existing project, call `revision-run` with `--text`, `--sketch`, or `--constraint-sketch`, then export, verify, and audit the package again.
 
 The LLM should produce structured intent and handoff artifacts. Native SVG mutation should remain in deterministic adapters such as `layout-svg-engine`, `reference-svg-engine`, or a project-specific room-envelope solver.
 

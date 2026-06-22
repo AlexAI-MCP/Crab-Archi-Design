@@ -89,7 +89,7 @@ The topology manifest is the target graph used for projection. It links recogniz
 projects/<project>/diagnostics/doctor_report_###.json
 ```
 
-The report combines local tool checks, OpenCrab MCP manifest checks, `project-status` readiness gates, latest native SVG candidate checks, and optional `verify-package` results.
+The report combines local tool checks, OpenCrab MCP manifest checks, `project-status` readiness gates, latest native SVG candidate checks, and optional `verify-package` results. `release-audit` then combines those doctor diagnostics with package verification and OpenCrab-backed project gates into the final handoff report.
 
 `mcp-manifest` is the integration catalog. It advertises the OpenCrab evidence gate, CLI subcommands, required arguments, output artifacts, recommended command sequences, and security rules for MCP/OAuth execution. The first-run worker path is `create-job -> validate-job -> run-job`, with OpenCrab MCP results passed into `create-job` as evidence files. `mcp-config` emits the runtime server config, and `mcp-smoke` verifies the configured server. `crab-archi-design-mcp --stdio` serves the same tools through `tools/list` and `tools/call`. See:
 

@@ -4206,7 +4206,7 @@ def command_verify_package(args: argparse.Namespace) -> None:
         raise SystemExit(f"verify-package failed; report: {out}")
 
 
-def command_doctor(args: argparse.Namespace) -> None:
+def build_doctor_report(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.project_root)
     repo = Path(__file__).resolve().parents[2]
     local_checks = {
@@ -4332,7 +4332,12 @@ def command_doctor(args: argparse.Namespace) -> None:
         "project_status": project_status,
         "package_verification": package_report,
     }
+    return report
 
+
+def command_doctor(args: argparse.Namespace) -> None:
+    report = build_doctor_report(args)
+    root = Path(args.project_root)
     if args.output_dir:
         out_dir = Path(args.output_dir).expanduser()
     elif args.project_id:
@@ -4345,9 +4350,78 @@ def command_doctor(args: argparse.Namespace) -> None:
     out = out_dir / f"doctor_report_{seq:03d}.json"
     write_json(out, report)
     print(out)
-    print(json.dumps({"status": status, "required_checks": required_checks}, ensure_ascii=False))
-    if args.strict and status != "pass":
+    print(json.dumps({"status": report["status"], "required_checks": report["required_checks"]}, ensure_ascii=False))
+    if args.strict and report["status"] != "pass":
         raise SystemExit(f"doctor failed; report: {out}")
+
+
+def latest_export_zip(project_id: str, root: Path) -> Path | None:
+    return latest_file(project_dir(project_id, root) / "exports", "*_export_*.zip")
+
+
+def command_release_audit(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    zip_path = Path(args.zip).expanduser() if args.zip else latest_export_zip(args.project_id, root)
+    manifest_path_arg = Path(args.manifest).expanduser() if args.manifest else None
+    project_status = build_project_status(args.project_id, root)
+    package_report: dict[str, Any] | None = None
+    package_error: str | None = None
+    if zip_path and zip_path.exists():
+        try:
+            package_report = verify_export_package(zip_path, manifest_path_arg=manifest_path_arg, check_local_files=args.check_local_files)
+        except (OSError, json.JSONDecodeError, zipfile.BadZipFile, SystemExit) as exc:
+            package_error = str(exc)
+
+    doctor_report = build_doctor_report(
+        argparse.Namespace(
+            project_root=str(root),
+            project_id=args.project_id,
+            zip=str(zip_path) if zip_path else None,
+            manifest=str(manifest_path_arg) if manifest_path_arg else None,
+            output_dir=None,
+            check_local_files=args.check_local_files,
+            strict=False,
+        )
+    )
+    gates = project_status.get("gates", {})
+    checks = {
+        "project_candidate_ready": project_status.get("overall_status") == "complete_candidate_ready",
+        "recognition_manifest_active": bool(gates.get("recognition_manifest_active")),
+        "topology_manifest_active": bool(gates.get("topology_manifest_active")),
+        "standards_manifest_active": bool(gates.get("standards_manifest_active")),
+        "opencrab_evidence_verified": bool(gates.get("opencrab_evidence_verified")),
+        "constraint_manifest_active": bool(gates.get("constraint_manifest_active")),
+        "latest_apply_pass": bool(gates.get("latest_apply_pass")),
+        "latest_alternative_native_svg": bool(gates.get("latest_alternative_native_svg")),
+        "package_zip_found": bool(zip_path and zip_path.exists()),
+        "package_verify_pass": bool(package_report and package_report.get("status") == "pass"),
+        "doctor_pass": doctor_report.get("status") == "pass",
+    }
+    status = "pass" if all(checks.values()) else "review_required"
+    report = {
+        "schema": "crab-archi-design-release-audit-v1",
+        "created_at": now(),
+        "status": status,
+        "project_id": args.project_id,
+        "project_root": str(root),
+        "zip_path": str(zip_path) if zip_path else None,
+        "manifest_path": str(manifest_path_arg) if manifest_path_arg else None,
+        "checks": checks,
+        "package_error": package_error,
+        "project_status": project_status,
+        "package_verification": package_report,
+        "doctor_report": doctor_report,
+    }
+    out_dir = Path(args.output_dir).expanduser() if args.output_dir else project_dir(args.project_id, root) / "audits"
+    if not out_dir.is_absolute():
+        out_dir = Path.cwd() / out_dir
+    seq = next_sequence(out_dir, "release_audit_*.json")
+    out = out_dir / f"release_audit_{seq:03d}.json"
+    write_json(out, report)
+    print(out)
+    print(json.dumps({"status": status, "checks": checks, "zip_path": str(zip_path) if zip_path else None}, ensure_ascii=False))
+    if args.strict and status != "pass":
+        raise SystemExit(f"release-audit failed; report: {out}")
 
 
 def command_doodle_editor(args: argparse.Namespace) -> None:
@@ -4600,6 +4674,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["local_ready", "project_ready", "package_ready"],
         },
         {
+            "id": "release_audit",
+            "cli_subcommand": "release-audit",
+            "description": "Run the final project/package handoff audit across project status, OpenCrab gates, native SVG checks, package verification, and doctor diagnostics.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--zip", "--manifest", "--output-dir", "--check-local-files", "--strict"],
+            "outputs": ["audits/release_audit_###.json"],
+            "gates": ["candidate_ready", "native_svg_no_images", "package_verify_pass", "doctor_pass"],
+        },
+        {
             "id": "mcp_manifest",
             "cli_subcommand": "mcp-manifest",
             "description": "Print or write the MCP/OAuth exec tool manifest.",
@@ -4660,9 +4743,9 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
         "tools": tools,
         "recommended_sequences": {
             "saas_job_runner": ["create_job", "validate_job", "run_job"],
-            "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
-            "revision_loop": ["revision_run", "export_package", "verify_package", "doctor"],
-            "manual_revision_loop": ["topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
+            "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"],
+            "revision_loop": ["revision_run", "export_package", "verify_package", "doctor", "release_audit"],
+            "manual_revision_loop": ["topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
             "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
             "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
@@ -4852,6 +4935,7 @@ def run_mcp_smoke(config: dict[str, Any], server_name: str | None, timeout: int)
         "run_job_tool_available": "run_job" in tool_names,
         "validate_job_tool_available": "validate_job" in tool_names,
         "doctor_tool_available": "doctor" in tool_names,
+        "release_audit_tool_available": "release_audit" in tool_names,
         "workflow_run_tool_available": "workflow_run" in tool_names,
         "revision_run_tool_available": "revision_run" in tool_names,
         "topology_build_tool_available": "topology_build" in tool_names,
@@ -5156,6 +5240,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument("--check-local-files", action="store_true", help="Also verify local source paths when checking an export ZIP.")
     p_doctor.add_argument("--strict", action="store_true", help="Exit non-zero if any required diagnostic check fails.")
     p_doctor.set_defaults(func=command_doctor)
+
+    p_release = sub.add_parser("release-audit", help="Run final project/package handoff audit before downstream release.")
+    p_release.add_argument("--project-id", required=True)
+    p_release.add_argument("--zip", help="Export ZIP path. Defaults to the latest project export ZIP.")
+    p_release.add_argument("--manifest", help="Optional external export manifest path for ZIP verification.")
+    p_release.add_argument("--output-dir", help="Directory for release_audit_###.json. Defaults to project audits.")
+    p_release.add_argument("--check-local-files", action="store_true", help="Also verify local source paths when checking the export ZIP.")
+    p_release.add_argument("--strict", action="store_true", help="Exit non-zero unless the release audit passes.")
+    p_release.set_defaults(func=command_release_audit)
 
     p_mcp_manifest = sub.add_parser("mcp-manifest", help="Print or write the MCP/OAuth exec tool manifest.")
     p_mcp_manifest.add_argument("--output", help="Optional path for the tool manifest JSON. Defaults to stdout.")

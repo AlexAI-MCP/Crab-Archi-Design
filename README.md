@@ -59,7 +59,7 @@ GitHub Actions runs the same core contract used by local handoff:
 10. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
 11. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
 12. Execute `revision-run` on the same project to verify the repeat-edit path.
-13. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
+13. Run `export-package`, `verify-package --strict`, `doctor --strict`, and `release-audit --strict`.
 
 The CI sample uses:
 
@@ -192,6 +192,11 @@ crab-archi-design doctor \
   --zip projects/demo/exports/demo_export_001.zip \
   --strict
 
+crab-archi-design release-audit \
+  --project-id demo \
+  --zip projects/demo/exports/demo_export_001.zip \
+  --strict
+
 crab-archi-design mcp-manifest \
   --output integrations/crab_archi_design_mcp_manifest.json
 
@@ -251,6 +256,8 @@ crab-archi-design qa --project-id demo
 `verify-package` validates an exported ZIP before handoff. It checks ZIP integrity, the embedded export manifest, required files, archive membership, file sizes, and SHA-256 hashes. Use `--check-local-files` when validating on the same machine that produced the package.
 
 `doctor` writes `projects/<project>/diagnostics/doctor_report_###.json`. It diagnoses the local framework install, OpenCrab MCP configuration, project readiness gates, latest native SVG candidate, and optional export ZIP verification in one report. Use `--strict` in CI, OAuth upload flows, or MCP handoffs.
+
+`release-audit` writes `projects/<project>/audits/release_audit_###.json`. It is the final handoff gate: it checks project candidate readiness, OpenCrab evidence, topology/standards/constraints, native SVG output, package verification, and doctor diagnostics in one report.
 
 `mcp-manifest` writes or prints a machine-readable tool catalog for Codex exec, MCP wrappers, OAuth upload workers, and SaaS ingestion services. It describes each CLI tool id, subcommand, required arguments, outputs, gates, OpenCrab MCP requirement, recommended command sequences, and security boundaries.
 
