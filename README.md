@@ -51,6 +51,9 @@ crab-archi-design init \
   --ontology-pack community_svg_topology_ontology_v2 \
   --opencrab-mcp-server opencrab
 
+crab-archi-design recognize-svg \
+  --project-id demo
+
 crab-archi-design standards-attach \
   --project-id demo \
   --file examples/area_standard_sample.csv \
@@ -93,6 +96,8 @@ crab-archi-design qa --project-id demo
 
 `apply-edit` reads structured natural-language and doodle intents, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
 
+`recognize-svg` writes `projects/<project>/recognition/recognition_manifest.json`. It stores SVG parse status, viewBox, primitive counts, label candidates, and program role hints before any layout mutation.
+
 `standards-attach` writes `projects/<project>/standards/standards_manifest.json`. CSV files are parsed into selected rows for the household count; Excel, PDF, and JSON files are attached as verified standards references for the engine adapter.
 
 `evidence-attach` writes `projects/<project>/evidence/evidence_manifest.json`. `qa` and `apply-edit` require this manifest to be verified before a final SVG alternative can pass.
@@ -116,6 +121,7 @@ This repository contains the reusable framework shell, schemas, and orchestratio
 ```text
 Original SVG
   -> Recognition IR
+  -> Recognition Manifest
   -> Constraint Graph
   -> OpenCrab MCP Ontology Evidence
   -> Standards Evidence

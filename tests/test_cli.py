@@ -17,7 +17,10 @@ def run_cli(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
-    source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'></svg>", encoding="utf-8")
+    source_svg.write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect x='1' y='1' width='8' height='8'/><text x='2' y='2'>그리너리 라운지</text></svg>",
+        encoding="utf-8",
+    )
     sketch = tmp_path / "sketch.json"
     sketch.write_text(
         json.dumps(
@@ -47,6 +50,13 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     manifest = json.loads(Path(result.stdout.strip()).read_text(encoding="utf-8"))
     assert manifest["opencrab_mcp"]["required"] is True
     assert manifest["opencrab_mcp"]["homepage"] == "https://opencrab.sh"
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "recognize-svg", "--project-id", "demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    recognition_manifest = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert recognition_manifest["status"] == "active"
+    assert recognition_manifest["program_label_count"] == 1
+    assert recognition_manifest["program_label_candidates"][0]["role_hint"] == "greenery_lounge"
 
     result = run_cli(
         "--project-root",
@@ -151,6 +161,7 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     result = run_cli("--project-root", str(tmp_path / "projects"), "qa", "--project-id", "demo", cwd=ROOT)
     assert result.returncode == 0, result.stderr
     assert '"status": "pass"' in result.stdout
+    assert '"recognition_manifest_active": true' in result.stdout
     assert '"opencrab_evidence_verified": true' in result.stdout
     assert '"constraint_manifest_active": true' in result.stdout
     assert '"standards_manifest_active": true' in result.stdout
@@ -160,11 +171,13 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     brief_json = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
     brief_md = Path(result.stdout.splitlines()[1]).read_text(encoding="utf-8")
     assert brief_json["status"] == "pass"
+    assert brief_json["checks"]["recognition_manifest_active"] is True
     assert brief_json["checks"]["opencrab_evidence_verified"] is True
     assert brief_json["checks"]["constraint_manifest_active"] is True
     assert brief_json["checks"]["standards_manifest_active"] is True
     assert brief_json["checks"]["sketch_points_inside_viewbox"] is True
     assert "greenery_lounge" in brief_md
+    assert "Recognition" in brief_md
     assert "Constraints" in brief_md
     assert "Standards" in brief_md
 
@@ -234,7 +247,7 @@ def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
 
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
-    source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'></svg>", encoding="utf-8")
+    source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><text x='2' y='2'>fitness</text></svg>", encoding="utf-8")
     engine = tmp_path / "fake_engine.py"
     engine.write_text(
         textwrap.dedent(
@@ -268,6 +281,9 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
         str(engine),
         cwd=ROOT,
     )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "recognize-svg", "--project-id", "demo", cwd=ROOT)
     assert result.returncode == 0, result.stderr
 
     evidence_source = tmp_path / "engine_evidence.json"
@@ -353,6 +369,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["status"] == "pass"
     assert report["checks"]["native_svg_no_images"] is True
+    assert report["checks"]["recognition_manifest_active"] is True
     assert report["checks"]["opencrab_evidence_verified"] is True
     assert report["checks"]["constraint_manifest_active"] is True
     assert report["checks"]["standards_manifest_active"] is True
@@ -363,6 +380,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
 
     solver_input = json.loads(Path(report["solver_input"]).read_text(encoding="utf-8"))
     assert solver_input["intents"][0]["schema"] == "crab-archi-design-natural-language-edit-intent-v1"
+    assert solver_input["recognition_manifest"]["status"] == "active"
     assert solver_input["evidence_manifest"]["status"] == "verified"
     assert solver_input["constraint_manifest"]["status"] == "active"
     assert solver_input["standards_manifest"]["status"] == "active"
@@ -382,6 +400,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert "Original" in panel
     assert "Alternative" in panel
     assert "native_svg_no_images" in panel
+    assert "Recognition" in panel
     assert "Evidence" in panel
     assert "Constraints" in panel
     assert "Standards" in panel

@@ -291,6 +291,99 @@ def standards_status(manifest: dict[str, Any] | None) -> str:
     return "active" if count_standard_items(manifest) > 0 else "missing"
 
 
+def recognition_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
+    return project_dir(project_id, root) / "recognition" / "recognition_manifest.json"
+
+
+def load_recognition_manifest(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> dict[str, Any] | None:
+    path = recognition_manifest_path(project_id, root)
+    if not path.exists():
+        return None
+    return read_json(path)
+
+
+def recognition_status(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return "missing"
+    if manifest.get("status"):
+        return str(manifest["status"])
+    return "active" if manifest.get("source_svg_info", {}).get("xml_parse") == "ok" else "review_required"
+
+
+def classify_label_role(text: str) -> str | None:
+    lowered = text.lower()
+    rules = [
+        ("greenery_lounge", ["그리너리", "라운지", "카페", "도서관", "greenery", "lounge", "cafe", "library"]),
+        ("fitness_gx", ["피트니스", "gx", "운동", "fitness"]),
+        ("golf_screen", ["골프", "스크린", "golf", "screen"]),
+        ("sauna_locker_shower", ["사우나", "샤워", "락커", "라커", "sauna", "shower", "locker"]),
+        ("hall_lobby", ["홀", "로비", "lobby", "hall"]),
+        ("management_support", ["관리", "방재", "당직", "회의", "탕비", "소장", "용역", "management"]),
+        ("toilet_wet_core", ["화장실", "탈의", "욕실", "toilet", "restroom"]),
+        ("parking", ["주차", "parking"]),
+        ("core_stair_ramp", ["코어", "계단", "램프", "엘리베이터", "stair", "ramp", "elevator"]),
+    ]
+    for role, terms in rules:
+        if any(term in text or term in lowered for term in terms):
+            return role
+    return None
+
+
+def element_text(el: ET.Element) -> str:
+    return " ".join(part.strip() for part in el.itertext() if part and part.strip())
+
+
+def analyze_svg_recognition(path: Path, max_labels: int = 500) -> dict[str, Any]:
+    source_info = inspect_svg(path)
+    if source_info.get("xml_parse") != "ok":
+        return {
+            "status": "review_required",
+            "source_svg_info": source_info,
+            "element_counts": {},
+            "primitive_count": 0,
+            "label_candidates": [],
+            "program_label_candidates": [],
+        }
+
+    root = ET.parse(path).getroot()
+    element_counts: dict[str, int] = {}
+    label_candidates = []
+    program_label_candidates = []
+    primitive_tags = {"path", "line", "polyline", "polygon", "rect", "circle", "ellipse", "text", "use", "image"}
+
+    for el in root.iter():
+        tag = local_tag(el)
+        element_counts[tag] = element_counts.get(tag, 0) + 1
+        if tag in {"text", "tspan"}:
+            text = element_text(el)
+            if text and len(label_candidates) < max_labels:
+                role = classify_label_role(text)
+                label = {
+                    "text": text,
+                    "role_hint": role,
+                    "tag": tag,
+                    "id": el.attrib.get("id"),
+                    "class": el.attrib.get("class"),
+                    "x": el.attrib.get("x"),
+                    "y": el.attrib.get("y"),
+                }
+                label_candidates.append(label)
+                if role:
+                    program_label_candidates.append(label)
+
+    primitive_count = sum(element_counts.get(tag, 0) for tag in primitive_tags)
+    return {
+        "status": "active",
+        "source_svg_info": source_info,
+        "element_counts": element_counts,
+        "primitive_count": primitive_count,
+        "label_count": len(label_candidates),
+        "program_label_count": len(program_label_candidates),
+        "label_candidates": label_candidates,
+        "program_label_candidates": program_label_candidates,
+    }
+
+
 def read_text_with_fallback(path: Path) -> tuple[str, str]:
     for encoding in ["utf-8-sig", "utf-8", "cp949", "euc-kr"]:
         try:
@@ -539,6 +632,55 @@ def command_standards_attach(args: argparse.Namespace) -> None:
                 "status": standards_manifest["status"],
                 "standard_count": standards_manifest["standard_count"],
                 "household_count": households,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def command_recognize_svg(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    source_svg = Path(args.source_svg).expanduser() if args.source_svg else Path(manifest["source_svg"]).expanduser()
+    if not source_svg.exists():
+        raise SystemExit(f"Missing source SVG: {source_svg}")
+
+    analysis = analyze_svg_recognition(source_svg, max_labels=args.max_labels)
+    recognition_manifest = {
+        "schema": "crab-archi-design-recognition-manifest-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "source_svg": str(source_svg),
+        "status": analysis["status"],
+        "coordinate_space": "source_svg_viewbox",
+        "source_svg_info": analysis["source_svg_info"],
+        "element_counts": analysis["element_counts"],
+        "primitive_count": analysis["primitive_count"],
+        "label_count": analysis.get("label_count", 0),
+        "program_label_count": analysis.get("program_label_count", 0),
+        "label_candidates": analysis["label_candidates"],
+        "program_label_candidates": analysis["program_label_candidates"],
+        "required_for_final_svg": True,
+        "recognition_scope": [
+            "svg_xml_parse",
+            "viewBox",
+            "primitive_counts",
+            "text_label_candidates",
+            "program_role_hints",
+            "native_svg_image_detection",
+        ],
+    }
+    out = recognition_manifest_path(args.project_id, root)
+    write_json(out, recognition_manifest)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": recognition_manifest["status"],
+                "primitive_count": recognition_manifest["primitive_count"],
+                "label_count": recognition_manifest["label_count"],
+                "program_label_count": recognition_manifest["program_label_count"],
+                "image_elements": recognition_manifest["source_svg_info"].get("image_elements"),
             },
             ensure_ascii=False,
         )
@@ -807,6 +949,7 @@ def build_edit_brief_markdown(brief: dict[str, Any]) -> str:
         f"- Evidence status: `{brief['evidence_status']}`",
         f"- Constraint status: `{brief['constraint_status']}`",
         f"- Standards status: `{brief['standards_status']}`",
+        f"- Recognition status: `{brief['recognition_status']}`",
         "",
         "## Checks",
         "",
@@ -848,6 +991,15 @@ def build_edit_brief_markdown(brief: dict[str, Any]) -> str:
             )
     else:
         lines.append("- No standards manifest attached.")
+    lines.extend(["", "## Recognition", ""])
+    if brief["recognition_summary"]["status"] != "missing":
+        summary = brief["recognition_summary"]
+        lines.append(f"- Status: `{summary['status']}`")
+        lines.append(f"- Primitives: `{summary['primitive_count']}`")
+        lines.append(f"- Labels: `{summary['label_count']}`")
+        lines.append(f"- Program labels: `{summary['program_label_count']}`")
+    else:
+        lines.append("- No recognition manifest attached.")
     lines.extend(["", "## Next Solver Instruction", "", brief["next_solver_instruction"], ""])
     return "\n".join(lines)
 
@@ -873,8 +1025,10 @@ def command_edit_brief(args: argparse.Namespace) -> None:
     evidence_manifest = load_evidence_manifest(args.project_id, root)
     constraint_manifest = load_constraint_manifest(args.project_id, root)
     standards_manifest = load_standards_manifest(args.project_id, root)
+    recognition_manifest = load_recognition_manifest(args.project_id, root)
     checks = {
         "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
+        "recognition_manifest_active": recognition_status(recognition_manifest) == "active",
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
         "standards_manifest_active": standards_status(standards_manifest) == "active",
@@ -899,6 +1053,7 @@ def command_edit_brief(args: argparse.Namespace) -> None:
         "source_svg_info": source_info,
         "evidence_status": evidence_status(evidence_manifest),
         "evidence_count": count_evidence_items(evidence_manifest),
+        "recognition_status": recognition_status(recognition_manifest),
         "constraint_status": constraint_status(constraint_manifest),
         "constraint_count": count_constraint_items(constraint_manifest),
         "enforced_constraint_count": count_constraint_items(constraint_manifest, enforced_only=True),
@@ -931,12 +1086,19 @@ def command_edit_brief(args: argparse.Namespace) -> None:
                 for item in (standards_manifest or {}).get("standard_items", [])
             ]
         },
+        "recognition_summary": {
+            "status": recognition_status(recognition_manifest),
+            "primitive_count": (recognition_manifest or {}).get("primitive_count", 0),
+            "label_count": (recognition_manifest or {}).get("label_count", 0),
+            "program_label_count": (recognition_manifest or {}).get("program_label_count", 0),
+            "source_svg_info": (recognition_manifest or {}).get("source_svg_info"),
+        },
         "checks": checks,
         "sketch_analysis": sketch_analysis,
         "hard_constraints": manifest.get("hard_constraints", []),
         "next_solver_instruction": (
             "Apply only native SVG edits inside mutable community zones. Preserve parking count, columns, cores, "
-            "stairs, ramps, egress, and the community outer shell. Follow attached household standards. "
+            "stairs, ramps, egress, and the community outer shell. Follow attached household standards and recognition manifest. "
             "Treat doodle strokes as intent anchors, not final geometry."
         ),
     }
@@ -1128,6 +1290,27 @@ def render_standards_list(manifest: dict[str, Any] | None) -> str:
     return "\n".join(rows)
 
 
+def render_recognition_list(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return '<li class="review"><span>recognition_manifest</span><strong>missing</strong></li>'
+    status = recognition_status(manifest)
+    status_class = "pass" if status == "active" else "review"
+    rows = [
+        f'<li class="{status_class}"><span>status</span><strong>{html.escape(status)}</strong></li>',
+        f'<li class="{status_class}"><span>primitive_count</span><strong>{html.escape(str(manifest.get("primitive_count", 0)))}</strong></li>',
+        f'<li class="{status_class}"><span>label_count</span><strong>{html.escape(str(manifest.get("label_count", 0)))}</strong></li>',
+        f'<li class="{status_class}"><span>program_label_count</span><strong>{html.escape(str(manifest.get("program_label_count", 0)))}</strong></li>',
+    ]
+    for item in manifest.get("program_label_candidates", [])[:12]:
+        rows.append(
+            "<li>"
+            f"<strong>{html.escape(str(item.get('role_hint') or 'label'))}</strong>"
+            f"<span>{html.escape(str(item.get('text') or ''))}</span>"
+            "</li>"
+        )
+    return "\n".join(rows)
+
+
 def build_review_panel_html(context: dict[str, Any]) -> str:
     source_svg = context["source_svg_markup"]
     alternative_svg = context["alternative_svg_markup"]
@@ -1137,6 +1320,7 @@ def build_review_panel_html(context: dict[str, Any]) -> str:
     evidence_list = render_evidence_list(context["evidence_manifest"])
     constraint_list = render_constraint_list(context["constraint_manifest"])
     standards_list = render_standards_list(context["standards_manifest"])
+    recognition_list = render_recognition_list(context["recognition_manifest"])
     source_info = html.escape(json.dumps(context["source_svg_info"], ensure_ascii=False, indent=2))
     alt_info = html.escape(json.dumps(context["alternative_svg_info"], ensure_ascii=False, indent=2))
     title = html.escape(context["title"])
@@ -1230,6 +1414,10 @@ def build_review_panel_html(context: dict[str, Any]) -> str:
         <div class="box"><ul>{evidence_list}</ul></div>
       </section>
       <section>
+        <h2>Recognition</h2>
+        <div class="box"><ul>{recognition_list}</ul></div>
+      </section>
+      <section>
         <h2>Constraints</h2>
         <div class="box"><ul>{constraint_list}</ul></div>
       </section>
@@ -1301,6 +1489,7 @@ def command_review_panel(args: argparse.Namespace) -> None:
         "alternative_svg_info": alternative_info,
         "apply_checks": apply_report.get("checks", {}),
         "engine_quality_gates": engine_quality,
+        "recognition_manifest": load_recognition_manifest(args.project_id, root),
         "evidence_manifest": load_evidence_manifest(args.project_id, root),
         "constraint_manifest": load_constraint_manifest(args.project_id, root),
         "standards_manifest": load_standards_manifest(args.project_id, root),
@@ -1343,6 +1532,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
     base = project_dir(args.project_id, root)
     intent_paths = resolve_intent_paths(base, args.intent)
     intents = [read_json(path) for path in intent_paths]
+    recognition_manifest = load_recognition_manifest(args.project_id, root)
     evidence_manifest = load_evidence_manifest(args.project_id, root)
     constraint_manifest = load_constraint_manifest(args.project_id, root)
     standards_manifest = load_standards_manifest(args.project_id, root)
@@ -1362,6 +1552,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "intent_paths": [str(path) for path in intent_paths],
         "intents": intents,
         "hard_constraints": manifest.get("hard_constraints", []),
+        "recognition_manifest": recognition_manifest,
         "evidence_manifest": evidence_manifest,
         "constraint_manifest": constraint_manifest,
         "standards_manifest": standards_manifest,
@@ -1439,6 +1630,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "engine_returncode_zero": proc.returncode == 0,
         "candidate_svg_exists": alternative_svg is not None and alternative_svg.exists(),
         "native_svg_no_images": svg_info.get("xml_parse") == "ok" and svg_info.get("image_elements") == 0,
+        "recognition_manifest_active": recognition_status(recognition_manifest) == "active",
         "opencrab_mcp_required": bool(manifest.get("opencrab_mcp", {}).get("required")),
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
@@ -1471,6 +1663,7 @@ def command_qa(args: argparse.Namespace) -> None:
     checks = {
         "manifest_exists": True,
         "source_svg_exists_or_allowed_missing": Path(manifest["source_svg"]).exists() or args.allow_missing_source,
+        "recognition_manifest_active": recognition_status(load_recognition_manifest(args.project_id, root)) == "active",
         "has_hard_constraints": bool(manifest.get("hard_constraints")),
         "opencrab_mcp_required": bool(manifest.get("opencrab_mcp", {}).get("required")),
         "opencrab_mcp_server_configured": bool(manifest.get("opencrab_mcp", {}).get("mcp_server")),
@@ -1533,6 +1726,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_sketch.add_argument("--project-id", required=True)
     p_sketch.add_argument("--sketch", required=True)
     p_sketch.set_defaults(func=command_sketch_intent)
+
+    p_recognize = sub.add_parser("recognize-svg", help="Create a lightweight recognition manifest from the source SVG.")
+    p_recognize.add_argument("--project-id", required=True)
+    p_recognize.add_argument("--source-svg", help="Override the project source SVG.")
+    p_recognize.add_argument("--max-labels", type=int, default=500)
+    p_recognize.set_defaults(func=command_recognize_svg)
 
     p_standards = sub.add_parser("standards-attach", help="Attach standards files such as CSV, Excel, PDF, or JSON to a project.")
     p_standards.add_argument("--project-id", required=True)

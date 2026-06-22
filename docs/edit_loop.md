@@ -4,6 +4,23 @@ Crab Archi Design separates user direction from SVG mutation.
 
 Natural language and doodles are first converted into structured intent JSON. A deterministic engine adapter then reads the intent, OpenCrab evidence, standards, and drawing constraints before writing native SVG geometry.
 
+## Recognize Source SVG
+
+Start by converting the original SVG into a lightweight recognition manifest:
+
+```bash
+crab-archi-design --project-root projects recognize-svg \
+  --project-id a801-802-opencrab-test
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/recognition/recognition_manifest.json
+```
+
+The manifest stores SVG parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints. `qa`, `edit-brief`, and `apply-edit` report `review_required` until this recognition manifest is active.
+
 ## Attach OpenCrab Evidence
 
 Every edit loop should start with verified ontology evidence. Natural language and doodles can steer the edit, but the solver should not pass a final alternative until OpenCrab/LocalCrab evidence is attached.
@@ -162,7 +179,7 @@ projects/a801-802-opencrab-test/briefs/edit_brief_###.json
 projects/a801-802-opencrab-test/briefs/edit_brief_###.md
 ```
 
-The brief checks whether OpenCrab evidence is verified, whether standards and constraints are active, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
+The brief checks whether source recognition is active, whether OpenCrab evidence is verified, whether standards and constraints are active, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
 
 ## Apply the Edit
 
@@ -176,15 +193,16 @@ crab-archi-design --project-root projects apply-edit \
 `apply-edit` performs the handoff:
 
 1. Selects the requested edit intents.
-2. Loads `evidence/evidence_manifest.json`.
-3. Loads `standards/standards_manifest.json`.
-4. Loads `constraints/constraint_manifest.json`.
-5. Writes `runs/apply_edit_###/solver_input.json`.
-6. Runs the project `engine_adapter`.
-7. Discovers native SVG/report/preview outputs.
-8. Ignores the original source SVG when choosing the candidate.
-9. Copies the generated SVG to `alternatives/alternative_###.svg`.
-10. Writes `runs/apply_edit_###/apply_edit_report.json`.
+2. Loads `recognition/recognition_manifest.json`.
+3. Loads `evidence/evidence_manifest.json`.
+4. Loads `standards/standards_manifest.json`.
+5. Loads `constraints/constraint_manifest.json`.
+6. Writes `runs/apply_edit_###/solver_input.json`.
+7. Runs the project `engine_adapter`.
+8. Discovers native SVG/report/preview outputs.
+9. Ignores the original source SVG when choosing the candidate.
+10. Copies the generated SVG to `alternatives/alternative_###.svg`.
+11. Writes `runs/apply_edit_###/apply_edit_report.json`.
 
 ## Review the Alternative
 
@@ -205,14 +223,16 @@ The panel embeds the original SVG and generated alternative SVG side by side, th
 
 For architectural layout revisions, use this order:
 
-1. Natural language: describe the intent and constraints.
-2. Doodle: mark the exact edge, room, circulation line, or wall segment.
-3. `standards-attach`: attach household-count standards and selected rows.
+1. `recognize-svg`: attach source SVG parse, primitives, and labels.
+2. `standards-attach`: attach household-count standards and selected rows.
+3. `evidence-attach`: attach OpenCrab/LocalCrab ontology evidence.
 4. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
-5. `edit-brief`: check evidence, standards, constraints, source SVG parse, and sketch bounds.
-6. `apply-edit`: generate a native SVG candidate.
-7. `review-panel`: inspect before/after.
-8. Repeat with another short prompt or doodle repair intent.
+5. Natural language: describe the design intent and constraints.
+6. Doodle: mark the exact edge, room, circulation line, or wall segment.
+7. `edit-brief`: check recognition, evidence, standards, constraints, source SVG parse, and sketch bounds.
+8. `apply-edit`: generate a native SVG candidate.
+9. `review-panel`: inspect before/after.
+10. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

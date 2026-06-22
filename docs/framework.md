@@ -34,7 +34,9 @@ The solver consumes recognition IR, constraints, standards, ontology evidence, a
 The first executable loop is:
 
 ```text
-evidence-attach
+recognize-svg
+  -> recognition/recognition_manifest.json
+  -> evidence-attach
   -> evidence/evidence_manifest.json
   -> standards-attach
   -> standards/standards_manifest.json
@@ -50,11 +52,13 @@ evidence-attach
   -> review-panel
 ```
 
+`recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints.
+
 `constraint-attach` converts doodle strokes into enforceable project constraints such as community shell, no-go zones, lock boundaries, mutable zones, and projectable zones.
 
 `standards-attach` converts area/program standards into a project manifest. CSV files are parsed into selected household-count rows; Excel, PDF, and JSON files are attached as verified source references for the engine adapter.
 
-`edit-brief` writes JSON and Markdown review artifacts before SVG mutation. It is intentionally lightweight: it verifies OpenCrab evidence, verifies the standards and constraint manifests, checks source SVG parsing, summarizes operations, and flags doodle strokes that fall outside the source SVG viewBox.
+`edit-brief` writes JSON and Markdown review artifacts before SVG mutation. It is intentionally lightweight: it verifies source recognition, OpenCrab evidence, standards and constraint manifests, checks source SVG parsing, summarizes operations, and flags doodle strokes that fall outside the source SVG viewBox.
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 
