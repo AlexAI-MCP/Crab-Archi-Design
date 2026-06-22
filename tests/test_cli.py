@@ -357,6 +357,48 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     assert "native_svg_alternative" in handoff_md
 
 
+def test_recognize_svg_extracts_geometry_candidates(tmp_path: Path) -> None:
+    source_svg = tmp_path / "geometry.svg"
+    source_svg.write_text(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600">
+              <rect x="50" y="50" width="700" height="420" fill="none" stroke="#111" stroke-width="5"/>
+              <rect x="100" y="100" width="22" height="22" fill="#111"/>
+              <rect x="50" y="210" width="700" height="8" fill="#111"/>
+              <line x1="90" y1="260" x2="690" y2="260" stroke="#111" stroke-width="7"/>
+              <text x="80" y="90">피트니스</text>
+            </svg>
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "init",
+        "--project-id",
+        "geometry-demo",
+        "--source-svg",
+        str(source_svg),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "recognize-svg", "--project-id", "geometry-demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    recognition = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    summary = recognition["geometry_summary"]
+    assert recognition["program_label_candidates"][0]["role_hint"] == "fitness_gx"
+    assert summary["primitive_bbox_count"] >= 3
+    assert summary["column_candidate_count"] >= 1
+    assert summary["wall_candidate_count"] >= 1
+    assert summary["room_envelope_candidate_count"] >= 1
+    assert recognition["geometry_candidates"]["column_candidates"][0]["bbox"]["width"] == 22.0
+
+
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
     source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'></svg>", encoding="utf-8")
@@ -597,6 +639,7 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
               <text x="155" y="70">주민카페</text>
               <text x="55" y="210">피트니스</text>
               <text x="260" y="190">골프</text>
+              <rect x="130" y="145" width="10" height="10" fill="#111"/>
             </svg>
             """
         ).strip(),
@@ -670,6 +713,7 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     alternative_text = alternative.read_text(encoding="utf-8")
     assert "crab_archi_design_layout_engine_candidate" in alternative_text
     assert 'data-engine="layout-svg-engine"' in alternative_text
+    assert 'data-role="recognized-column-preserved"' in alternative_text
     assert "<image" not in alternative_text
     for role in ["greenery_lounge", "fitness_gx", "golf_screen", "sauna_locker_shower", "hall_lobby"]:
         assert f'data-program="{role}"' in alternative_text
@@ -683,6 +727,8 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     assert gates["no_go_intrusion_free"] is True
     assert gates["standard_programs_planned"] is True
     assert gates["large_programs_present"] is True
+    assert gates["recognized_columns_preserved"] is True
+    assert engine_report["summary"]["recognized_column_count"] >= 1
     assert engine_report["summary"]["room_count"] >= 7
 
 

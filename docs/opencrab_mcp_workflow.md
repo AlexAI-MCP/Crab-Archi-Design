@@ -66,7 +66,7 @@ Then it appends normalized `opencrab_query` or `opencrab_search_documents` evide
 
 `design-handoff` writes `projects/<project>/handoffs/design_handoff_###.json` and `.md`. It packages the prompt blocks, OpenCrab evidence summaries, standards excerpts, constraints, recognized drawing context, and deterministic engine contract after the readiness gates are satisfied.
 
-`layout-svg-engine` can be used at the solver step to generate a standards-backed room-envelope candidate without raster overlays. It uses the attached community shell, mutable zone, no-go constraints, OpenCrab evidence gate, and standards rows to draw native SVG room partitions for greenery lounge, fitness, golf, wellness, hall, and support programs.
+`layout-svg-engine` can be used at the solver step to generate a standards-backed room-envelope candidate without raster overlays. It uses the attached community shell, mutable zone, no-go constraints, recognized column candidates, OpenCrab evidence gate, and standards rows to draw native SVG room partitions for greenery lounge, fitness, golf, wellness, hall, and support programs.
 
 `reference-svg-engine` can still be used to validate the full workflow without changing room envelopes. It produces a native SVG reference candidate and report for diagnostics.
 
@@ -96,7 +96,7 @@ docs/mcp_oauth_integration.md
 projects/<project>/recognition/recognition_manifest.json
 ```
 
-The recognition manifest is the first project-specific drawing IR. It stores source SVG parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints. `qa`, `edit-brief`, and `apply-edit` treat a candidate as `review_required` until this manifest has `status: active`.
+The recognition manifest is the first project-specific drawing IR. It stores source SVG parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, raster image detection, text label candidates, and program role hints. `qa`, `edit-brief`, and `apply-edit` treat a candidate as `review_required` until this manifest has `status: active`.
 
 ## Standards Gate
 

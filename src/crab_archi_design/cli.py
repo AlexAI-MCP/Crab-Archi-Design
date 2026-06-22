@@ -341,6 +341,154 @@ def element_text(el: ET.Element) -> str:
     return " ".join(part.strip() for part in el.itertext() if part and part.strip())
 
 
+def svg_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value).replace(",", ""))
+    return float(match.group(0)) if match else default
+
+
+def svg_points_bbox(raw_points: Any) -> dict[str, float] | None:
+    points: list[tuple[float, float]] = []
+    if not raw_points:
+        return None
+    if isinstance(raw_points, str):
+        numbers = [float(item) for item in re.findall(r"-?\d+(?:\.\d+)?", raw_points)]
+        points = list(zip(numbers[0::2], numbers[1::2]))
+    elif isinstance(raw_points, list):
+        for point in raw_points:
+            if isinstance(point, list) and len(point) >= 2:
+                points.append((svg_float(point[0]), svg_float(point[1])))
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    if max_x <= min_x or max_y <= min_y:
+        return None
+    return {"x": min_x, "y": min_y, "width": max_x - min_x, "height": max_y - min_y}
+
+
+def element_bbox(el: ET.Element, tag: str) -> dict[str, float] | None:
+    if tag == "rect":
+        width = svg_float(el.attrib.get("width"))
+        height = svg_float(el.attrib.get("height"))
+        if width > 0 and height > 0:
+            return {"x": svg_float(el.attrib.get("x")), "y": svg_float(el.attrib.get("y")), "width": width, "height": height}
+    if tag == "line":
+        x1 = svg_float(el.attrib.get("x1"))
+        y1 = svg_float(el.attrib.get("y1"))
+        x2 = svg_float(el.attrib.get("x2"))
+        y2 = svg_float(el.attrib.get("y2"))
+        min_x, max_x = min(x1, x2), max(x1, x2)
+        min_y, max_y = min(y1, y2), max(y1, y2)
+        stroke = max(svg_float(el.attrib.get("stroke-width"), 1.0), 1.0)
+        if max_x == min_x:
+            min_x -= stroke * 0.5
+            max_x += stroke * 0.5
+        if max_y == min_y:
+            min_y -= stroke * 0.5
+            max_y += stroke * 0.5
+        return {"x": min_x, "y": min_y, "width": max_x - min_x, "height": max_y - min_y}
+    if tag in {"polyline", "polygon"}:
+        return svg_points_bbox(el.attrib.get("points"))
+    if tag in {"circle", "ellipse"}:
+        cx = svg_float(el.attrib.get("cx"))
+        cy = svg_float(el.attrib.get("cy"))
+        rx = svg_float(el.attrib.get("rx"), svg_float(el.attrib.get("r")))
+        ry = svg_float(el.attrib.get("ry"), svg_float(el.attrib.get("r")))
+        if rx > 0 and ry > 0:
+            return {"x": cx - rx, "y": cy - ry, "width": rx * 2, "height": ry * 2}
+    if tag == "path":
+        numbers = [float(item) for item in re.findall(r"-?\d+(?:\.\d+)?", el.attrib.get("d", ""))]
+        points = list(zip(numbers[0::2], numbers[1::2]))
+        return svg_points_bbox([[x, y] for x, y in points])
+    return None
+
+
+def bbox_area(box: dict[str, float]) -> float:
+    return max(0.0, box.get("width", 0.0)) * max(0.0, box.get("height", 0.0))
+
+
+def bbox_aspect(box: dict[str, float]) -> float:
+    width = max(0.001, box.get("width", 0.0))
+    height = max(0.001, box.get("height", 0.0))
+    return max(width / height, height / width)
+
+
+def geometry_role_hint(tag: str, box: dict[str, float], el: ET.Element, viewbox: list[float]) -> str | None:
+    max_dim = max(viewbox[2], viewbox[3])
+    drawing_area = max(1.0, viewbox[2] * viewbox[3])
+    area = bbox_area(box)
+    stroke_width = svg_float(el.attrib.get("stroke-width"))
+    fill = str(el.attrib.get("fill", "")).strip().lower()
+    class_text = " ".join(str(el.attrib.get(key, "")) for key in ["id", "class"]).lower()
+    width = box.get("width", 0.0)
+    height = box.get("height", 0.0)
+    min_side = min(width, height)
+    max_side = max(width, height)
+
+    if "column" in class_text or "기둥" in class_text:
+        return "column_candidate"
+    if tag == "rect" and bbox_aspect(box) <= 1.35 and max_dim * 0.004 <= min_side <= max_dim * 0.04 and fill not in {"none", "transparent"}:
+        return "column_candidate"
+    if stroke_width >= max_dim * 0.0015 or (min_side > 0 and max_side / max(0.001, min_side) >= 8 and area <= drawing_area * 0.015):
+        return "wall_candidate"
+    if tag in {"rect", "polygon", "path"} and area >= drawing_area * 0.01 and bbox_aspect(box) <= 8:
+        return "room_envelope_candidate"
+    return None
+
+
+def collect_geometry_candidates(root: ET.Element, viewbox: list[float]) -> dict[str, Any]:
+    primitive_bbox_candidates: list[dict[str, Any]] = []
+    column_candidates: list[dict[str, Any]] = []
+    wall_candidates: list[dict[str, Any]] = []
+    room_envelope_candidates: list[dict[str, Any]] = []
+    drawing_area = max(1.0, viewbox[2] * viewbox[3])
+
+    for index, el in enumerate(root.iter(), start=1):
+        tag = local_tag(el)
+        if tag not in {"path", "line", "polyline", "polygon", "rect", "circle", "ellipse"}:
+            continue
+        box = element_bbox(el, tag)
+        if not box or bbox_area(box) <= 0:
+            continue
+        role_hint = geometry_role_hint(tag, box, el, viewbox)
+        item = {
+            "index": index,
+            "tag": tag,
+            "id": el.attrib.get("id"),
+            "class": el.attrib.get("class"),
+            "role_hint": role_hint,
+            "bbox": box,
+            "stroke_width": svg_float(el.attrib.get("stroke-width")),
+            "fill": el.attrib.get("fill"),
+            "stroke": el.attrib.get("stroke"),
+        }
+        primitive_bbox_candidates.append(item)
+        if role_hint == "column_candidate":
+            column_candidates.append(item)
+        if role_hint == "wall_candidate":
+            wall_candidates.append(item)
+        if role_hint == "room_envelope_candidate" or (tag in {"rect", "polygon", "path"} and bbox_area(box) >= drawing_area * 0.01 and bbox_aspect(box) <= 8):
+            room_envelope_candidates.append(item)
+
+    return {
+        "primitive_bbox_candidates": primitive_bbox_candidates[:800],
+        "column_candidates": column_candidates[:300],
+        "wall_candidates": wall_candidates[:500],
+        "room_envelope_candidates": room_envelope_candidates[:300],
+        "summary": {
+            "primitive_bbox_count": len(primitive_bbox_candidates),
+            "column_candidate_count": len(column_candidates),
+            "wall_candidate_count": len(wall_candidates),
+            "room_envelope_candidate_count": len(room_envelope_candidates),
+            "protected_geometry_candidate_count": len(column_candidates),
+        },
+    }
+
+
 def analyze_svg_recognition(path: Path, max_labels: int = 500) -> dict[str, Any]:
     source_info = inspect_svg(path)
     if source_info.get("xml_parse") != "ok":
@@ -351,6 +499,19 @@ def analyze_svg_recognition(path: Path, max_labels: int = 500) -> dict[str, Any]
             "primitive_count": 0,
             "label_candidates": [],
             "program_label_candidates": [],
+            "geometry_candidates": {
+                "primitive_bbox_candidates": [],
+                "column_candidates": [],
+                "wall_candidates": [],
+                "room_envelope_candidates": [],
+                "summary": {
+                    "primitive_bbox_count": 0,
+                    "column_candidate_count": 0,
+                    "wall_candidate_count": 0,
+                    "room_envelope_candidate_count": 0,
+                    "protected_geometry_candidate_count": 0,
+                },
+            },
         }
 
     root = ET.parse(path).getroot()
@@ -358,6 +519,8 @@ def analyze_svg_recognition(path: Path, max_labels: int = 500) -> dict[str, Any]
     label_candidates = []
     program_label_candidates = []
     primitive_tags = {"path", "line", "polyline", "polygon", "rect", "circle", "ellipse", "text", "use", "image"}
+    viewbox = parse_viewbox(root.attrib.get("viewBox"))
+    geometry_candidates = collect_geometry_candidates(root, viewbox)
 
     for el in root.iter():
         tag = local_tag(el)
@@ -389,6 +552,7 @@ def analyze_svg_recognition(path: Path, max_labels: int = 500) -> dict[str, Any]
         "program_label_count": len(program_label_candidates),
         "label_candidates": label_candidates,
         "program_label_candidates": program_label_candidates,
+        "geometry_candidates": geometry_candidates,
     }
 
 
@@ -823,11 +987,17 @@ def command_recognize_svg(args: argparse.Namespace) -> None:
         "program_label_count": analysis.get("program_label_count", 0),
         "label_candidates": analysis["label_candidates"],
         "program_label_candidates": analysis["program_label_candidates"],
+        "geometry_candidates": analysis.get("geometry_candidates", {}),
+        "geometry_summary": analysis.get("geometry_candidates", {}).get("summary", {}),
         "required_for_final_svg": True,
         "recognition_scope": [
             "svg_xml_parse",
             "viewBox",
             "primitive_counts",
+            "primitive_bounding_boxes",
+            "column_candidates",
+            "wall_candidates",
+            "room_envelope_candidates",
             "text_label_candidates",
             "program_role_hints",
             "native_svg_image_detection",
@@ -843,6 +1013,8 @@ def command_recognize_svg(args: argparse.Namespace) -> None:
                 "primitive_count": recognition_manifest["primitive_count"],
                 "label_count": recognition_manifest["label_count"],
                 "program_label_count": recognition_manifest["program_label_count"],
+                "column_candidate_count": recognition_manifest["geometry_summary"].get("column_candidate_count", 0),
+                "wall_candidate_count": recognition_manifest["geometry_summary"].get("wall_candidate_count", 0),
                 "image_elements": recognition_manifest["source_svg_info"].get("image_elements"),
             },
             ensure_ascii=False,
@@ -1464,11 +1636,15 @@ def render_recognition_list(manifest: dict[str, Any] | None) -> str:
         return '<li class="review"><span>recognition_manifest</span><strong>missing</strong></li>'
     status = recognition_status(manifest)
     status_class = "pass" if status == "active" else "review"
+    geometry = manifest.get("geometry_summary", {})
     rows = [
         f'<li class="{status_class}"><span>status</span><strong>{html.escape(status)}</strong></li>',
         f'<li class="{status_class}"><span>primitive_count</span><strong>{html.escape(str(manifest.get("primitive_count", 0)))}</strong></li>',
         f'<li class="{status_class}"><span>label_count</span><strong>{html.escape(str(manifest.get("label_count", 0)))}</strong></li>',
         f'<li class="{status_class}"><span>program_label_count</span><strong>{html.escape(str(manifest.get("program_label_count", 0)))}</strong></li>',
+        f'<li class="{status_class}"><span>column_candidates</span><strong>{html.escape(str(geometry.get("column_candidate_count", 0)))}</strong></li>',
+        f'<li class="{status_class}"><span>wall_candidates</span><strong>{html.escape(str(geometry.get("wall_candidate_count", 0)))}</strong></li>',
+        f'<li class="{status_class}"><span>room_envelope_candidates</span><strong>{html.escape(str(geometry.get("room_envelope_candidate_count", 0)))}</strong></li>',
     ]
     for item in manifest.get("program_label_candidates", [])[:12]:
         rows.append(
@@ -1950,6 +2126,9 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
             "primitive_count": (recognition_manifest or {}).get("primitive_count", 0),
             "label_count": (recognition_manifest or {}).get("label_count", 0),
             "program_label_count": (recognition_manifest or {}).get("program_label_count", 0),
+            "column_candidate_count": (recognition_manifest or {}).get("geometry_summary", {}).get("column_candidate_count", 0),
+            "wall_candidate_count": (recognition_manifest or {}).get("geometry_summary", {}).get("wall_candidate_count", 0),
+            "room_envelope_candidate_count": (recognition_manifest or {}).get("geometry_summary", {}).get("room_envelope_candidate_count", 0),
             "source_image_elements": source_info.get("image_elements"),
             "standard_count": count_standard_items(standards_manifest),
             "selected_standard_row_count": sum_selected_standard_rows(standards_manifest),
@@ -2043,7 +2222,10 @@ def summarize_recognition_manifest(manifest: dict[str, Any] | None) -> dict[str,
         "primitive_count": manifest.get("primitive_count", 0),
         "label_count": manifest.get("label_count", 0),
         "program_label_count": manifest.get("program_label_count", 0),
+        "geometry_summary": manifest.get("geometry_summary", {}),
         "program_label_candidates": manifest.get("program_label_candidates", [])[:24],
+        "column_candidates": manifest.get("geometry_candidates", {}).get("column_candidates", [])[:24],
+        "room_envelope_candidates": manifest.get("geometry_candidates", {}).get("room_envelope_candidates", [])[:24],
     }
 
 

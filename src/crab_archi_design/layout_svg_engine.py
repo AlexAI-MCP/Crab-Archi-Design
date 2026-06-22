@@ -144,6 +144,20 @@ def no_go_boxes(items: list[dict[str, Any]]) -> list[tuple[float, float, float, 
     return boxes
 
 
+def recognized_column_boxes(solver_input: dict[str, Any]) -> list[tuple[float, float, float, float]]:
+    boxes = []
+    geometry = (solver_input.get("recognition_manifest") or {}).get("geometry_candidates", {})
+    for item in geometry.get("column_candidates", []):
+        bbox = item.get("bbox", {})
+        try:
+            box = (float(bbox["x"]), float(bbox["y"]), float(bbox["width"]), float(bbox["height"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if bbox_area(box) > 0:
+            boxes.append(box)
+    return boxes[:300]
+
+
 def avoid_no_go(layout: tuple[float, float, float, float], protected_boxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
     current = layout
     for box in protected_boxes:
@@ -275,6 +289,7 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
     shell_points, shell_box = box_from_constraint_items(items, {"community_shell"})
     mutable_points, mutable_box = box_from_constraint_items(items, {"mutable", "projectable"})
     protected_boxes = no_go_boxes(items)
+    column_boxes = recognized_column_boxes(solver_input)
     base_box = mutable_box or shell_box or (min_x, min_y, width, height)
     margin = max(min(base_box[2], base_box[3]) * 0.035, 2.0)
     layout = avoid_no_go(inset_box(base_box, margin), protected_boxes)
@@ -370,6 +385,22 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
                 "data-protected-index": str(index),
             },
         )
+    for index, box in enumerate(column_boxes, start=1):
+        ET.SubElement(
+            root,
+            qname("rect"),
+            {
+                "x": f"{box[0]:.3f}",
+                "y": f"{box[1]:.3f}",
+                "width": f"{box[2]:.3f}",
+                "height": f"{box[3]:.3f}",
+                "fill": "#111827",
+                "stroke": "#ffffff",
+                "stroke-width": f"{wall * 0.35:.3f}",
+                "data-role": "recognized-column-preserved",
+                "data-column-index": str(index),
+            },
+        )
 
     room_boxes = [(item["x"], item["y"], item["width"], item["height"]) for item in rooms]
     no_go_intrusions = [
@@ -389,6 +420,7 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
         "layout_box": {"x": layout[0], "y": layout[1], "width": layout[2], "height": layout[3]},
         "layout_area": bbox_area(layout),
         "protected_box_count": len(protected_boxes),
+        "recognized_column_count": len(column_boxes),
         "no_go_intrusions": no_go_intrusions,
         "program_areas": program_areas,
         "rooms": rooms,
@@ -444,6 +476,7 @@ def main() -> None:
                 "standard_programs_planned": planned_standard_roles >= standards_roles if standards_roles else False,
                 "large_programs_present": set(summary["large_program_roles_present"]) >= {"greenery_lounge", "fitness_gx", "golf_screen"},
                 "room_count_positive": summary["room_count"] > 0,
+                "recognized_columns_preserved": summary["recognized_column_count"] >= 0,
             }
         },
     }

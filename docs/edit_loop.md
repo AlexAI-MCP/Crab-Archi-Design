@@ -45,7 +45,7 @@ This creates:
 projects/a801-802-opencrab-test/recognition/recognition_manifest.json
 ```
 
-The manifest stores SVG parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints. `qa`, `edit-brief`, and `apply-edit` report `review_required` until this recognition manifest is active.
+The manifest stores SVG parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, raster image detection, text label candidates, and program role hints. `qa`, `edit-brief`, and `apply-edit` report `review_required` until this recognition manifest is active.
 
 ## Attach OpenCrab Evidence
 

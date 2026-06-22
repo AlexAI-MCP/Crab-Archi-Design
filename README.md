@@ -181,11 +181,11 @@ crab-archi-design qa --project-id demo
 
 `apply-edit` reads structured natural-language and doodle intents, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
 
-`layout-svg-engine` is the built-in room-envelope adapter. It reads the community shell, mutable zone, no-go constraints, standards rows, and OpenCrab-backed intent, then creates a native SVG redraw layer with program rooms, partitions, labels, preserved shell markup, and no raster overlay.
+`layout-svg-engine` is the built-in room-envelope adapter. It reads the community shell, mutable zone, no-go constraints, recognized column candidates, standards rows, and OpenCrab-backed intent, then creates a native SVG redraw layer with program rooms, partitions, labels, preserved shell/column markup, and no raster overlay.
 
 `reference-svg-engine` remains available as a diagnostic adapter. It consumes the same solver input and emits a native SVG candidate plus engine report, using only additive SVG elements and no raster overlay.
 
-`recognize-svg` writes `projects/<project>/recognition/recognition_manifest.json`. It stores SVG parse status, viewBox, primitive counts, label candidates, and program role hints before any layout mutation.
+`recognize-svg` writes `projects/<project>/recognition/recognition_manifest.json`. It stores SVG parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, label candidates, and program role hints before any layout mutation.
 
 `standards-attach` writes `projects/<project>/standards/standards_manifest.json`. CSV files are parsed into selected rows for the household count; Excel, PDF, and JSON files are attached as verified standards references for the engine adapter.
 

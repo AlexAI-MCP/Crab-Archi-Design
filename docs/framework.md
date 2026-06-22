@@ -70,7 +70,7 @@ recognize-svg
 
 `run-job` is the product-facing job contract. A UI, OAuth worker, or MCP wrapper can write one `crab-archi-design-job-spec-v1` JSON file with source SVG, household count, standards, OpenCrab MCP result JSON, doodle constraints, prompt, engine adapter, and verification policy. The command then executes `workflow-run`, `export-package`, `verify-package`, and `doctor`, and records every step in a job report.
 
-`recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints.
+`recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, raster image detection, text label candidates, and program role hints.
 
 `workflow-run` orchestrates the same manual commands in a single run. It initializes the project when needed, executes the gates in order, writes all normal artifacts, and records the step-by-step result in a workflow report.
 
@@ -96,7 +96,7 @@ recognize-svg
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 
-The built-in `layout-svg-engine` adapter is the first room-envelope solver. It reads `solver_input.json`, uses community shell and mutable-zone constraints as the redraw boundary, crops away no-go envelopes, applies standards rows to greenery lounge, fitness, golf, wellness, hall, and support programs, and writes a native SVG candidate with partition rectangles and labels.
+The built-in `layout-svg-engine` adapter is the first room-envelope solver. It reads `solver_input.json`, uses community shell and mutable-zone constraints as the redraw boundary, crops away no-go envelopes, preserves recognized column candidates as a top SVG layer, applies standards rows to greenery lounge, fitness, golf, wellness, hall, and support programs, and writes a native SVG candidate with partition rectangles and labels.
 
 The built-in `reference-svg-engine` adapter remains available for end-to-end diagnostics. It copies the source SVG into a native SVG candidate, adds a compact reference layer with operations/evidence/standards/constraints summary, and writes a quality-gated engine report.
 
