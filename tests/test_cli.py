@@ -26,10 +26,10 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"run_job", "workflow_run", "revision_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
+    assert {"run_job", "validate_job", "workflow_run", "revision_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
-    assert manifest["recommended_sequences"]["saas_job_runner"] == ["run_job"]
+    assert manifest["recommended_sequences"]["saas_job_runner"] == ["validate_job", "run_job"]
     assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor"]
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
@@ -52,7 +52,7 @@ def test_mcp_config_writes_runtime_config(tmp_path: Path) -> None:
     assert server["command"] == "crab-archi-design-mcp"
     assert server["args"] == ["--stdio"]
     assert server["env"]["CRAB_ARCHI_PROJECT_ROOT"] == "sandbox-projects"
-    assert config["oauth_worker"]["handoff_sequence"] == ["run-job --job <job.json> --strict"]
+    assert config["oauth_worker"]["handoff_sequence"] == ["validate-job --job <job.json> --strict", "run-job --job <job.json> --strict"]
     assert config["oauth_worker"]["manual_handoff_sequence"] == ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"]
     assert config["oauth_worker"]["revision_sequence"] == ["revision-run", "export-package", "verify-package --strict", "doctor --strict"]
     assert config["smoke_test_messages"][0]["method"] == "initialize"
@@ -79,6 +79,7 @@ def test_mcp_smoke_validates_runtime_config(tmp_path: Path) -> None:
     assert report["checks"]["initialize_ok"] is True
     assert report["checks"]["tools_list_ok"] is True
     assert report["checks"]["run_job_tool_available"] is True
+    assert report["checks"]["validate_job_tool_available"] is True
     assert report["checks"]["revision_run_tool_available"] is True
     assert report["checks"]["topology_build_tool_available"] is True
     assert "run_job" in report["tool_names"]
@@ -130,6 +131,7 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         list_response = read_json_line(process)
         tools = {tool["name"]: tool for tool in list_response["result"]["tools"]}
         assert "run_job" in tools
+        assert "validate_job" in tools
         assert "revision_run" in tools
         assert "topology_build" in tools
         assert "doctor" in tools
@@ -1042,6 +1044,44 @@ def test_revision_run_executes_existing_project_loop(tmp_path: Path) -> None:
     assert (tmp_path / revision["latest_artifacts"]["topology_manifest"]).exists()
     assert (tmp_path / revision["latest_artifacts"]["alternative_svg"]).exists()
     assert (tmp_path / revision["latest_artifacts"]["review_panel"]).exists()
+
+
+def test_validate_job_spec_checks_inputs(tmp_path: Path) -> None:
+    result = run_cli("validate-job", "--job", str(ROOT / "examples" / "job_spec_sample.json"), "--output-dir", str(tmp_path / "diagnostics"), "--strict", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert report["schema"] == "crab-archi-design-job-validation-v1"
+    assert report["status"] == "pass"
+    assert report["checks"]["schema_supported"] is True
+    assert report["checks"]["source_svg_present_or_existing_project"] is True
+    assert report["checks"]["standards_present_or_existing_manifest"] is True
+    assert report["checks"]["opencrab_or_evidence_input_present"] is True
+    assert report["checks"]["constraint_sketch_present_or_existing_manifest"] is True
+    assert report["checks"]["required_files_exist"] is True
+    assert report["missing_files"] == []
+
+    bad_job = tmp_path / "bad_job.json"
+    bad_job.write_text(
+        json.dumps(
+            {
+                "schema": "crab-archi-design-job-spec-v1",
+                "project_id": "bad-demo",
+                "source_svg": "missing.svg",
+                "standards": ["missing.csv"],
+                "ontology_pack": "community_svg_topology_ontology_v2",
+                "opencrab_result_file": ["missing_opencrab.json"],
+                "constraint_sketch": "missing_constraints.json",
+                "engine_adapter": "layout-svg-engine",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = run_cli("validate-job", "--job", str(bad_job), "--output-dir", str(tmp_path / "diagnostics"), cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert report["status"] == "review_required"
+    assert report["checks"]["required_files_exist"] is False
+    assert {item["key"] for item in report["missing_files"]} >= {"source_svg", "standards", "opencrab_result_file", "constraint_sketch"}
 
 
 def test_run_job_executes_sample_pipeline(tmp_path: Path) -> None:

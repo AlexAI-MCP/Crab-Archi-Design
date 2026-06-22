@@ -3393,6 +3393,175 @@ def workflow_namespace_from_job(job: dict[str, Any], project_root: Path, path_ba
     )
 
 
+JOB_SPEC_ALLOWED_KEYS = {
+    "schema",
+    "project_root",
+    "path_base",
+    "project_id",
+    "source_svg",
+    "households",
+    "standards",
+    "standards_summary",
+    "standards_metadata",
+    "ontology_pack",
+    "engine_adapter",
+    "engine_arg",
+    "opencrab_mcp_server",
+    "opencrab_homepage",
+    "opencrab_result_file",
+    "opencrab_result_json",
+    "opencrab_source_tool",
+    "opencrab_query",
+    "workspace_id",
+    "evidence_source",
+    "evidence_source_file",
+    "evidence_summary",
+    "evidence_metadata",
+    "constraint_sketch",
+    "constraint_role",
+    "prompt",
+    "sketch",
+    "task",
+    "max_labels",
+    "timeout",
+    "skip_preview",
+    "skip_apply",
+    "skip_review_panel",
+    "replace_standards",
+    "replace_evidence",
+    "replace_constraints",
+    "reinit",
+    "export_package",
+    "include_source_svg",
+    "only_latest",
+    "skip_opencrab_sync",
+    "verify_package",
+    "check_local_files",
+    "doctor",
+    "strict",
+    "zip",
+}
+
+
+def resolve_job_context(job: dict[str, Any], default_project_root: str, cwd: Path | None = None) -> tuple[Path, Path]:
+    cwd = cwd or Path.cwd()
+    path_base = Path(job.get("path_base") or ".").expanduser()
+    if not path_base.is_absolute():
+        path_base = cwd / path_base
+    project_root = Path(job.get("project_root") or default_project_root).expanduser()
+    if not project_root.is_absolute():
+        project_root = cwd / project_root
+    return project_root, path_base
+
+
+def existing_project_artifact(project_id: str | None, project_root: Path, *parts: str) -> bool:
+    if not project_id:
+        return False
+    return (project_dir(str(project_id), project_root).joinpath(*parts)).exists()
+
+
+def job_file_entries(job: dict[str, Any], path_base: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+
+    def add_entry(key: str, raw_value: str | None, required: bool = True) -> None:
+        if not raw_value:
+            return
+        path = Path(raw_value).expanduser()
+        resolved = path if path.is_absolute() else path_base / path
+        entries.append({"key": key, "path": str(resolved), "exists": resolved.exists(), "required": required})
+
+    add_entry("source_svg", job_path_value(job, "source_svg", path_base))
+    for path in job_path_list(job, "standards", path_base):
+        add_entry("standards", path)
+    for path in job_path_list(job, "opencrab_result_file", path_base):
+        add_entry("opencrab_result_file", path)
+    add_entry("evidence_source_file", job_path_value(job, "evidence_source_file", path_base))
+    add_entry("constraint_sketch", job_path_value(job, "constraint_sketch", path_base))
+    add_entry("sketch", job_path_value(job, "sketch", path_base), required=False)
+    add_entry("zip", job_path_value(job, "zip", path_base), required=False)
+    return entries
+
+
+def build_job_validation_report(job_path: Path, job: dict[str, Any], default_project_root: str, check_files: bool = True) -> dict[str, Any]:
+    project_root, path_base = resolve_job_context(job, default_project_root)
+    project_id = str(job.get("project_id") or "")
+    existing_manifest = existing_project_artifact(project_id, project_root, "project_manifest.json")
+    existing_standards = existing_project_artifact(project_id, project_root, "standards", "standards_manifest.json")
+    existing_evidence = existing_project_artifact(project_id, project_root, "evidence", "evidence_manifest.json")
+    existing_constraints = existing_project_artifact(project_id, project_root, "constraints", "constraint_manifest.json")
+    unknown_keys = sorted(set(job) - JOB_SPEC_ALLOWED_KEYS)
+    files = job_file_entries(job, path_base)
+    missing_files = [item for item in files if item["required"] and not item["exists"]] if check_files else []
+    checks = {
+        "job_file_exists": job_path.exists(),
+        "schema_supported": job.get("schema") in {None, "crab-archi-design-job-spec-v1"},
+        "project_id_present": bool(project_id),
+        "source_svg_present_or_existing_project": bool(job.get("source_svg") or existing_manifest),
+        "standards_present_or_existing_manifest": bool(job_value_list(job, "standards") or existing_standards),
+        "opencrab_or_evidence_input_present": bool(job_value_list(job, "opencrab_result_file") or job_value_list(job, "opencrab_result_json") or job.get("evidence_source_file") or job.get("evidence_summary") or existing_evidence),
+        "constraint_sketch_present_or_existing_manifest": bool(job.get("constraint_sketch") or existing_constraints),
+        "ontology_pack_present": bool(job.get("ontology_pack") or existing_manifest),
+        "engine_adapter_present": bool(job.get("engine_adapter") or existing_manifest),
+        "required_files_exist": not missing_files,
+    }
+    warnings = []
+    if unknown_keys:
+        warnings.append({"type": "unknown_keys", "keys": unknown_keys})
+    if not job.get("prompt"):
+        warnings.append({"type": "missing_prompt", "message": "workflow-run will create a default prompt if none exists."})
+    status = "pass" if all(checks.values()) else "review_required"
+    return {
+        "schema": "crab-archi-design-job-validation-v1",
+        "created_at": now(),
+        "status": status,
+        "job_spec": str(job_path),
+        "project_id": project_id or None,
+        "project_root": str(project_root),
+        "path_base": str(path_base),
+        "check_files": check_files,
+        "checks": checks,
+        "warnings": warnings,
+        "files": files,
+        "missing_files": missing_files,
+        "unknown_keys": unknown_keys,
+    }
+
+
+def command_validate_job(args: argparse.Namespace) -> None:
+    job_path = Path(args.job).expanduser()
+    if not job_path.exists():
+        job = {}
+        report = {
+            "schema": "crab-archi-design-job-validation-v1",
+            "created_at": now(),
+            "status": "review_required",
+            "job_spec": str(job_path),
+            "project_id": None,
+            "project_root": str(Path(args.project_root).expanduser()),
+            "path_base": str(Path.cwd()),
+            "check_files": not args.no_check_files,
+            "checks": {"job_file_exists": False},
+            "warnings": [],
+            "files": [],
+            "missing_files": [{"key": "job", "path": str(job_path), "exists": False, "required": True}],
+            "unknown_keys": [],
+        }
+    else:
+        job = read_json(job_path)
+        report = build_job_validation_report(job_path, job, args.project_root, check_files=not args.no_check_files)
+
+    out_dir = Path(args.output_dir).expanduser() if args.output_dir else Path("diagnostics")
+    if not out_dir.is_absolute():
+        out_dir = Path.cwd() / out_dir
+    seq = next_sequence(out_dir, "job_validation_*.json")
+    out = out_dir / f"job_validation_{seq:03d}.json"
+    write_json(out, report)
+    print(out)
+    print(json.dumps({"status": report["status"], "checks": report["checks"], "missing_file_count": len(report["missing_files"])}, ensure_ascii=False))
+    if args.strict and report["status"] != "pass":
+        raise SystemExit(f"validate-job failed; report: {out}")
+
+
 def step_primary_stdout(step: dict[str, Any], line_index: int = 0) -> str | None:
     stdout = step.get("stdout") or []
     if len(stdout) > line_index:
@@ -4008,6 +4177,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["workflow_run_pass", "package_verify_pass", "doctor_pass"],
         },
         {
+            "id": "validate_job",
+            "cli_subcommand": "validate-job",
+            "description": "Validate a job spec before run-job by checking schema, required design inputs, and referenced local files.",
+            "required_args": ["--job"],
+            "optional_args": ["--output-dir", "--no-check-files", "--strict"],
+            "outputs": ["diagnostics/job_validation_###.json"],
+            "gates": ["job_spec_valid", "required_files_exist"],
+        },
+        {
             "id": "workflow_run",
             "cli_subcommand": "workflow-run",
             "description": "Run the full source SVG to evidence-backed candidate workflow.",
@@ -4215,7 +4393,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
         "defaults": tool_defaults,
         "tools": tools,
         "recommended_sequences": {
-            "saas_job_runner": ["run_job"],
+            "saas_job_runner": ["validate_job", "run_job"],
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
             "revision_loop": ["revision_run", "export_package", "verify_package", "doctor"],
             "manual_revision_loop": ["topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
@@ -4285,7 +4463,7 @@ def build_mcp_runtime_config(server_name: str, project_root_value: str, cwd_valu
                 ["crab-archi-design", "mcp-manifest"],
                 ["crab-archi-design", "--project-root", project_root_value, "doctor", "--strict"],
             ],
-            "handoff_sequence": ["run-job --job <job.json> --strict"],
+            "handoff_sequence": ["validate-job --job <job.json> --strict", "run-job --job <job.json> --strict"],
             "manual_handoff_sequence": ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"],
             "revision_sequence": ["revision-run", "export-package", "verify-package --strict", "doctor --strict"],
             "package_policy": "Do not include source SVG unless the receiving system is authorized; export-package requires --include-source-svg for that.",
@@ -4401,6 +4579,7 @@ def run_mcp_smoke(config: dict[str, Any], server_name: str | None, timeout: int)
         "initialize_ok": initialize.get("result", {}).get("serverInfo", {}).get("name") == "crab-archi-design-mcp",
         "tools_list_ok": bool(tools),
         "run_job_tool_available": "run_job" in tool_names,
+        "validate_job_tool_available": "validate_job" in tool_names,
         "doctor_tool_available": "doctor" in tool_names,
         "workflow_run_tool_available": "workflow_run" in tool_names,
         "revision_run_tool_available": "revision_run" in tool_names,
@@ -4620,6 +4799,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_job.add_argument("--output-dir", help="Directory for job_run_###.json. Defaults to the project jobs directory.")
     p_job.add_argument("--strict", action="store_true", help="Exit non-zero unless the job report status is pass.")
     p_job.set_defaults(func=command_run_job)
+
+    p_validate_job = sub.add_parser("validate-job", help="Validate a job spec before run-job.")
+    p_validate_job.add_argument("--job", required=True, help="Path to a crab-archi-design-job-spec-v1 JSON file.")
+    p_validate_job.add_argument("--output-dir", help="Directory for job_validation_###.json. Defaults to diagnostics.")
+    p_validate_job.add_argument("--no-check-files", action="store_true", help="Validate structure without checking referenced local files.")
+    p_validate_job.add_argument("--strict", action="store_true", help="Exit non-zero if validation is not pass.")
+    p_validate_job.set_defaults(func=command_validate_job)
 
     p_export = sub.add_parser("export-package", help="Create a ZIP package of latest project artifacts for handoff or SaaS upload.")
     p_export.add_argument("--project-id", required=True)

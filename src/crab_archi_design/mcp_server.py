@@ -26,6 +26,7 @@ BOOLEAN_FIELDS = {
     "replace_constraints",
     "reinit",
     "refresh_recognition",
+    "no_check_files",
     "include_source_svg",
     "only_latest",
     "skip_opencrab_sync",

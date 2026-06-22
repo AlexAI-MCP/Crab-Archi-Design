@@ -51,6 +51,11 @@ jobs:
             --output-dir .ci-projects/diagnostics \
             --strict
 
+          crab-archi-design validate-job \
+            --job examples/job_spec_sample.json \
+            --output-dir .ci-projects/job-validations \
+            --strict
+
           crab-archi-design run-job \
             --job examples/job_spec_sample.json \
             --output-dir .ci-projects/job-reports \

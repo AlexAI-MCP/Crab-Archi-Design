@@ -54,10 +54,11 @@ GitHub Actions runs the same core contract used by local handoff:
 5. Generate the MCP/OAuth exec manifest with `mcp-manifest`.
 6. Generate MCP client and OAuth worker runtime config with `mcp-config`.
 7. Verify the generated MCP runtime with `mcp-smoke`.
-8. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
-9. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
-10. Execute `revision-run` on the same project to verify the repeat-edit path.
-11. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
+8. Validate the JSON job spec with `validate-job --strict`.
+9. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
+10. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
+11. Execute `revision-run` on the same project to verify the repeat-edit path.
+12. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
 
 The CI sample uses:
 
@@ -96,6 +97,10 @@ crab-archi-design revision-run \
   --text "Tighten the golf and sauna adjacency while keeping screen golf inside the golf cluster." \
   --sketch examples/sketch_layer_sample.json \
   --skip-preview
+
+crab-archi-design validate-job \
+  --job examples/job_spec_sample.json \
+  --strict
 
 crab-archi-design run-job \
   --job examples/job_spec_sample.json \
@@ -186,7 +191,9 @@ crab-archi-design-mcp --stdio
 crab-archi-design qa --project-id demo
 ```
 
-`run-job` is the SaaS/OAuth/MCP worker entry point. It reads a `crab-archi-design-job-spec-v1` JSON file containing the source SVG path, standards, OpenCrab MCP result files, doodle constraints, natural-language prompt, engine adapter, and export/verification policy. It then runs `workflow-run`, `export-package`, `verify-package`, and `doctor`, and writes a `projects/<project>/jobs/job_run_###.json` report.
+`validate-job` checks a `crab-archi-design-job-spec-v1` file before execution. It verifies required project inputs, source SVG, standards, OpenCrab/evidence input, constraint sketch, engine adapter, ontology pack, and referenced local file paths, then writes `diagnostics/job_validation_###.json`.
+
+`run-job` is the SaaS/OAuth/MCP worker entry point. It reads a validated `crab-archi-design-job-spec-v1` JSON file containing the source SVG path, standards, OpenCrab MCP result files, doodle constraints, natural-language prompt, engine adapter, and export/verification policy. It then runs `workflow-run`, `export-package`, `verify-package`, and `doctor`, and writes a `projects/<project>/jobs/job_run_###.json` report.
 
 `workflow-run` executes the normal project path in one command: init if needed, recognize source SVG, attach standards, sync or attach evidence, attach constraints, build topology, create prompt/sketch intents, write the edit brief, status, design handoff, apply edit, review panel, final status, and a `projects/<project>/workflow/workflow_run_###.json` report.
 

@@ -44,7 +44,7 @@ The manifest records:
 - Recommended command sequences for first-run design, revision loops, and OpenCrab-first manual workflows.
 - Security policy for source SVG packaging, native SVG output, raster overlays, and secrets.
 
-`mcp-config` also exposes two worker-oriented sequences: `handoff_sequence` for first-run `run-job` execution and `revision_sequence` for existing-project `revision-run` execution followed by package export, verification, and doctor checks.
+`mcp-config` also exposes two worker-oriented sequences: `handoff_sequence` for first-run job execution and `revision_sequence` for existing-project `revision-run` execution followed by package export, verification, and doctor checks. Run `validate-job --strict` before `run-job` when a worker receives user-authored JSON.
 
 ## Recommended MCP Tool Mapping
 
@@ -111,6 +111,7 @@ The most important tools are:
 
 ```text
 run_job
+validate_job
 workflow_run
 revision_run
 opencrab_sync
@@ -141,8 +142,9 @@ Use this pattern:
 4. Load the generated `mcp-config` and start `crab-archi-design-mcp --stdio` in the sandbox.
 5. Run `mcp-smoke --strict`.
 6. Write a `crab-archi-design-job-spec-v1` JSON file.
-7. Run `run-job --job <job.json> --strict`.
-8. Upload only the validated ZIP or selected JSON/SVG artifacts from the job report.
+7. Run `validate-job --job <job.json> --strict`.
+8. Run `run-job --job <job.json> --strict`.
+9. Upload only the validated ZIP or selected JSON/SVG artifacts from the job report.
 
 Example job spec:
 
@@ -177,6 +179,7 @@ Codex can use the same manifest without a custom server:
 crab-archi-design mcp-manifest
 crab-archi-design mcp-config --project-root projects
 crab-archi-design mcp-smoke --strict
+crab-archi-design validate-job --job examples/job_spec_sample.json --strict
 crab-archi-design run-job --job examples/job_spec_sample.json --strict
 ```
 
