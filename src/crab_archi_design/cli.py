@@ -236,6 +236,53 @@ def evidence_status(manifest: dict[str, Any] | None) -> str:
     return "verified" if count_evidence_items(manifest) > 0 else "missing"
 
 
+def constraint_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
+    return project_dir(project_id, root) / "constraints" / "constraint_manifest.json"
+
+
+def load_constraint_manifest(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> dict[str, Any] | None:
+    path = constraint_manifest_path(project_id, root)
+    if not path.exists():
+        return None
+    return read_json(path)
+
+
+def count_constraint_items(manifest: dict[str, Any] | None, enforced_only: bool = False) -> int:
+    if not manifest:
+        return 0
+    items = manifest.get("constraint_items", [])
+    if not enforced_only:
+        return len(items)
+    return sum(1 for item in items if item.get("role") in {"community_shell", "lock", "no_go", "protect", "mutable", "projectable"})
+
+
+def constraint_status(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return "missing"
+    if manifest.get("status"):
+        return str(manifest["status"])
+    return "active" if count_constraint_items(manifest, enforced_only=True) > 0 else "missing"
+
+
+def infer_constraint_role(mode: Any, target_hint: Any, override: str | None = None) -> str:
+    if override:
+        return override
+    text = " ".join(str(item or "").lower() for item in [mode, target_hint])
+    if any(term in text for term in ["community_shell", "outer_shell", "shell", "커뮤니티", "외곽"]):
+        return "community_shell"
+    if any(term in text for term in ["no_go", "parking", "ramp", "core", "column", "stair", "주차", "램프", "코어", "기둥", "계단"]):
+        return "no_go"
+    if any(term in text for term in ["projectable", "투영"]):
+        return "projectable"
+    if any(term in text for term in ["protect", "보호"]):
+        return "protect"
+    if any(term in text for term in ["lock", "keep", "preserve", "protect", "유지", "잠금", "보존"]):
+        return "lock"
+    if any(term in text for term in ["mutable", "변형", "가변", "허용"]):
+        return "mutable"
+    return "guide"
+
+
 def parse_metadata(items: list[str]) -> dict[str, str]:
     metadata = {}
     for item in items:
@@ -293,6 +340,72 @@ def command_evidence_attach(args: argparse.Namespace) -> None:
     write_json(out, existing)
     print(out)
     print(json.dumps({"status": existing["status"], "evidence_count": existing["evidence_count"]}, ensure_ascii=False))
+
+
+def command_constraint_attach(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    sketch_path = Path(args.sketch).expanduser()
+    if not sketch_path.exists():
+        raise SystemExit(f"Missing sketch file: {sketch_path}")
+    sketch = read_json(sketch_path)
+    source_info = inspect_svg(Path(manifest["source_svg"]).expanduser())
+    fallback_viewbox = parse_viewbox(source_info.get("viewBox"))
+    analysis = analyze_sketch(sketch, fallback_viewbox)
+    existing = None if args.replace else load_constraint_manifest(args.project_id, root)
+    constraint_manifest = existing or {
+        "schema": "crab-archi-design-constraint-manifest-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "source_svg": manifest.get("source_svg"),
+        "constraint_items": [],
+    }
+
+    offset = len(constraint_manifest.get("constraint_items", []))
+    coordinate_space = sketch.get("coordinate_space", "source_svg_viewbox")
+    viewbox = analysis.get("viewBox")
+    for index, stroke in enumerate(sketch.get("strokes", []), start=1):
+        points = stroke.get("points", [])
+        role = infer_constraint_role(stroke.get("mode") or stroke.get("tool"), stroke.get("target_hint"), args.role)
+        item = {
+            "id": f"constraint_{offset + index:03d}",
+            "attached_at": now(),
+            "source": args.source,
+            "source_file": str(sketch_path.resolve()),
+            "role": role,
+            "mode": stroke.get("mode") or stroke.get("tool"),
+            "target_hint": stroke.get("target_hint"),
+            "stroke_id": stroke.get("stroke_id"),
+            "coordinate_space": coordinate_space,
+            "viewBox": viewbox,
+            "point_count": len(points),
+            "points": points,
+            "solver_policy": "enforce" if role != "guide" else "advisory",
+        }
+        constraint_manifest.setdefault("constraint_items", []).append(item)
+
+    enforced_count = count_constraint_items(constraint_manifest, enforced_only=True)
+    constraint_manifest["updated_at"] = now()
+    constraint_manifest["status"] = "active" if enforced_count > 0 and analysis["out_of_bounds_points"] == 0 else "review_required"
+    constraint_manifest["constraint_count"] = count_constraint_items(constraint_manifest)
+    constraint_manifest["enforced_constraint_count"] = enforced_count
+    constraint_manifest["latest_sketch_analysis"] = analysis
+    constraint_manifest["required_for_final_svg"] = True
+
+    out = constraint_manifest_path(args.project_id, root)
+    write_json(out, constraint_manifest)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": constraint_manifest["status"],
+                "constraint_count": constraint_manifest["constraint_count"],
+                "enforced_constraint_count": enforced_count,
+                "out_of_bounds_points": analysis["out_of_bounds_points"],
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 def sorted_json_files(path: Path, pattern: str) -> list[Path]:
@@ -501,7 +614,7 @@ def analyze_sketch(sketch: dict[str, Any] | None, fallback_viewbox: list[float] 
             "modes": [],
             "target_hints": [],
         }
-    viewbox = parse_viewbox(sketch.get("viewBox")) or fallback_viewbox
+    viewbox = fallback_viewbox or parse_viewbox(sketch.get("viewBox"))
     stroke_count = 0
     point_count = 0
     out_of_bounds = 0
@@ -555,6 +668,7 @@ def build_edit_brief_markdown(brief: dict[str, Any]) -> str:
         f"- Created: `{brief['created_at']}`",
         f"- Intent count: `{brief['intent_count']}`",
         f"- Evidence status: `{brief['evidence_status']}`",
+        f"- Constraint status: `{brief['constraint_status']}`",
         "",
         "## Checks",
         "",
@@ -578,6 +692,15 @@ def build_edit_brief_markdown(brief: dict[str, Any]) -> str:
             )
     else:
         lines.append("- No sketch intent attached.")
+    lines.extend(["", "## Constraints", ""])
+    if brief["constraint_summary"]["items"]:
+        for item in brief["constraint_summary"]["items"]:
+            lines.append(
+                f"- `{item['role']}`: {item.get('target_hint') or item.get('mode') or item['id']} "
+                f"(points `{item['point_count']}`, policy `{item['solver_policy']}`)"
+            )
+    else:
+        lines.append("- No constraint manifest attached.")
     lines.extend(["", "## Next Solver Instruction", "", brief["next_solver_instruction"], ""])
     return "\n".join(lines)
 
@@ -601,9 +724,11 @@ def command_edit_brief(args: argparse.Namespace) -> None:
         sketch_analysis.append(analysis)
 
     evidence_manifest = load_evidence_manifest(args.project_id, root)
+    constraint_manifest = load_constraint_manifest(args.project_id, root)
     checks = {
         "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
+        "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
         "intent_count_positive": len(intent_paths) > 0,
         "sketch_sources_available": all(item["source_available"] for item in sketch_analysis),
         "sketch_points_inside_viewbox": all(item["out_of_bounds_points"] == 0 for item in sketch_analysis),
@@ -625,6 +750,22 @@ def command_edit_brief(args: argparse.Namespace) -> None:
         "source_svg_info": source_info,
         "evidence_status": evidence_status(evidence_manifest),
         "evidence_count": count_evidence_items(evidence_manifest),
+        "constraint_status": constraint_status(constraint_manifest),
+        "constraint_count": count_constraint_items(constraint_manifest),
+        "enforced_constraint_count": count_constraint_items(constraint_manifest, enforced_only=True),
+        "constraint_summary": {
+            "items": [
+                {
+                    "id": item.get("id"),
+                    "role": item.get("role"),
+                    "mode": item.get("mode"),
+                    "target_hint": item.get("target_hint"),
+                    "point_count": item.get("point_count"),
+                    "solver_policy": item.get("solver_policy"),
+                }
+                for item in (constraint_manifest or {}).get("constraint_items", [])
+            ]
+        },
         "checks": checks,
         "sketch_analysis": sketch_analysis,
         "hard_constraints": manifest.get("hard_constraints", []),
@@ -777,6 +918,27 @@ def render_evidence_list(manifest: dict[str, Any] | None) -> str:
     return "\n".join(rows)
 
 
+def render_constraint_list(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return '<li class="review"><span>constraint_manifest</span><strong>missing</strong></li>'
+    status = constraint_status(manifest)
+    status_class = "pass" if status == "active" else "review"
+    rows = [
+        f'<li class="{status_class}"><span>status</span><strong>{html.escape(status)}</strong></li>',
+        f'<li class="{status_class}"><span>constraint_count</span><strong>{count_constraint_items(manifest)}</strong></li>',
+        f'<li class="{status_class}"><span>enforced_constraint_count</span><strong>{count_constraint_items(manifest, enforced_only=True)}</strong></li>',
+    ]
+    for item in manifest.get("constraint_items", []):
+        rows.append(
+            "<li>"
+            f"<strong>{html.escape(str(item.get('role') or 'constraint'))}</strong>"
+            f"<span>{html.escape(str(item.get('target_hint') or item.get('mode') or item.get('id') or ''))}</span>"
+            f"<p>points: {html.escape(str(item.get('point_count') or 0))}; policy: {html.escape(str(item.get('solver_policy') or ''))}</p>"
+            "</li>"
+        )
+    return "\n".join(rows)
+
+
 def build_review_panel_html(context: dict[str, Any]) -> str:
     source_svg = context["source_svg_markup"]
     alternative_svg = context["alternative_svg_markup"]
@@ -784,6 +946,7 @@ def build_review_panel_html(context: dict[str, Any]) -> str:
     engine_checks = render_check_list(context["engine_quality_gates"])
     intent_list = render_intent_list(context["intents"])
     evidence_list = render_evidence_list(context["evidence_manifest"])
+    constraint_list = render_constraint_list(context["constraint_manifest"])
     source_info = html.escape(json.dumps(context["source_svg_info"], ensure_ascii=False, indent=2))
     alt_info = html.escape(json.dumps(context["alternative_svg_info"], ensure_ascii=False, indent=2))
     title = html.escape(context["title"])
@@ -877,6 +1040,10 @@ def build_review_panel_html(context: dict[str, Any]) -> str:
         <div class="box"><ul>{evidence_list}</ul></div>
       </section>
       <section>
+        <h2>Constraints</h2>
+        <div class="box"><ul>{constraint_list}</ul></div>
+      </section>
+      <section>
         <h2>SVG Info</h2>
         <div class="box"><pre>{source_info}</pre><pre>{alt_info}</pre></div>
       </section>
@@ -941,6 +1108,7 @@ def command_review_panel(args: argparse.Namespace) -> None:
         "apply_checks": apply_report.get("checks", {}),
         "engine_quality_gates": engine_quality,
         "evidence_manifest": load_evidence_manifest(args.project_id, root),
+        "constraint_manifest": load_constraint_manifest(args.project_id, root),
         "intents": collect_intent_summary(apply_report.get("intent_paths", [])),
     }
     html_text = build_review_panel_html(context)
@@ -981,6 +1149,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
     intent_paths = resolve_intent_paths(base, args.intent)
     intents = [read_json(path) for path in intent_paths]
     evidence_manifest = load_evidence_manifest(args.project_id, root)
+    constraint_manifest = load_constraint_manifest(args.project_id, root)
 
     runs_dir = base / "runs"
     run_seq = next_sequence(runs_dir, "apply_edit_*")
@@ -998,6 +1167,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "intents": intents,
         "hard_constraints": manifest.get("hard_constraints", []),
         "evidence_manifest": evidence_manifest,
+        "constraint_manifest": constraint_manifest,
         "opencrab_mcp": manifest.get("opencrab_mcp"),
         "solver_contract": {
             "must_preserve": manifest.get("hard_constraints", []),
@@ -1074,6 +1244,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "native_svg_no_images": svg_info.get("xml_parse") == "ok" and svg_info.get("image_elements") == 0,
         "opencrab_mcp_required": bool(manifest.get("opencrab_mcp", {}).get("required")),
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
+        "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
         "intent_count_positive": len(intent_paths) > 0,
     }
     report = {
@@ -1107,6 +1278,7 @@ def command_qa(args: argparse.Namespace) -> None:
         "opencrab_mcp_server_configured": bool(manifest.get("opencrab_mcp", {}).get("mcp_server")),
         "opencrab_ontology_pack_attached": bool(manifest.get("opencrab_mcp", {}).get("ontology_pack")),
         "opencrab_evidence_verified": evidence_status(load_evidence_manifest(args.project_id, root)) == "verified",
+        "constraint_manifest_active": constraint_status(load_constraint_manifest(args.project_id, root)) == "active",
         "has_edit_intent_dir": Path(manifest["artifacts"]["edit_intents_dir"]).exists(),
     }
     qa = {
@@ -1173,6 +1345,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_evidence.add_argument("--evidence-id")
     p_evidence.add_argument("--metadata", action="append", default=[])
     p_evidence.set_defaults(func=command_evidence_attach)
+
+    p_constraint = sub.add_parser("constraint-attach", help="Attach doodle-based lock/no-go/mutable constraints to a project.")
+    p_constraint.add_argument("--project-id", required=True)
+    p_constraint.add_argument("--sketch", required=True)
+    p_constraint.add_argument("--source", default="doodle")
+    p_constraint.add_argument("--role", help="Override inferred role for every stroke, e.g. community_shell, lock, no_go, mutable.")
+    p_constraint.add_argument("--replace", action="store_true", help="Replace the existing constraint manifest instead of appending.")
+    p_constraint.set_defaults(func=command_constraint_attach)
 
     p_brief = sub.add_parser("edit-brief", help="Summarize natural-language and doodle intents before SVG mutation.")
     p_brief.add_argument("--project-id", required=True)

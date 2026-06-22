@@ -1,0 +1,25 @@
+{
+  "schema": "crab-archi-design-vector-sketch-layer-v1",
+  "coordinate_space": "source_svg_viewbox",
+  "viewBox": [0, 0, 4961, 3508],
+  "strokes": [
+    {
+      "stroke_id": "c001",
+      "mode": "community_shell",
+      "target_hint": "community_outer_shell",
+      "points": [[420, 520], [3150, 520], [3820, 1380], [2860, 2950], [760, 2840], [420, 520]]
+    },
+    {
+      "stroke_id": "c002",
+      "mode": "no_go_zone",
+      "target_hint": "parking_ramp_core_no_go",
+      "points": [[3240, 1180], [4460, 1720], [3740, 3020], [2860, 2580]]
+    },
+    {
+      "stroke_id": "c003",
+      "mode": "mutable_zone",
+      "target_hint": "internal_community_program_rework",
+      "points": [[820, 820], [2880, 820], [3140, 2180], [1180, 2580], [820, 820]]
+    }
+  ]
+}

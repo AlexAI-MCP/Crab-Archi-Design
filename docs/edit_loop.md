@@ -25,6 +25,32 @@ projects/a801-802-opencrab-test/evidence/evidence_manifest.json
 
 `qa` reports `review_required` until this evidence manifest is verified.
 
+## Attach Drawing Constraints
+
+Use the doodle editor to mark the community shell, no-go zones, lock boundaries, and mutable zones. Then attach that sketch as project constraints:
+
+```bash
+crab-archi-design --project-root projects constraint-attach \
+  --project-id a801-802-opencrab-test \
+  --sketch /path/to/constraint_sketch.json
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/constraints/constraint_manifest.json
+```
+
+Recommended modes:
+
+- `community_shell`: the outer community boundary that alternatives must not cross.
+- `no_go_zone`: parking, ramp, core, stair, column, equipment, or egress areas that must not be invaded.
+- `lock_boundary`: existing walls, doors, or geometry that should be preserved.
+- `mutable_zone`: areas where internal partitions and program layouts may change.
+- `projectable_zone`: zones where precedent topology may be projected.
+
+`qa`, `edit-brief`, and `apply-edit` report `review_required` until this constraint manifest is active.
+
 ## Natural Language
 
 ```bash
@@ -109,7 +135,7 @@ projects/a801-802-opencrab-test/briefs/edit_brief_###.json
 projects/a801-802-opencrab-test/briefs/edit_brief_###.md
 ```
 
-The brief checks whether OpenCrab evidence is verified, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
+The brief checks whether OpenCrab evidence is verified, whether the constraint manifest is active, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
 
 ## Apply the Edit
 
@@ -124,12 +150,13 @@ crab-archi-design --project-root projects apply-edit \
 
 1. Selects the requested edit intents.
 2. Loads `evidence/evidence_manifest.json`.
-3. Writes `runs/apply_edit_###/solver_input.json`.
-4. Runs the project `engine_adapter`.
-5. Discovers native SVG/report/preview outputs.
-6. Ignores the original source SVG when choosing the candidate.
-7. Copies the generated SVG to `alternatives/alternative_###.svg`.
-8. Writes `runs/apply_edit_###/apply_edit_report.json`.
+3. Loads `constraints/constraint_manifest.json`.
+4. Writes `runs/apply_edit_###/solver_input.json`.
+5. Runs the project `engine_adapter`.
+6. Discovers native SVG/report/preview outputs.
+7. Ignores the original source SVG when choosing the candidate.
+8. Copies the generated SVG to `alternatives/alternative_###.svg`.
+9. Writes `runs/apply_edit_###/apply_edit_report.json`.
 
 ## Review the Alternative
 
@@ -152,10 +179,11 @@ For architectural layout revisions, use this order:
 
 1. Natural language: describe the intent and constraints.
 2. Doodle: mark the exact edge, room, circulation line, or wall segment.
-3. `edit-brief`: check evidence, source SVG parse, and sketch bounds.
-4. `apply-edit`: generate a native SVG candidate.
-5. `review-panel`: inspect before/after.
-6. Repeat with another short prompt or doodle repair intent.
+3. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
+4. `edit-brief`: check evidence, constraints, source SVG parse, and sketch bounds.
+5. `apply-edit`: generate a native SVG candidate.
+6. `review-panel`: inspect before/after.
+7. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 
