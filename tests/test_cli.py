@@ -28,6 +28,8 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    standards = tmp_path / "standards.csv"
+    standards.write_text("세대,프로그램,면적\n900세대,그리너리 라운지,80\n900세대,피트니스,70\n", encoding="utf-8")
 
     result = run_cli(
         "--project-root",
@@ -128,11 +130,30 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     assert constraint_manifest["status"] == "active"
     assert constraint_manifest["enforced_constraint_count"] == 1
 
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "standards-attach",
+        "--project-id",
+        "demo",
+        "--file",
+        str(standards),
+        "--households",
+        "900",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    standards_manifest = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert standards_manifest["status"] == "active"
+    assert standards_manifest["standard_count"] == 1
+    assert standards_manifest["standard_items"][0]["payload"]["matched_household_row_count"] == 2
+
     result = run_cli("--project-root", str(tmp_path / "projects"), "qa", "--project-id", "demo", cwd=ROOT)
     assert result.returncode == 0, result.stderr
     assert '"status": "pass"' in result.stdout
     assert '"opencrab_evidence_verified": true' in result.stdout
     assert '"constraint_manifest_active": true' in result.stdout
+    assert '"standards_manifest_active": true' in result.stdout
 
     result = run_cli("--project-root", str(tmp_path / "projects"), "edit-brief", "--project-id", "demo", "--intent", "all", cwd=ROOT)
     assert result.returncode == 0, result.stderr
@@ -141,9 +162,11 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     assert brief_json["status"] == "pass"
     assert brief_json["checks"]["opencrab_evidence_verified"] is True
     assert brief_json["checks"]["constraint_manifest_active"] is True
+    assert brief_json["checks"]["standards_manifest_active"] is True
     assert brief_json["checks"]["sketch_points_inside_viewbox"] is True
     assert "greenery_lounge" in brief_md
     assert "Constraints" in brief_md
+    assert "Standards" in brief_md
 
 
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
@@ -249,6 +272,8 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
 
     evidence_source = tmp_path / "engine_evidence.json"
     evidence_source.write_text(json.dumps({"pack_id": "community_svg_topology_ontology_v2", "quality_status": "pass"}), encoding="utf-8")
+    standards = tmp_path / "engine_standards.csv"
+    standards.write_text("households,program,area\n900,greenery_lounge,80\n900,fitness,70\n", encoding="utf-8")
     constraint_sketch = tmp_path / "constraint_sketch.json"
     constraint_sketch.write_text(
         json.dumps(
@@ -273,6 +298,20 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
         "Topology pack evidence verified.",
         "--source-file",
         str(evidence_source),
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "standards-attach",
+        "--project-id",
+        "demo",
+        "--file",
+        str(standards),
+        "--households",
+        "900",
         cwd=ROOT,
     )
     assert result.returncode == 0, result.stderr
@@ -316,6 +355,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert report["checks"]["native_svg_no_images"] is True
     assert report["checks"]["opencrab_evidence_verified"] is True
     assert report["checks"]["constraint_manifest_active"] is True
+    assert report["checks"]["standards_manifest_active"] is True
     assert report["copied_artifacts"]["svg"]
     alternative = Path(report["copied_artifacts"]["svg"][0])
     assert alternative.name == "alternative_001.svg"
@@ -325,6 +365,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert solver_input["intents"][0]["schema"] == "crab-archi-design-natural-language-edit-intent-v1"
     assert solver_input["evidence_manifest"]["status"] == "verified"
     assert solver_input["constraint_manifest"]["status"] == "active"
+    assert solver_input["standards_manifest"]["status"] == "active"
 
     result = run_cli(
         "--project-root",
@@ -343,6 +384,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert "native_svg_no_images" in panel
     assert "Evidence" in panel
     assert "Constraints" in panel
+    assert "Standards" in panel
     assert "community_svg_topology_ontology_v2" in panel
     assert "greenery_lounge" in panel
 

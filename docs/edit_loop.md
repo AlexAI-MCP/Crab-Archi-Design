@@ -25,6 +25,33 @@ projects/a801-802-opencrab-test/evidence/evidence_manifest.json
 
 `qa` reports `review_required` until this evidence manifest is verified.
 
+## Attach Standards
+
+Attach the area, program, or finish standards before running a layout alternative. If no `--file` is supplied, the command uses the files passed to `init --standards`.
+
+```bash
+crab-archi-design --project-root projects standards-attach \
+  --project-id a801-802-opencrab-test \
+  --households 900
+```
+
+For an explicit file:
+
+```bash
+crab-archi-design --project-root projects standards-attach \
+  --project-id a801-802-opencrab-test \
+  --file "/path/to/area_standard.csv" \
+  --households 900
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/standards/standards_manifest.json
+```
+
+CSV files are parsed and selected rows are attached to the solver input. Excel, PDF, and JSON standards are verified and attached as source references for the engine adapter. `qa`, `edit-brief`, and `apply-edit` report `review_required` until this standards manifest is active.
+
 ## Attach Drawing Constraints
 
 Use the doodle editor to mark the community shell, no-go zones, lock boundaries, and mutable zones. Then attach that sketch as project constraints:
@@ -135,7 +162,7 @@ projects/a801-802-opencrab-test/briefs/edit_brief_###.json
 projects/a801-802-opencrab-test/briefs/edit_brief_###.md
 ```
 
-The brief checks whether OpenCrab evidence is verified, whether the constraint manifest is active, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
+The brief checks whether OpenCrab evidence is verified, whether standards and constraints are active, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
 
 ## Apply the Edit
 
@@ -150,13 +177,14 @@ crab-archi-design --project-root projects apply-edit \
 
 1. Selects the requested edit intents.
 2. Loads `evidence/evidence_manifest.json`.
-3. Loads `constraints/constraint_manifest.json`.
-4. Writes `runs/apply_edit_###/solver_input.json`.
-5. Runs the project `engine_adapter`.
-6. Discovers native SVG/report/preview outputs.
-7. Ignores the original source SVG when choosing the candidate.
-8. Copies the generated SVG to `alternatives/alternative_###.svg`.
-9. Writes `runs/apply_edit_###/apply_edit_report.json`.
+3. Loads `standards/standards_manifest.json`.
+4. Loads `constraints/constraint_manifest.json`.
+5. Writes `runs/apply_edit_###/solver_input.json`.
+6. Runs the project `engine_adapter`.
+7. Discovers native SVG/report/preview outputs.
+8. Ignores the original source SVG when choosing the candidate.
+9. Copies the generated SVG to `alternatives/alternative_###.svg`.
+10. Writes `runs/apply_edit_###/apply_edit_report.json`.
 
 ## Review the Alternative
 
@@ -179,11 +207,12 @@ For architectural layout revisions, use this order:
 
 1. Natural language: describe the intent and constraints.
 2. Doodle: mark the exact edge, room, circulation line, or wall segment.
-3. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
-4. `edit-brief`: check evidence, constraints, source SVG parse, and sketch bounds.
-5. `apply-edit`: generate a native SVG candidate.
-6. `review-panel`: inspect before/after.
-7. Repeat with another short prompt or doodle repair intent.
+3. `standards-attach`: attach household-count standards and selected rows.
+4. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
+5. `edit-brief`: check evidence, standards, constraints, source SVG parse, and sketch bounds.
+6. `apply-edit`: generate a native SVG candidate.
+7. `review-panel`: inspect before/after.
+8. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

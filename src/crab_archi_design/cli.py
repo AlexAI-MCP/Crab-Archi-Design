@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import html
 import json
 import os
@@ -91,6 +92,7 @@ def command_init(args: argparse.Namespace) -> None:
             "alternatives_dir": str(out_dir / "alternatives"),
             "edit_intents_dir": str(out_dir / "edit_intents"),
             "evidence_dir": str(out_dir / "evidence"),
+            "standards_dir": str(out_dir / "standards"),
             "briefs_dir": str(out_dir / "briefs"),
             "runs_dir": str(out_dir / "runs"),
             "qa_dir": str(out_dir / "qa"),
@@ -264,6 +266,72 @@ def constraint_status(manifest: dict[str, Any] | None) -> str:
     return "active" if count_constraint_items(manifest, enforced_only=True) > 0 else "missing"
 
 
+def standards_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
+    return project_dir(project_id, root) / "standards" / "standards_manifest.json"
+
+
+def load_standards_manifest(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> dict[str, Any] | None:
+    path = standards_manifest_path(project_id, root)
+    if not path.exists():
+        return None
+    return read_json(path)
+
+
+def count_standard_items(manifest: dict[str, Any] | None) -> int:
+    if not manifest:
+        return 0
+    return len(manifest.get("standard_items", []))
+
+
+def standards_status(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return "missing"
+    if manifest.get("status"):
+        return str(manifest["status"])
+    return "active" if count_standard_items(manifest) > 0 else "missing"
+
+
+def read_text_with_fallback(path: Path) -> tuple[str, str]:
+    for encoding in ["utf-8-sig", "utf-8", "cp949", "euc-kr"]:
+        try:
+            return path.read_text(encoding=encoding), encoding
+        except UnicodeDecodeError:
+            continue
+    return path.read_text(encoding="utf-8", errors="replace"), "utf-8-replace"
+
+
+def row_matches_households(row: dict[str, str], households: int | None) -> bool:
+    if households is None:
+        return False
+    needle = str(households)
+    for key, value in row.items():
+        text = f"{key} {value}"
+        if needle in text and any(term in text.lower() for term in ["세대", "household", "households", "unit", "units"]):
+            return True
+    return False
+
+
+def parse_csv_standards(path: Path, households: int | None, max_rows: int = 200) -> dict[str, Any]:
+    text, encoding = read_text_with_fallback(path)
+    sample = text[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample)
+    except csv.Error:
+        dialect = csv.excel
+    rows = list(csv.DictReader(text.splitlines(), dialect=dialect))
+    normalized_rows = [{str(key or "").strip(): str(value or "").strip() for key, value in row.items()} for row in rows]
+    matched = [row for row in normalized_rows if row_matches_households(row, households)]
+    selected = matched or normalized_rows[: min(len(normalized_rows), max_rows)]
+    return {
+        "parser": "csv.DictReader",
+        "encoding": encoding,
+        "row_count": len(normalized_rows),
+        "matched_household_row_count": len(matched),
+        "selected_row_count": len(selected),
+        "selected_rows": selected[:max_rows],
+    }
+
+
 def infer_constraint_role(mode: Any, target_hint: Any, override: str | None = None) -> str:
     if override:
         return override
@@ -402,6 +470,75 @@ def command_constraint_attach(args: argparse.Namespace) -> None:
                 "constraint_count": constraint_manifest["constraint_count"],
                 "enforced_constraint_count": enforced_count,
                 "out_of_bounds_points": analysis["out_of_bounds_points"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def command_standards_attach(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    households = args.households if args.households is not None else manifest.get("household_count")
+    raw_files = args.file or manifest.get("standards_files", [])
+    if not raw_files:
+        raise SystemExit("No standards files supplied. Pass --file or initialize the project with --standards.")
+
+    existing = None if args.replace else load_standards_manifest(args.project_id, root)
+    standards_manifest = existing or {
+        "schema": "crab-archi-design-standards-manifest-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "household_count": households,
+        "standard_items": [],
+    }
+
+    offset = len(standards_manifest.get("standard_items", []))
+    for index, raw_file in enumerate(raw_files, start=1):
+        standard_file = Path(raw_file).expanduser()
+        if not standard_file.exists():
+            raise SystemExit(f"Missing standards file: {standard_file}")
+        suffix = standard_file.suffix.lower()
+        payload: dict[str, Any]
+        parser = "file_reference"
+        if suffix == ".csv":
+            payload = parse_csv_standards(standard_file, households)
+            parser = payload["parser"]
+        elif suffix == ".json":
+            payload = {"json": read_json(standard_file)}
+            parser = "json"
+        else:
+            payload = {"note": "File verified and attached; detailed parsing should be handled by the engine adapter."}
+
+        item = {
+            "id": args.standard_id or f"standard_{offset + index:03d}",
+            "attached_at": now(),
+            "source": args.source,
+            "source_file": str(standard_file.resolve()),
+            "file_type": suffix.lstrip(".") or "unknown",
+            "parser": parser,
+            "household_count": households,
+            "summary": args.summary,
+            "metadata": parse_metadata(args.metadata or []),
+            "payload": payload,
+        }
+        standards_manifest.setdefault("standard_items", []).append(item)
+
+    standards_manifest["updated_at"] = now()
+    standards_manifest["household_count"] = households
+    standards_manifest["status"] = "active" if standards_manifest["standard_items"] else "missing"
+    standards_manifest["standard_count"] = count_standard_items(standards_manifest)
+    standards_manifest["required_for_final_svg"] = True
+
+    out = standards_manifest_path(args.project_id, root)
+    write_json(out, standards_manifest)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": standards_manifest["status"],
+                "standard_count": standards_manifest["standard_count"],
+                "household_count": households,
             },
             ensure_ascii=False,
         )
@@ -669,6 +806,7 @@ def build_edit_brief_markdown(brief: dict[str, Any]) -> str:
         f"- Intent count: `{brief['intent_count']}`",
         f"- Evidence status: `{brief['evidence_status']}`",
         f"- Constraint status: `{brief['constraint_status']}`",
+        f"- Standards status: `{brief['standards_status']}`",
         "",
         "## Checks",
         "",
@@ -701,6 +839,15 @@ def build_edit_brief_markdown(brief: dict[str, Any]) -> str:
             )
     else:
         lines.append("- No constraint manifest attached.")
+    lines.extend(["", "## Standards", ""])
+    if brief["standards_summary"]["items"]:
+        for item in brief["standards_summary"]["items"]:
+            lines.append(
+                f"- `{item['file_type']}`: {item['source_file']} "
+                f"(households `{item['household_count']}`, rows `{item.get('selected_row_count', '-')}`)"
+            )
+    else:
+        lines.append("- No standards manifest attached.")
     lines.extend(["", "## Next Solver Instruction", "", brief["next_solver_instruction"], ""])
     return "\n".join(lines)
 
@@ -725,10 +872,12 @@ def command_edit_brief(args: argparse.Namespace) -> None:
 
     evidence_manifest = load_evidence_manifest(args.project_id, root)
     constraint_manifest = load_constraint_manifest(args.project_id, root)
+    standards_manifest = load_standards_manifest(args.project_id, root)
     checks = {
         "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
+        "standards_manifest_active": standards_status(standards_manifest) == "active",
         "intent_count_positive": len(intent_paths) > 0,
         "sketch_sources_available": all(item["source_available"] for item in sketch_analysis),
         "sketch_points_inside_viewbox": all(item["out_of_bounds_points"] == 0 for item in sketch_analysis),
@@ -753,6 +902,8 @@ def command_edit_brief(args: argparse.Namespace) -> None:
         "constraint_status": constraint_status(constraint_manifest),
         "constraint_count": count_constraint_items(constraint_manifest),
         "enforced_constraint_count": count_constraint_items(constraint_manifest, enforced_only=True),
+        "standards_status": standards_status(standards_manifest),
+        "standard_count": count_standard_items(standards_manifest),
         "constraint_summary": {
             "items": [
                 {
@@ -766,12 +917,27 @@ def command_edit_brief(args: argparse.Namespace) -> None:
                 for item in (constraint_manifest or {}).get("constraint_items", [])
             ]
         },
+        "standards_summary": {
+            "items": [
+                {
+                    "id": item.get("id"),
+                    "source_file": item.get("source_file"),
+                    "file_type": item.get("file_type"),
+                    "parser": item.get("parser"),
+                    "household_count": item.get("household_count"),
+                    "selected_row_count": item.get("payload", {}).get("selected_row_count"),
+                    "matched_household_row_count": item.get("payload", {}).get("matched_household_row_count"),
+                }
+                for item in (standards_manifest or {}).get("standard_items", [])
+            ]
+        },
         "checks": checks,
         "sketch_analysis": sketch_analysis,
         "hard_constraints": manifest.get("hard_constraints", []),
         "next_solver_instruction": (
             "Apply only native SVG edits inside mutable community zones. Preserve parking count, columns, cores, "
-            "stairs, ramps, egress, and the community outer shell. Treat doodle strokes as intent anchors, not final geometry."
+            "stairs, ramps, egress, and the community outer shell. Follow attached household standards. "
+            "Treat doodle strokes as intent anchors, not final geometry."
         ),
     }
     briefs_dir = base / "briefs"
@@ -939,6 +1105,29 @@ def render_constraint_list(manifest: dict[str, Any] | None) -> str:
     return "\n".join(rows)
 
 
+def render_standards_list(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return '<li class="review"><span>standards_manifest</span><strong>missing</strong></li>'
+    status = standards_status(manifest)
+    status_class = "pass" if status == "active" else "review"
+    rows = [
+        f'<li class="{status_class}"><span>status</span><strong>{html.escape(status)}</strong></li>',
+        f'<li class="{status_class}"><span>standard_count</span><strong>{count_standard_items(manifest)}</strong></li>',
+        f'<li class="{status_class}"><span>household_count</span><strong>{html.escape(str(manifest.get("household_count") or ""))}</strong></li>',
+    ]
+    for item in manifest.get("standard_items", []):
+        payload = item.get("payload", {})
+        row_count = payload.get("selected_row_count") or payload.get("row_count") or "-"
+        rows.append(
+            "<li>"
+            f"<strong>{html.escape(str(item.get('file_type') or 'standard'))}</strong>"
+            f"<span>{html.escape(str(item.get('source_file') or item.get('id') or ''))}</span>"
+            f"<p>parser: {html.escape(str(item.get('parser') or ''))}; rows: {html.escape(str(row_count))}</p>"
+            "</li>"
+        )
+    return "\n".join(rows)
+
+
 def build_review_panel_html(context: dict[str, Any]) -> str:
     source_svg = context["source_svg_markup"]
     alternative_svg = context["alternative_svg_markup"]
@@ -947,6 +1136,7 @@ def build_review_panel_html(context: dict[str, Any]) -> str:
     intent_list = render_intent_list(context["intents"])
     evidence_list = render_evidence_list(context["evidence_manifest"])
     constraint_list = render_constraint_list(context["constraint_manifest"])
+    standards_list = render_standards_list(context["standards_manifest"])
     source_info = html.escape(json.dumps(context["source_svg_info"], ensure_ascii=False, indent=2))
     alt_info = html.escape(json.dumps(context["alternative_svg_info"], ensure_ascii=False, indent=2))
     title = html.escape(context["title"])
@@ -1044,6 +1234,10 @@ def build_review_panel_html(context: dict[str, Any]) -> str:
         <div class="box"><ul>{constraint_list}</ul></div>
       </section>
       <section>
+        <h2>Standards</h2>
+        <div class="box"><ul>{standards_list}</ul></div>
+      </section>
+      <section>
         <h2>SVG Info</h2>
         <div class="box"><pre>{source_info}</pre><pre>{alt_info}</pre></div>
       </section>
@@ -1109,6 +1303,7 @@ def command_review_panel(args: argparse.Namespace) -> None:
         "engine_quality_gates": engine_quality,
         "evidence_manifest": load_evidence_manifest(args.project_id, root),
         "constraint_manifest": load_constraint_manifest(args.project_id, root),
+        "standards_manifest": load_standards_manifest(args.project_id, root),
         "intents": collect_intent_summary(apply_report.get("intent_paths", [])),
     }
     html_text = build_review_panel_html(context)
@@ -1150,6 +1345,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
     intents = [read_json(path) for path in intent_paths]
     evidence_manifest = load_evidence_manifest(args.project_id, root)
     constraint_manifest = load_constraint_manifest(args.project_id, root)
+    standards_manifest = load_standards_manifest(args.project_id, root)
 
     runs_dir = base / "runs"
     run_seq = next_sequence(runs_dir, "apply_edit_*")
@@ -1168,6 +1364,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "hard_constraints": manifest.get("hard_constraints", []),
         "evidence_manifest": evidence_manifest,
         "constraint_manifest": constraint_manifest,
+        "standards_manifest": standards_manifest,
         "opencrab_mcp": manifest.get("opencrab_mcp"),
         "solver_contract": {
             "must_preserve": manifest.get("hard_constraints", []),
@@ -1245,6 +1442,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "opencrab_mcp_required": bool(manifest.get("opencrab_mcp", {}).get("required")),
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
+        "standards_manifest_active": standards_status(standards_manifest) == "active",
         "intent_count_positive": len(intent_paths) > 0,
     }
     report = {
@@ -1279,6 +1477,7 @@ def command_qa(args: argparse.Namespace) -> None:
         "opencrab_ontology_pack_attached": bool(manifest.get("opencrab_mcp", {}).get("ontology_pack")),
         "opencrab_evidence_verified": evidence_status(load_evidence_manifest(args.project_id, root)) == "verified",
         "constraint_manifest_active": constraint_status(load_constraint_manifest(args.project_id, root)) == "active",
+        "standards_manifest_active": standards_status(load_standards_manifest(args.project_id, root)) == "active",
         "has_edit_intent_dir": Path(manifest["artifacts"]["edit_intents_dir"]).exists(),
     }
     qa = {
@@ -1334,6 +1533,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_sketch.add_argument("--project-id", required=True)
     p_sketch.add_argument("--sketch", required=True)
     p_sketch.set_defaults(func=command_sketch_intent)
+
+    p_standards = sub.add_parser("standards-attach", help="Attach standards files such as CSV, Excel, PDF, or JSON to a project.")
+    p_standards.add_argument("--project-id", required=True)
+    p_standards.add_argument("--file", action="append", default=[], help="Standards file. Repeatable. Defaults to manifest standards_files.")
+    p_standards.add_argument("--households", type=int, help="Household count to select rows from tabular standards.")
+    p_standards.add_argument("--source", default="local_file")
+    p_standards.add_argument("--standard-id")
+    p_standards.add_argument("--summary")
+    p_standards.add_argument("--metadata", action="append", default=[])
+    p_standards.add_argument("--replace", action="store_true")
+    p_standards.set_defaults(func=command_standards_attach)
 
     p_evidence = sub.add_parser("evidence-attach", help="Attach OpenCrab/LocalCrab evidence to a project.")
     p_evidence.add_argument("--project-id", required=True)
