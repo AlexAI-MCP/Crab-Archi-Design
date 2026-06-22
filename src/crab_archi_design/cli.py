@@ -2878,6 +2878,14 @@ def write_workflow_report(project_id: str, root: Path, report: dict[str, Any]) -
     return out
 
 
+def write_revision_report(project_id: str, root: Path, report: dict[str, Any]) -> Path:
+    out_dir = project_dir(project_id, root) / "revisions"
+    seq = next_sequence(out_dir, "revision_run_*.json")
+    out = out_dir / f"revision_run_{seq:03d}.json"
+    write_json(out, report)
+    return out
+
+
 def command_workflow_run(args: argparse.Namespace) -> None:
     root = Path(args.project_root)
     steps: list[dict[str, Any]] = []
@@ -3132,6 +3140,177 @@ def command_workflow_run(args: argparse.Namespace) -> None:
         json.dumps(
             {
                 "status": workflow_status,
+                "final_project_status": final_status["overall_status"],
+                "latest_artifacts": final_status.get("latest_artifacts", {}),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def command_revision_run(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    steps: list[dict[str, Any]] = []
+    project_id = args.project_id
+
+    def add_step(name: str, func: Any, namespace: argparse.Namespace, required: bool = True) -> bool:
+        step = capture_command_step(name, func, namespace)
+        step["required"] = required
+        steps.append(step)
+        return step["status"] == "pass"
+
+    def add_skipped(name: str, reason: str) -> None:
+        step = skipped_workflow_step(name, reason)
+        step["required"] = False
+        steps.append(step)
+
+    if not workflow_manifest_exists(project_id, root):
+        report = {
+            "schema": "crab-archi-design-revision-run-v1",
+            "created_at": now(),
+            "project_id": project_id,
+            "status": "error",
+            "steps": steps,
+            "error": "Missing project manifest. Run workflow-run or init first.",
+        }
+        report_path = write_revision_report(project_id, root, report)
+        print(report_path)
+        print(json.dumps({"status": "error", "error": report["error"]}, ensure_ascii=False))
+        raise SystemExit(report["error"])
+
+    manifest = load_manifest(project_id, root)
+    engine_adapter = args.engine_adapter or manifest.get("engine_adapter") or "layout-svg-engine"
+    intent_selector = args.intent
+
+    if args.refresh_recognition or recognition_status(load_recognition_manifest(project_id, root)) != "active":
+        add_step(
+            "recognize-svg",
+            command_recognize_svg,
+            argparse.Namespace(project_root=str(root), project_id=project_id, source_svg=None, max_labels=args.max_labels),
+        )
+    else:
+        add_skipped("recognize-svg", "Existing active recognition manifest found.")
+
+    if args.constraint_sketch:
+        add_step(
+            "constraint-attach",
+            command_constraint_attach,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                sketch=args.constraint_sketch,
+                source="doodle",
+                role=args.constraint_role,
+                replace=args.replace_constraints,
+            ),
+        )
+    elif load_constraint_manifest(project_id, root):
+        add_skipped("constraint-attach", "Existing constraint manifest found.")
+    else:
+        add_skipped("constraint-attach", "No constraint sketch supplied.")
+
+    add_step("topology-build", command_topology_build, argparse.Namespace(project_root=str(root), project_id=project_id))
+
+    created_intent = False
+    if args.text:
+        add_step("prompt-edit", command_prompt_edit, argparse.Namespace(project_root=str(root), project_id=project_id, text=args.text))
+        created_intent = True
+    else:
+        add_skipped("prompt-edit", "No natural-language revision supplied.")
+
+    if args.sketch:
+        add_step("sketch-intent", command_sketch_intent, argparse.Namespace(project_root=str(root), project_id=project_id, sketch=args.sketch))
+        created_intent = True
+    else:
+        add_skipped("sketch-intent", "No edit sketch supplied.")
+
+    if not created_intent and not workflow_has_edit_intents(project_id, root):
+        final_status = build_project_status(project_id, root)
+        report = {
+            "schema": "crab-archi-design-revision-run-v1",
+            "created_at": now(),
+            "project_id": project_id,
+            "status": "error",
+            "expected_final_status": "ready_for_apply" if args.skip_apply else "complete_candidate_ready",
+            "engine_adapter": engine_adapter,
+            "steps": steps,
+            "final_project_status": final_status,
+            "latest_artifacts": final_status.get("latest_artifacts", {}),
+            "error": "No revision intent found. Pass --text, --sketch, or create an edit intent first.",
+        }
+        report_path = write_revision_report(project_id, root, report)
+        print(report_path)
+        print(json.dumps({"status": "error", "error": report["error"]}, ensure_ascii=False))
+        raise SystemExit(report["error"])
+
+    post_intent_steps = [
+        ("edit-brief", command_edit_brief, argparse.Namespace(project_root=str(root), project_id=project_id, intent=intent_selector)),
+        (
+            "project-status-before-apply",
+            command_project_status,
+            argparse.Namespace(project_root=str(root), project_id=project_id),
+        ),
+        (
+            "design-handoff",
+            command_design_handoff,
+            argparse.Namespace(project_root=str(root), project_id=project_id, intent=intent_selector, task=args.task),
+        ),
+    ]
+    for name, func, namespace in post_intent_steps:
+        add_step(name, func, namespace)
+
+    if not args.skip_apply:
+        add_step(
+            "apply-edit",
+            command_apply_edit,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                intent=intent_selector,
+                engine_adapter=engine_adapter,
+                engine_cwd=None,
+                engine_arg=args.engine_arg or [],
+                candidate_svg=None,
+                candidate_report=None,
+                preview=None,
+                skip_preview=args.skip_preview,
+                timeout=args.timeout,
+            ),
+        )
+        if not args.skip_review_panel:
+            add_step(
+                "review-panel",
+                command_review_panel,
+                argparse.Namespace(project_root=str(root), project_id=project_id, apply_report="latest", alternative="from-report", title=None, open=False),
+            )
+        else:
+            add_skipped("review-panel", "Skipped by --skip-review-panel.")
+    else:
+        add_skipped("apply-edit", "Skipped by --skip-apply.")
+
+    add_step("project-status-final", command_project_status, argparse.Namespace(project_root=str(root), project_id=project_id))
+    final_status = build_project_status(project_id, root)
+    step_errors = [step for step in steps if step["status"] == "error"]
+    expected_status = "ready_for_apply" if args.skip_apply else "complete_candidate_ready"
+    revision_status = "pass" if not step_errors and final_status["overall_status"] == expected_status else "review_required"
+    report = {
+        "schema": "crab-archi-design-revision-run-v1",
+        "created_at": now(),
+        "project_id": project_id,
+        "status": revision_status,
+        "expected_final_status": expected_status,
+        "engine_adapter": engine_adapter,
+        "intent_selector": intent_selector,
+        "steps": steps,
+        "final_project_status": final_status,
+        "latest_artifacts": final_status.get("latest_artifacts", {}),
+    }
+    report_path = write_revision_report(project_id, root, report)
+    print(report_path)
+    print(
+        json.dumps(
+            {
+                "status": revision_status,
                 "final_project_status": final_status["overall_status"],
                 "latest_artifacts": final_status.get("latest_artifacts", {}),
             },
@@ -3839,6 +4018,31 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["recognition", "standards", "opencrab_evidence", "constraints", "topology", "edit_brief", "apply_edit", "review_panel"],
         },
         {
+            "id": "revision_run",
+            "cli_subcommand": "revision-run",
+            "description": "Run an existing project's natural-language or doodle revision loop through topology, handoff, apply, review, and status.",
+            "required_args": ["--project-id"],
+            "optional_args": [
+                "--text",
+                "--sketch",
+                "--constraint-sketch",
+                "--constraint-role",
+                "--replace-constraints",
+                "--intent",
+                "--task",
+                "--engine-adapter",
+                "--engine-arg",
+                "--refresh-recognition",
+                "--max-labels",
+                "--timeout",
+                "--skip-preview",
+                "--skip-apply",
+                "--skip-review-panel",
+            ],
+            "outputs": ["revisions/revision_run_###.json", "alternatives/alternative_###.svg", "panels/review_panel_###.html"],
+            "gates": ["topology_manifest_active", "edit_brief", "apply_edit", "review_panel", "candidate_ready"],
+        },
+        {
             "id": "topology_build",
             "cli_subcommand": "topology-build",
             "description": "Build a target topology graph from SVG recognition, standards, OpenCrab evidence, and drawing constraints.",
@@ -4013,7 +4217,8 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
         "recommended_sequences": {
             "saas_job_runner": ["run_job"],
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor"],
-            "revision_loop": ["topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
+            "revision_loop": ["revision_run", "export_package", "verify_package", "doctor"],
+            "manual_revision_loop": ["topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor"],
             "opencrab_first_manual_loop": ["opencrab_sync", "constraint_attach", "topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
             "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
@@ -4082,6 +4287,7 @@ def build_mcp_runtime_config(server_name: str, project_root_value: str, cwd_valu
             ],
             "handoff_sequence": ["run-job --job <job.json> --strict"],
             "manual_handoff_sequence": ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"],
+            "revision_sequence": ["revision-run", "export-package", "verify-package --strict", "doctor --strict"],
             "package_policy": "Do not include source SVG unless the receiving system is authorized; export-package requires --include-source-svg for that.",
         },
         "smoke_test_messages": [
@@ -4197,6 +4403,7 @@ def run_mcp_smoke(config: dict[str, Any], server_name: str | None, timeout: int)
         "run_job_tool_available": "run_job" in tool_names,
         "doctor_tool_available": "doctor" in tool_names,
         "workflow_run_tool_available": "workflow_run" in tool_names,
+        "revision_run_tool_available": "revision_run" in tool_names,
         "topology_build_tool_available": "topology_build" in tool_names,
     }
     return {
@@ -4388,6 +4595,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_workflow.add_argument("--replace-constraints", action="store_true")
     p_workflow.add_argument("--reinit", action="store_true")
     p_workflow.set_defaults(func=command_workflow_run)
+
+    p_revision = sub.add_parser("revision-run", help="Run an existing project's natural-language or doodle revision loop.")
+    p_revision.add_argument("--project-id", required=True)
+    p_revision.add_argument("--text", help="Natural-language revision instruction to convert into prompt-edit intent.")
+    p_revision.add_argument("--sketch", help="Optional edit sketch JSON for sketch-intent.")
+    p_revision.add_argument("--constraint-sketch", help="Optional updated constraint sketch JSON to attach before rebuilding topology.")
+    p_revision.add_argument("--constraint-role")
+    p_revision.add_argument("--replace-constraints", action="store_true")
+    p_revision.add_argument("--intent", default="all", help="latest, all, or a project-relative/absolute intent JSON path.")
+    p_revision.add_argument("--task", help="Optional design handoff task.")
+    p_revision.add_argument("--engine-adapter")
+    p_revision.add_argument("--engine-arg", action="append", default=[])
+    p_revision.add_argument("--refresh-recognition", action="store_true")
+    p_revision.add_argument("--max-labels", type=int, default=500)
+    p_revision.add_argument("--timeout", type=int, default=300)
+    p_revision.add_argument("--skip-preview", action="store_true")
+    p_revision.add_argument("--skip-apply", action="store_true")
+    p_revision.add_argument("--skip-review-panel", action="store_true")
+    p_revision.set_defaults(func=command_revision_run)
 
     p_job = sub.add_parser("run-job", help="Run workflow/export/verify/doctor from a JSON job spec.")
     p_job.add_argument("--job", required=True, help="Path to a crab-archi-design-job-spec-v1 JSON file.")

@@ -26,7 +26,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"run_job", "workflow_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
+    assert {"run_job", "workflow_run", "revision_run", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
     assert manifest["recommended_sequences"]["saas_job_runner"] == ["run_job"]
@@ -54,6 +54,7 @@ def test_mcp_config_writes_runtime_config(tmp_path: Path) -> None:
     assert server["env"]["CRAB_ARCHI_PROJECT_ROOT"] == "sandbox-projects"
     assert config["oauth_worker"]["handoff_sequence"] == ["run-job --job <job.json> --strict"]
     assert config["oauth_worker"]["manual_handoff_sequence"] == ["workflow-run", "export-package", "verify-package --strict", "doctor --strict"]
+    assert config["oauth_worker"]["revision_sequence"] == ["revision-run", "export-package", "verify-package --strict", "doctor --strict"]
     assert config["smoke_test_messages"][0]["method"] == "initialize"
 
     out = tmp_path / "mcp_runtime_config.json"
@@ -78,8 +79,10 @@ def test_mcp_smoke_validates_runtime_config(tmp_path: Path) -> None:
     assert report["checks"]["initialize_ok"] is True
     assert report["checks"]["tools_list_ok"] is True
     assert report["checks"]["run_job_tool_available"] is True
+    assert report["checks"]["revision_run_tool_available"] is True
     assert report["checks"]["topology_build_tool_available"] is True
     assert "run_job" in report["tool_names"]
+    assert "revision_run" in report["tool_names"]
     assert "workflow_run" in report["tool_names"]
     assert "topology_build" in report["tool_names"]
 
@@ -127,6 +130,7 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         list_response = read_json_line(process)
         tools = {tool["name"]: tool for tool in list_response["result"]["tools"]}
         assert "run_job" in tools
+        assert "revision_run" in tools
         assert "topology_build" in tools
         assert "doctor" in tools
         assert "mcp_manifest" in tools
@@ -951,6 +955,93 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     assert doctor_report["project_checks"]["project_candidate_ready"] is True
     assert doctor_report["package_verification"]["status"] == "pass"
     assert doctor_report["required_checks"]["package.package_verify_pass"] is True
+
+
+def test_revision_run_executes_existing_project_loop(tmp_path: Path) -> None:
+    source_svg = tmp_path / "original.svg"
+    source_svg.write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 140 90'><rect x='10' y='10' width='110' height='65'/><text x='18' y='24'>greenery lounge</text><text x='18' y='52'>fitness</text></svg>",
+        encoding="utf-8",
+    )
+    standards = tmp_path / "standards.csv"
+    standards.write_text("households,program,area\n900,greenery_lounge,80\n900,fitness,70\n", encoding="utf-8")
+    constraint = tmp_path / "constraint.json"
+    constraint.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [{"stroke_id": "shell", "mode": "community_shell", "target_hint": "community_shell", "points": [[0, 0], [140, 0], [140, 90], [0, 90]]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    opencrab_result = tmp_path / "opencrab.json"
+    opencrab_result.write_text(
+        json.dumps({"status": "ok", "query": "greenery fitness topology", "evidence": [{"id": "e1", "text": "Keep the lounge and fitness connected to the hall.", "source": "OpenCrab"}]}),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "--project-root",
+        "projects",
+        "workflow-run",
+        "--project-id",
+        "revision-demo",
+        "--source-svg",
+        str(source_svg),
+        "--households",
+        "900",
+        "--standards",
+        str(standards),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        "--opencrab-result-file",
+        str(opencrab_result),
+        "--constraint-sketch",
+        str(constraint),
+        "--prompt",
+        "Prepare a topology-backed community layout.",
+        "--engine-adapter",
+        "reference-svg-engine",
+        "--skip-apply",
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    workflow = json.loads((tmp_path / result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert workflow["status"] == "pass"
+    assert workflow["final_project_status"]["overall_status"] == "ready_for_apply"
+
+    result = run_cli(
+        "--project-root",
+        "projects",
+        "revision-run",
+        "--project-id",
+        "revision-demo",
+        "--text",
+        "Open the greenery lounge further toward fitness while keeping protected geometry locked.",
+        "--engine-adapter",
+        "reference-svg-engine",
+        "--skip-preview",
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    revision_path = tmp_path / result.stdout.splitlines()[0]
+    revision = json.loads(revision_path.read_text(encoding="utf-8"))
+    assert revision["schema"] == "crab-archi-design-revision-run-v1"
+    assert revision["status"] == "pass"
+    assert revision["final_project_status"]["overall_status"] == "complete_candidate_ready"
+    step_status = {step["name"]: step["status"] for step in revision["steps"]}
+    assert step_status["recognize-svg"] == "skipped"
+    assert step_status["topology-build"] == "pass"
+    assert step_status["prompt-edit"] == "pass"
+    assert step_status["edit-brief"] == "pass"
+    assert step_status["design-handoff"] == "pass"
+    assert step_status["apply-edit"] == "pass"
+    assert step_status["review-panel"] == "pass"
+    assert revision["final_project_status"]["metrics"]["edit_intent_count"] >= 2
+    assert (tmp_path / revision["latest_artifacts"]["topology_manifest"]).exists()
+    assert (tmp_path / revision["latest_artifacts"]["alternative_svg"]).exists()
+    assert (tmp_path / revision["latest_artifacts"]["review_panel"]).exists()
 
 
 def test_run_job_executes_sample_pipeline(tmp_path: Path) -> None:

@@ -56,7 +56,8 @@ GitHub Actions runs the same core contract used by local handoff:
 7. Verify the generated MCP runtime with `mcp-smoke`.
 8. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
 9. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
-10. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
+10. Execute `revision-run` on the same project to verify the repeat-edit path.
+11. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
 
 The CI sample uses:
 
@@ -88,6 +89,12 @@ crab-archi-design workflow-run \
   --constraint-sketch examples/constraint_sketch_sample.json \
   --prompt "Open the greenery lounge more toward the main hall and keep parking/core locked." \
   --engine-adapter layout-svg-engine \
+  --skip-preview
+
+crab-archi-design revision-run \
+  --project-id demo \
+  --text "Tighten the golf and sauna adjacency while keeping screen golf inside the golf cluster." \
+  --sketch examples/sketch_layer_sample.json \
   --skip-preview
 
 crab-archi-design run-job \
@@ -182,6 +189,8 @@ crab-archi-design qa --project-id demo
 `run-job` is the SaaS/OAuth/MCP worker entry point. It reads a `crab-archi-design-job-spec-v1` JSON file containing the source SVG path, standards, OpenCrab MCP result files, doodle constraints, natural-language prompt, engine adapter, and export/verification policy. It then runs `workflow-run`, `export-package`, `verify-package`, and `doctor`, and writes a `projects/<project>/jobs/job_run_###.json` report.
 
 `workflow-run` executes the normal project path in one command: init if needed, recognize source SVG, attach standards, sync or attach evidence, attach constraints, build topology, create prompt/sketch intents, write the edit brief, status, design handoff, apply edit, review panel, final status, and a `projects/<project>/workflow/workflow_run_###.json` report.
+
+`revision-run` executes the repeat-edit path for an existing project. It can attach an updated constraint sketch, rebuild topology, convert natural language and/or doodle sketches into edit intents, regenerate the edit brief and handoff, run the engine, create a review panel, and write `projects/<project>/revisions/revision_run_###.json`.
 
 `apply-edit` reads structured natural-language and doodle intents plus recognition, topology, evidence, standards, and constraints, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
 

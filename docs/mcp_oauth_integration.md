@@ -44,6 +44,8 @@ The manifest records:
 - Recommended command sequences for first-run design, revision loops, and OpenCrab-first manual workflows.
 - Security policy for source SVG packaging, native SVG output, raster overlays, and secrets.
 
+`mcp-config` also exposes two worker-oriented sequences: `handoff_sequence` for first-run `run-job` execution and `revision_sequence` for existing-project `revision-run` execution followed by package export, verification, and doctor checks.
+
 ## Recommended MCP Tool Mapping
 
 Expose each manifest `tools[].id` as an MCP tool that shells out to:
@@ -110,7 +112,9 @@ The most important tools are:
 ```text
 run_job
 workflow_run
+revision_run
 opencrab_sync
+topology_build
 prompt_edit
 sketch_intent
 constraint_attach
@@ -176,7 +180,7 @@ crab-archi-design mcp-smoke --strict
 crab-archi-design run-job --job examples/job_spec_sample.json --strict
 ```
 
-For debugging, Codex can still call the lower-level manual sequence: `workflow-run`, `export-package`, `verify-package --strict`, and `doctor --strict`.
+For first-run debugging, Codex can still call the lower-level manual sequence: `workflow-run`, `export-package`, `verify-package --strict`, and `doctor --strict`. For repeated design edits on an existing project, call `revision-run` with `--text`, `--sketch`, or `--constraint-sketch`, then export and verify the package again.
 
 The LLM should produce structured intent and handoff artifacts. Native SVG mutation should remain in deterministic adapters such as `layout-svg-engine`, `reference-svg-engine`, or a project-specific room-envelope solver.
 

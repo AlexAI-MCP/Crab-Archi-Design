@@ -225,6 +225,36 @@ crab-archi-design --project-root projects sketch-intent \
 
 Natural language and doodles can be combined. For example, use natural language to state the design rule, then use a doodle to point to the exact wall, door, or corridor segment.
 
+## One-Command Revision
+
+After the first `workflow-run` has created the project gates, use `revision-run` for normal natural-language or doodle iterations:
+
+```bash
+crab-archi-design --project-root projects revision-run \
+  --project-id a801-802-opencrab-test \
+  --text "Keep screen golf inside the golf cluster and open the greenery lounge toward fitness." \
+  --sketch /path/to/downloaded_sketch.json \
+  --skip-preview
+```
+
+If the user redraws the community shell, no-go zone, lock zone, or mutable zone, attach it in the same command so topology is rebuilt before the solver runs:
+
+```bash
+crab-archi-design --project-root projects revision-run \
+  --project-id a801-802-opencrab-test \
+  --constraint-sketch /path/to/updated_constraints.json \
+  --text "Replan only inside the updated community shell." \
+  --skip-preview
+```
+
+This writes:
+
+```text
+projects/a801-802-opencrab-test/revisions/revision_run_###.json
+```
+
+The command records every internal step: optional recognition refresh, optional constraint attach, topology rebuild, prompt/sketch intent creation, edit brief, project status, design handoff, apply edit, review panel, and final project status.
+
 ## Review the Edit Brief
 
 Before mutating SVG geometry, compile the current natural-language and doodle intents into a reviewable brief:
@@ -242,7 +272,7 @@ projects/a801-802-opencrab-test/briefs/edit_brief_###.json
 projects/a801-802-opencrab-test/briefs/edit_brief_###.md
 ```
 
-The brief checks whether source recognition is active, whether OpenCrab evidence is verified, whether standards and constraints are active, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
+The brief checks whether source recognition and topology are active, whether OpenCrab evidence is verified, whether standards and constraints are active, whether the original SVG parses, whether sketch source files are available, and whether all doodle points stay inside the source SVG viewBox. If a user doodles outside the target drawing area, the brief returns `review_required` before the solver touches SVG geometry.
 
 ## Check Project Status
 
@@ -389,24 +419,25 @@ projects/a801-802-opencrab-test/diagnostics/doctor_report_###.json
 
 For architectural layout revisions, use this order:
 
-1. `workflow-run`: use this for the normal full path when all inputs are ready.
-2. `recognize-svg`: attach source SVG parse, primitives, and labels.
-3. `standards-attach`: attach household-count standards and selected rows.
-4. `evidence-attach` or `opencrab-sync`: attach OpenCrab/LocalCrab ontology evidence.
-5. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
-6. `topology-build`: connect recognition, standards, evidence, and constraints into the target topology graph.
-7. Natural language: describe the design intent and constraints.
-8. Doodle: mark the exact edge, room, circulation line, or wall segment.
-9. `edit-brief`: check recognition, topology, evidence, standards, constraints, source SVG parse, and sketch bounds.
-10. `project-status`: confirm the project is ready for solver handoff.
-11. `design-handoff`: package the current topology, evidence, standards, constraints, and prompt blocks.
-12. `apply-edit`: generate a native SVG candidate.
-13. `review-panel`: inspect before/after.
-14. `project-status`: confirm the latest candidate and review artifacts are complete.
-15. `export-package`: bundle the latest artifacts for handoff.
-16. `verify-package`: validate the ZIP before upload or handoff.
-17. `doctor`: diagnose local install, project gates, OpenCrab configuration, candidate readiness, and optional package verification.
-18. Repeat with another short prompt or doodle repair intent.
+1. `workflow-run`: use this for the normal first path when all inputs are ready.
+2. `revision-run`: use this for normal repeated natural-language or doodle edits after the project gates exist.
+3. `recognize-svg`: attach source SVG parse, primitives, and labels.
+4. `standards-attach`: attach household-count standards and selected rows.
+5. `evidence-attach` or `opencrab-sync`: attach OpenCrab/LocalCrab ontology evidence.
+6. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
+7. `topology-build`: connect recognition, standards, evidence, and constraints into the target topology graph.
+8. Natural language: describe the design intent and constraints.
+9. Doodle: mark the exact edge, room, circulation line, or wall segment.
+10. `edit-brief`: check recognition, topology, evidence, standards, constraints, source SVG parse, and sketch bounds.
+11. `project-status`: confirm the project is ready for solver handoff.
+12. `design-handoff`: package the current topology, evidence, standards, constraints, and prompt blocks.
+13. `apply-edit`: generate a native SVG candidate.
+14. `review-panel`: inspect before/after.
+15. `project-status`: confirm the latest candidate and review artifacts are complete.
+16. `export-package`: bundle the latest artifacts for handoff.
+17. `verify-package`: validate the ZIP before upload or handoff.
+18. `doctor`: diagnose local install, project gates, OpenCrab configuration, candidate readiness, and optional package verification.
+19. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

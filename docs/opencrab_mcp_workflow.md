@@ -33,7 +33,7 @@ The full flow can be run manually step by step, through `workflow-run`, or throu
 21. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
 22. Use `run-job` when a SaaS, OAuth, or MCP worker needs to execute the whole sequence from a single JSON job spec.
 23. Run `mcp-manifest`, `mcp-config`, and `mcp-smoke` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog, runtime configuration, and connection smoke test.
-24. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+24. Accept natural-language or doodle revisions through `revision-run`, then export and verify the package again.
 
 ## Design Rule
 

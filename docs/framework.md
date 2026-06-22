@@ -41,6 +41,10 @@ run-job
 workflow-run
   -> workflow/workflow_run_###.json
 
+revision-run
+  -> revisions/revision_run_###.json
+  -> repeated natural-language/doodle revision artifacts
+
 Manual loop:
 recognize-svg
   -> recognition/recognition_manifest.json
@@ -77,6 +81,8 @@ recognize-svg
 `topology-build` converts recognition, standards, OpenCrab evidence, and drawing constraints into a target topology manifest. It creates nodes for program labels, room envelopes, structural columns, wall candidates, standards roles, and constraints, then links them with edges such as label-inside-envelope, column-inside-envelope, standard-applies-to-program, protected-geometry, and OpenCrab adjacency targets.
 
 `workflow-run` orchestrates the same manual commands in a single run. It initializes the project when needed, executes the gates in order, writes all normal artifacts, and records the step-by-step result in a workflow report.
+
+`revision-run` is the product-facing repeat-edit contract for an existing project. It can attach updated constraints, rebuild topology, add natural-language and doodle intents, rebuild the edit brief and design handoff, run the selected engine adapter, generate a review panel, and record the full revision in `revisions/revision_run_###.json`.
 
 `opencrab-sync` is the MCP bridge. It normalizes `opencrab_query`, `opencrab_search_documents`, or similar OpenCrab MCP JSON results into a project sync artifact and appends the extracted evidence to the evidence manifest.
 

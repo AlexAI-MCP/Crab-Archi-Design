@@ -69,6 +69,12 @@ jobs:
             --engine-adapter layout-svg-engine \
             --skip-preview
 
+          crab-archi-design --project-root .ci-projects revision-run \
+            --project-id ci-demo \
+            --text "Refine the greenery lounge and fitness connection while keeping protected geometry locked." \
+            --engine-adapter layout-svg-engine \
+            --skip-preview
+
           crab-archi-design --project-root .ci-projects export-package \
             --project-id ci-demo
 

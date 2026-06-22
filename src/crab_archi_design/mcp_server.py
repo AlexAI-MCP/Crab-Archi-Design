@@ -25,6 +25,7 @@ BOOLEAN_FIELDS = {
     "replace_evidence",
     "replace_constraints",
     "reinit",
+    "refresh_recognition",
     "include_source_svg",
     "only_latest",
     "skip_opencrab_sync",
@@ -121,7 +122,7 @@ def mcp_tools() -> list[dict[str, Any]]:
                 "annotations": {
                     "readOnlyHint": tool["id"] in {"project_status", "verify_package", "doctor", "mcp_manifest", "mcp_config", "doodle_editor"},
                     "destructiveHint": False,
-                    "openWorldHint": tool["id"] in {"run_job", "workflow_run", "opencrab_sync", "apply_edit"},
+                    "openWorldHint": tool["id"] in {"run_job", "workflow_run", "revision_run", "opencrab_sync", "apply_edit"},
                 },
             }
         )
