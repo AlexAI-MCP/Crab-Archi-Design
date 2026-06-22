@@ -42,6 +42,23 @@ Python 3.9+ is supported.
 pip install -e .
 ```
 
+## CI Preflight
+
+GitHub Actions runs the same core contract used by local handoff:
+
+1. Install `crab-archi-design` with test dependencies.
+2. Compile the CLI and reference engine.
+3. Run the Python test suite.
+4. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
+5. Run `export-package`, `verify-package --strict`, and `doctor --strict`.
+
+The CI sample uses:
+
+- `examples/original_sample.svg`
+- `examples/area_standard_sample.csv`
+- `examples/constraint_sketch_sample.json`
+- `examples/opencrab_mcp_result_sample.json`
+
 ## CLI
 
 ```bash

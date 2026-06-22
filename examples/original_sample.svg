@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4961 3508">
+  <title>Crab Archi Design sample community plan</title>
+  <rect x="420" y="520" width="2700" height="2260" fill="#ffffff" stroke="#111111" stroke-width="18"/>
+  <path d="M3120 980 L3820 1380 L2860 2950 L760 2840 L420 520" fill="none" stroke="#111111" stroke-width="18"/>
+  <rect x="780" y="760" width="1260" height="620" fill="#ffffff" stroke="#111111" stroke-width="10"/>
+  <text x="900" y="1080" font-size="95">작은도서관</text>
+  <rect x="2060" y="760" width="840" height="620" fill="#ffffff" stroke="#111111" stroke-width="10"/>
+  <text x="2180" y="1080" font-size="82">주민카페</text>
+  <rect x="760" y="1600" width="1340" height="900" fill="#ffffff" stroke="#111111" stroke-width="10"/>
+  <text x="1060" y="2070" font-size="110">피트니스</text>
+  <rect x="2160" y="1540" width="880" height="840" fill="#ffffff" stroke="#111111" stroke-width="10"/>
+  <text x="2360" y="1980" font-size="96">홀</text>
+  <rect x="3040" y="1240" width="620" height="880" fill="#ffffff" stroke="#111111" stroke-width="10"/>
+  <text x="3120" y="1680" font-size="82">골프클럽</text>
+  <rect x="2450" y="2460" width="560" height="370" fill="#ffffff" stroke="#111111" stroke-width="10"/>
+  <text x="2550" y="2685" font-size="70">사우나</text>
+  <rect x="3020" y="2240" width="470" height="310" fill="#ffffff" stroke="#111111" stroke-width="10"/>
+  <text x="3120" y="2420" font-size="62">라커</text>
+  <g id="sample-columns" fill="#111111">
+    <rect x="720" y="720" width="62" height="62"/>
+    <rect x="1480" y="720" width="62" height="62"/>
+    <rect x="2240" y="720" width="62" height="62"/>
+    <rect x="3000" y="720" width="62" height="62"/>
+    <rect x="720" y="1540" width="62" height="62"/>
+    <rect x="1480" y="1540" width="62" height="62"/>
+    <rect x="2240" y="1540" width="62" height="62"/>
+    <rect x="3000" y="1540" width="62" height="62"/>
+    <rect x="720" y="2360" width="62" height="62"/>
+    <rect x="1480" y="2360" width="62" height="62"/>
+    <rect x="2240" y="2360" width="62" height="62"/>
+    <rect x="3000" y="2360" width="62" height="62"/>
+  </g>
+  <g id="sample-parking-context" fill="none" stroke="#555555" stroke-width="5">
+    <path d="M3400 640 L4680 1320"/>
+    <path d="M3300 820 L4580 1500"/>
+    <path d="M3200 1000 L4480 1680"/>
+    <path d="M3100 1180 L4380 1860"/>
+    <path d="M3000 1360 L4280 2040"/>
+    <path d="M2900 1540 L4180 2220"/>
+  </g>
+</svg>

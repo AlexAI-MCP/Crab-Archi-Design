@@ -1,0 +1,33 @@
+{
+  "status": "ok",
+  "query": "community SVG topology 900 households greenery fitness golf sauna",
+  "answer": "Use the verified OpenCrab precedent topology: integrate cafe and small library into a greenery lounge, keep the main hall as the connector, cluster fitness and GX, keep screen golf inside the golf envelope, and group sauna, locker, shower, and plant support as a wet wellness cluster.",
+  "evidence": [
+    {
+      "id": "opencrab-sample-001",
+      "document_id": "community-svg-topology-sample",
+      "workspace_id": "crab-archi-design-ci",
+      "source": "OpenCrab MCP sample evidence",
+      "score": 0.93,
+      "text": "The superior community precedent keeps large amenity programs linked by a central hall while preserving parking, columns, cores, ramps, stairs, egress, and the community outer shell.",
+      "metadata": {
+        "ontology_pack": "community_svg_topology_ontology_v2",
+        "households": "900",
+        "topology": "greenery_lounge-main_hall-fitness-golf-wellness"
+      }
+    },
+    {
+      "id": "opencrab-sample-002",
+      "document_id": "community-area-standard-sample",
+      "workspace_id": "crab-archi-design-ci",
+      "source": "OpenCrab MCP sample evidence",
+      "score": 0.89,
+      "text": "For the 900-household standard, greenery lounge, fitness, golf, and sauna/wellness should remain the largest hierarchy programs, with minor support rooms absorbing leftover area instead of leaving unassigned voids.",
+      "metadata": {
+        "ontology_pack": "community_svg_topology_ontology_v2",
+        "households": "900",
+        "area_basis": "examples/area_standard_sample.csv"
+      }
+    }
+  ]
+}

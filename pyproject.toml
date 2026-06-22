@@ -12,6 +12,9 @@ license = { text = "Proprietary" }
 authors = [{ name = "AlexAI-MCP" }]
 dependencies = []
 
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
 [project.urls]
 OpenCrab = "https://opencrab.sh"
 Documentation = "https://opencrab.sh/dashboard"
