@@ -865,7 +865,7 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     assert engine_report["summary"]["room_shell_violations"] == []
 
 
-def test_layout_engine_flags_rooms_outside_community_shell() -> None:
+def test_layout_engine_repairs_rooms_inside_community_shell() -> None:
     root = ET.fromstring(
         textwrap.dedent(
             """
@@ -903,8 +903,12 @@ def test_layout_engine_flags_rooms_outside_community_shell() -> None:
 
     summary = draw_layout(root, solver_input)
     assert summary["shell_found"] is True
-    assert summary["room_shell_violations"]
-    assert {item["room"] for item in summary["room_shell_violations"]} & {"golf_screen", "sauna_locker_shower", "fitness_gx"}
+    assert summary["room_shell_violations"] == []
+    assert summary["layout_repair"]["strategy"] == "shell_aware_grid_search"
+    assert summary["layout_repair"]["repair_applied"] is True
+    assert summary["layout_repair"]["feasible_layout_boxes"] > 0
+    assert summary["room_plan"]["selected_room_plan_shell_violation_count"] == 0
+    assert summary["layout_fill_ratio"] >= 0.98
 
 
 def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:

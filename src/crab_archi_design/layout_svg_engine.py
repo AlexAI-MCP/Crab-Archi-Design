@@ -169,12 +169,29 @@ def box_checkpoints(box: tuple[float, float, float, float]) -> list[tuple[float,
     ]
 
 
+def box_sample_points(box: tuple[float, float, float, float], divisions: int = 4) -> list[tuple[float, float]]:
+    x, y, w, h = box
+    steps = max(1, divisions)
+    points = []
+    for xi in range(steps + 1):
+        for yi in range(steps + 1):
+            points.append((x + w * xi / steps, y + h * yi / steps))
+    return points
+
+
+def box_inside_polygons(box: tuple[float, float, float, float], polygons: list[list[tuple[float, float]]]) -> bool:
+    if not polygons:
+        return True
+    samples = box_sample_points(box)
+    return all(all(point_in_polygon(point, polygon) for point in samples) for polygon in polygons)
+
+
 def room_shell_violations(rooms: list[dict[str, Any]], shell_points: list[tuple[float, float]]) -> list[dict[str, Any]]:
     if not shell_points:
         return []
     violations = []
     for planned in rooms:
-        outside_points = [point for point in box_checkpoints(room_box(planned)) if not point_in_polygon(point, shell_points)]
+        outside_points = [point for point in box_sample_points(room_box(planned)) if not point_in_polygon(point, shell_points)]
         if outside_points:
             violations.append({"room": planned["role"], "outside_point_count": len(outside_points)})
     return violations
@@ -202,6 +219,65 @@ def large_program_hierarchy_ok(rooms: list[dict[str, Any]]) -> bool:
     if not all(role in areas for role in required):
         return False
     return areas["greenery_lounge"] >= areas["fitness_gx"] >= areas["golf_screen"]
+
+
+def room_no_go_intrusions(rooms: list[dict[str, Any]], protected_boxes: list[tuple[float, float, float, float]]) -> list[dict[str, Any]]:
+    return [
+        {"room": room_item["role"], "protected_index": idx + 1}
+        for room_item in rooms
+        for idx, protected in enumerate(protected_boxes)
+        if bboxes_intersect(room_box(room_item), protected)
+    ]
+
+
+def layout_box_intrudes_no_go(box: tuple[float, float, float, float], protected_boxes: list[tuple[float, float, float, float]]) -> bool:
+    return any(bboxes_intersect(box, protected) for protected in protected_boxes)
+
+
+def find_shell_aware_layout_box(
+    base_box: tuple[float, float, float, float],
+    boundary_polygons: list[list[tuple[float, float]]],
+    protected_boxes: list[tuple[float, float, float, float]],
+) -> tuple[tuple[float, float, float, float], dict[str, Any]]:
+    x, y, w, h = base_box
+    scale_values = [1.0, 0.96, 0.92, 0.88, 0.84, 0.8, 0.74, 0.68, 0.62, 0.56, 0.5, 0.44, 0.38]
+    offsets = [0.0, 0.2, 0.4, 0.5, 0.6, 0.8, 1.0]
+    tested = 0
+    feasible: list[tuple[float, tuple[float, float, float, float]]] = []
+    for scale_w in scale_values:
+        for scale_h in scale_values:
+            candidate_w = w * scale_w
+            candidate_h = h * scale_h
+            if candidate_w < max(1.0, w * 0.22) or candidate_h < max(1.0, h * 0.22):
+                continue
+            for offset_x in offsets:
+                for offset_y in offsets:
+                    candidate = (x + (w - candidate_w) * offset_x, y + (h - candidate_h) * offset_y, candidate_w, candidate_h)
+                    tested += 1
+                    if not box_inside_polygons(candidate, boundary_polygons):
+                        continue
+                    if layout_box_intrudes_no_go(candidate, protected_boxes):
+                        continue
+                    aspect = max(candidate_w / max(1.0, candidate_h), candidate_h / max(1.0, candidate_w))
+                    center_bias = abs(offset_x - 0.5) + abs(offset_y - 0.5)
+                    score = bbox_area(candidate) - bbox_area(base_box) * 0.015 * aspect - bbox_area(base_box) * 0.01 * center_bias
+                    feasible.append((score, candidate))
+    if feasible:
+        feasible.sort(key=lambda item: item[0], reverse=True)
+        return feasible[0][1], {
+            "strategy": "shell_aware_grid_search",
+            "repair_applied": feasible[0][1] != base_box,
+            "tested_layout_boxes": tested,
+            "feasible_layout_boxes": len(feasible),
+        }
+
+    repaired = avoid_no_go(base_box, protected_boxes)
+    return repaired, {
+        "strategy": "fallback_inset_avoid_no_go",
+        "repair_applied": repaired != base_box,
+        "tested_layout_boxes": tested,
+        "feasible_layout_boxes": 0,
+    }
 
 
 def bboxes_intersect(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
@@ -333,16 +409,17 @@ def room(x: float, y: float, w: float, h: float, role: str, label: str, target_a
     }
 
 
-def make_room_plan(layout: tuple[float, float, float, float], program_areas: dict[str, float]) -> list[dict[str, Any]]:
+def make_room_plan(layout: tuple[float, float, float, float], program_areas: dict[str, float], variant: dict[str, float] | None = None) -> list[dict[str, Any]]:
+    variant = variant or {}
     x, y, w, h = layout
-    hall_w = w * 0.14
-    left_w = w * 0.46
+    hall_w = w * variant.get("hall_w", 0.14)
+    left_w = w * variant.get("left_w", 0.46)
     right_w = max(1.0, w - left_w - hall_w)
-    top_h = h * 0.36
+    top_h = h * variant.get("top_h", 0.36)
     lower_y = y + top_h
     lower_h = max(1.0, h - top_h)
-    support_w = w * 0.18
-    golf_h = lower_h * 0.58
+    support_w = w * variant.get("support_w", 0.18)
+    golf_h = lower_h * variant.get("golf_h", 0.58)
     right_x = x + left_w + hall_w
     rooms = [
         room(x, y, w - support_w, top_h, "greenery_lounge", "Greenery Lounge", program_areas.get("greenery_lounge")),
@@ -354,6 +431,44 @@ def make_room_plan(layout: tuple[float, float, float, float], program_areas: dic
         room(right_x, lower_y + golf_h, right_w, lower_h - golf_h, "sauna_locker_shower", "Sauna / Locker / Shower", program_areas.get("sauna_locker_shower")),
     ]
     return rooms
+
+
+def plan_variants() -> list[dict[str, Any]]:
+    return [
+        {"name": "balanced", "top_h": 0.36, "left_w": 0.46, "hall_w": 0.14, "support_w": 0.18, "golf_h": 0.58},
+        {"name": "greenery_expanded", "top_h": 0.42, "left_w": 0.47, "hall_w": 0.12, "support_w": 0.16, "golf_h": 0.52},
+        {"name": "fitness_priority", "top_h": 0.39, "left_w": 0.5, "hall_w": 0.12, "support_w": 0.15, "golf_h": 0.52},
+        {"name": "compact_support", "top_h": 0.4, "left_w": 0.48, "hall_w": 0.13, "support_w": 0.13, "golf_h": 0.54},
+    ]
+
+
+def choose_room_plan(
+    layout: tuple[float, float, float, float],
+    program_areas: dict[str, float],
+    shell_points: list[tuple[float, float]],
+    protected_boxes: list[tuple[float, float, float, float]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    choices = []
+    for variant in plan_variants():
+        rooms = make_room_plan(layout, program_areas, variant)
+        shell_violations = room_shell_violations(rooms, shell_points)
+        no_go_intrusions = room_no_go_intrusions(rooms, protected_boxes)
+        aspect_violations = room_aspect_violations(rooms)
+        hierarchy_ok = large_program_hierarchy_ok(rooms)
+        total_room_area = sum(bbox_area(room_box(item)) for item in rooms)
+        penalty = len(shell_violations) * 1000 + len(no_go_intrusions) * 1000 + len(aspect_violations) * 250 + (0 if hierarchy_ok else 500)
+        score = total_room_area - penalty
+        choices.append((score, rooms, variant, shell_violations, no_go_intrusions, aspect_violations, hierarchy_ok))
+    choices.sort(key=lambda item: item[0], reverse=True)
+    _score, rooms, variant, shell_violations, no_go_intrusions, aspect_violations, hierarchy_ok = choices[0]
+    return rooms, {
+        "strategy": variant["name"],
+        "tested_room_plans": len(choices),
+        "selected_room_plan_shell_violation_count": len(shell_violations),
+        "selected_room_plan_no_go_intrusion_count": len(no_go_intrusions),
+        "selected_room_plan_aspect_violation_count": len(aspect_violations),
+        "selected_room_plan_hierarchy_ok": hierarchy_ok,
+    }
 
 
 def add_text(parent: ET.Element, x: float, y: float, text: str, size: float, fill: str = "#111827") -> ET.Element:
@@ -388,12 +503,19 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
     column_boxes = recognized_column_boxes(solver_input)
     base_box = mutable_box or shell_box or (min_x, min_y, width, height)
     margin = max(min(base_box[2], base_box[3]) * 0.035, 2.0)
-    layout = avoid_no_go(inset_box(base_box, margin), protected_boxes)
+    layout_boundary_polygons = []
+    if mutable_points:
+        layout_boundary_polygons.append(mutable_points)
+    if shell_points:
+        layout_boundary_polygons.append(shell_points)
+    initial_layout_box = inset_box(base_box, margin)
+    layout, layout_repair = find_shell_aware_layout_box(initial_layout_box, layout_boundary_polygons, protected_boxes)
     program_areas = program_areas_from_standards(solver_input)
-    rooms = make_room_plan(layout, program_areas)
+    rooms, room_plan_meta = choose_room_plan(layout, program_areas, shell_points, protected_boxes)
     room_boxes = [room_box(item) for item in rooms]
     total_room_area = sum(bbox_area(item) for item in room_boxes)
-    layout_coverage_ratio = total_room_area / max(1.0, bbox_area(base_box))
+    layout_fill_ratio = total_room_area / max(1.0, bbox_area(layout))
+    base_coverage_ratio = total_room_area / max(1.0, bbox_area(base_box))
     shell_area = polygon_area(shell_points)
     shell_coverage_ratio = total_room_area / max(1.0, shell_area) if shell_area > 0 else None
     shell_violations = room_shell_violations(rooms, shell_points)
@@ -505,12 +627,7 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
             },
         )
 
-    no_go_intrusions = [
-        {"room": room_item["role"], "protected_index": idx + 1}
-        for room_item, room_box in zip(rooms, room_boxes)
-        for idx, protected in enumerate(protected_boxes)
-        if bboxes_intersect(room_box, protected)
-    ]
+    no_go_intrusions = room_no_go_intrusions(rooms, protected_boxes)
     standards_roles = {classify_program(row) for row in standard_rows(solver_input)}
     standards_roles.discard(None)
     planned_roles = {item["role"] for item in rooms}
@@ -520,10 +637,15 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
         "shell_found": shell_box is not None,
         "mutable_zone_used": mutable_box is not None,
         "base_box": {"x": base_box[0], "y": base_box[1], "width": base_box[2], "height": base_box[3]},
+        "initial_layout_box": {"x": initial_layout_box[0], "y": initial_layout_box[1], "width": initial_layout_box[2], "height": initial_layout_box[3]},
         "layout_box": {"x": layout[0], "y": layout[1], "width": layout[2], "height": layout[3]},
+        "layout_repair": layout_repair,
+        "room_plan": room_plan_meta,
         "layout_area": bbox_area(layout),
         "total_room_area": total_room_area,
-        "layout_coverage_ratio": layout_coverage_ratio,
+        "layout_fill_ratio": layout_fill_ratio,
+        "layout_coverage_ratio": layout_fill_ratio,
+        "base_coverage_ratio": base_coverage_ratio,
         "shell_area": shell_area,
         "shell_coverage_ratio": shell_coverage_ratio,
         "protected_box_count": len(protected_boxes),
@@ -583,7 +705,7 @@ def main() -> None:
                 "mutable_zone_or_shell_used": summary["mutable_zone_used"] or summary["shell_found"],
                 "rooms_inside_community_shell": not summary["room_shell_violations"],
                 "no_go_intrusion_free": not summary["no_go_intrusions"],
-                "layout_coverage_sufficient": summary["layout_coverage_ratio"] >= 0.78,
+                "layout_coverage_sufficient": summary["layout_fill_ratio"] >= 0.98,
                 "room_aspect_efficiency": not summary["room_aspect_violations"],
                 "standards_available": bool(standards_roles),
                 "standard_programs_planned": planned_standard_roles >= standards_roles if standards_roles else False,
