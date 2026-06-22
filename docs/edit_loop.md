@@ -348,6 +348,23 @@ projects/a801-802-opencrab-test/exports/verify_report_###.json
 
 `verify-package` checks ZIP integrity, embedded manifest presence, required artifact membership, file sizes, and SHA-256 hashes. Use `--check-local-files` to also compare local source paths against the export manifest.
 
+Run `doctor` when the package is going to another agent, GitHub workflow, OAuth upload, or SaaS ingestion path:
+
+```bash
+crab-archi-design --project-root projects doctor \
+  --project-id a801-802-opencrab-test \
+  --zip projects/a801-802-opencrab-test/exports/a801-802-opencrab-test_export_###.zip \
+  --strict
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/diagnostics/doctor_report_###.json
+```
+
+`doctor` checks the local CLI files, built-in reference engine, doodle editor, OpenCrab workflow docs, project manifest, OpenCrab MCP configuration, source SVG parsing, recognition, standards, evidence, constraints, edit intents, latest candidate SVG, and optional ZIP verification.
+
 ## Practical Revision Pattern
 
 For architectural layout revisions, use this order:
@@ -367,7 +384,8 @@ For architectural layout revisions, use this order:
 13. `project-status`: confirm the latest candidate and review artifacts are complete.
 14. `export-package`: bundle the latest artifacts for handoff.
 15. `verify-package`: validate the ZIP before upload or handoff.
-16. Repeat with another short prompt or doodle repair intent.
+16. `doctor`: diagnose local install, project gates, OpenCrab configuration, candidate readiness, and optional package verification.
+17. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

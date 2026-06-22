@@ -36,6 +36,8 @@ See [docs/opencrab_mcp_workflow.md](docs/opencrab_mcp_workflow.md) for the requi
 
 ## Install
 
+Python 3.9+ is supported.
+
 ```bash
 pip install -e .
 ```
@@ -125,6 +127,11 @@ crab-archi-design verify-package \
   --zip projects/demo/exports/demo_export_001.zip \
   --strict
 
+crab-archi-design doctor \
+  --project-id demo \
+  --zip projects/demo/exports/demo_export_001.zip \
+  --strict
+
 crab-archi-design qa --project-id demo
 ```
 
@@ -158,6 +165,8 @@ crab-archi-design qa --project-id demo
 
 `verify-package` validates an exported ZIP before handoff. It checks ZIP integrity, the embedded export manifest, required files, archive membership, file sizes, and SHA-256 hashes. Use `--check-local-files` when validating on the same machine that produced the package.
 
+`doctor` writes `projects/<project>/diagnostics/doctor_report_###.json`. It diagnoses the local framework install, OpenCrab MCP configuration, project readiness gates, latest native SVG candidate, and optional export ZIP verification in one report. Use `--strict` in CI, OAuth upload flows, or MCP handoffs.
+
 For the full revision loop, see [docs/edit_loop.md](docs/edit_loop.md).
 
 ## Repository Scope
@@ -183,6 +192,7 @@ Original SVG
   -> Native SVG Solver
   -> QA
   -> Export Package
+  -> Doctor
   -> Natural Language / Doodle Edit Loop
 ```
 

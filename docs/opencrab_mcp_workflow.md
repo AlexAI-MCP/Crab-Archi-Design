@@ -29,7 +29,8 @@ The full flow can be run manually step by step, or through `workflow-run` once t
 17. Run `project-status` again to confirm the latest candidate and review panel are complete.
 18. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
 19. Run `verify-package` to validate the exported ZIP before handoff or upload.
-20. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+20. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
+21. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -66,6 +67,14 @@ Then it appends normalized `opencrab_query` or `opencrab_search_documents` evide
 `export-package` is the portable output boundary for downstream systems. It bundles the latest OpenCrab-backed evidence, project status, design handoff, workflow report, apply report, native SVG candidate, and review panel. Include the source SVG only when the receiving environment is allowed to access the original drawing.
 
 `verify-package` is the receiving-side safety check. It confirms the ZIP can be opened, contains the embedded export manifest and all expected artifacts, and that archived files match the recorded hashes.
+
+`doctor` is the final operational check before a project moves into CI, GitHub handoff, OAuth upload, SaaS ingestion, or another MCP agent. It writes:
+
+```text
+projects/<project>/diagnostics/doctor_report_###.json
+```
+
+The report combines local tool checks, OpenCrab MCP manifest checks, `project-status` readiness gates, latest native SVG candidate checks, and optional `verify-package` results.
 
 ## Recognition Gate
 

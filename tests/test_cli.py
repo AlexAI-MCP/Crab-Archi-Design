@@ -571,6 +571,30 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     assert verify_report["status"] == "pass"
     assert verify_report["checks"]["local_file_hashes_ok"] is True
 
+    result = run_cli(
+        "--project-root",
+        "projects",
+        "doctor",
+        "--project-id",
+        "demo",
+        "--zip",
+        str(zip_path),
+        "--check-local-files",
+        "--strict",
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    doctor_report_path = Path(result.stdout.splitlines()[0])
+    if not doctor_report_path.is_absolute():
+        doctor_report_path = tmp_path / doctor_report_path
+    doctor_report = json.loads(doctor_report_path.read_text(encoding="utf-8"))
+    assert doctor_report["schema"] == "crab-archi-design-doctor-report-v1"
+    assert doctor_report["status"] == "pass"
+    assert doctor_report["local_checks"]["doodle_editor_exists"] is True
+    assert doctor_report["project_checks"]["project_candidate_ready"] is True
+    assert doctor_report["package_verification"]["status"] == "pass"
+    assert doctor_report["required_checks"]["package.package_verify_pass"] is True
+
 
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"

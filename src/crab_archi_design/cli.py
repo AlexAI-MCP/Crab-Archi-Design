@@ -2796,6 +2796,148 @@ def command_verify_package(args: argparse.Namespace) -> None:
         raise SystemExit(f"verify-package failed; report: {out}")
 
 
+def command_doctor(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    repo = Path(__file__).resolve().parents[2]
+    local_checks = {
+        "python_version_ok": sys.version_info >= (3, 9),
+        "cli_file_exists": Path(__file__).exists(),
+        "reference_svg_engine_exists": (Path(__file__).resolve().parent / "reference_svg_engine.py").exists(),
+        "doodle_editor_exists": (repo / "tools" / "doodle_editor.html").exists(),
+        "readme_exists": (repo / "README.md").exists(),
+        "opencrab_workflow_doc_exists": (repo / "docs" / "opencrab_mcp_workflow.md").exists(),
+        "opencrab_homepage_configured": OPENCRAB_HOMEPAGE.startswith("https://"),
+    }
+    required_checks = {f"local.{name}": value for name, value in local_checks.items()}
+
+    project_status: dict[str, Any] | None = None
+    project_checks: dict[str, Any] = {}
+    project_error: str | None = None
+    manifest: dict[str, Any] | None = None
+
+    if args.project_id:
+        project_manifest_path = manifest_path(args.project_id, root)
+        project_checks["project_manifest_exists"] = project_manifest_path.exists()
+        if project_manifest_path.exists():
+            try:
+                manifest = read_json(project_manifest_path)
+                project_checks["project_manifest_readable"] = True
+            except (OSError, json.JSONDecodeError) as exc:
+                project_checks["project_manifest_readable"] = False
+                project_error = str(exc)
+        else:
+            project_checks["project_manifest_readable"] = False
+
+        if manifest:
+            opencrab_mcp = manifest.get("opencrab_mcp", {})
+            project_checks.update(
+                {
+                    "opencrab_mcp_required": opencrab_mcp.get("required") is True,
+                    "opencrab_homepage_present": bool(opencrab_mcp.get("homepage")),
+                    "opencrab_server_present": bool(opencrab_mcp.get("mcp_server")),
+                    "ontology_pack_configured": bool(opencrab_mcp.get("ontology_pack") or manifest.get("ontology_pack")),
+                }
+            )
+            try:
+                project_status = build_project_status(args.project_id, root)
+                project_checks["project_status_buildable"] = True
+                gates = project_status.get("gates", {})
+                ready_gate_names = [
+                    "manifest_exists",
+                    "source_svg_exists",
+                    "source_svg_parse_ok",
+                    "recognition_manifest_active",
+                    "standards_manifest_active",
+                    "opencrab_evidence_verified",
+                    "constraint_manifest_active",
+                    "edit_intent_exists",
+                ]
+                for name in ready_gate_names:
+                    project_checks[name] = bool(gates.get(name))
+
+                has_candidate = bool(args.zip) or any(gates.get(name) for name in ["latest_apply_pass", "latest_alternative_exists", "latest_alternative_native_svg"])
+                if has_candidate:
+                    for name in ["latest_apply_pass", "latest_alternative_exists", "latest_alternative_native_svg"]:
+                        project_checks[name] = bool(gates.get(name))
+                project_checks["project_ready_for_solver"] = project_status.get("overall_status") in {
+                    "ready_for_apply",
+                    "candidate_review_required",
+                    "complete_candidate_ready",
+                }
+                project_checks["project_candidate_ready"] = project_status.get("overall_status") == "complete_candidate_ready"
+            except SystemExit as exc:
+                project_checks["project_status_buildable"] = False
+                project_error = str(exc)
+
+        for name, value in project_checks.items():
+            if name == "project_candidate_ready" and not args.zip:
+                continue
+            if name == "project_ready_for_solver" and project_checks.get("project_candidate_ready"):
+                continue
+            required_checks[f"project.{name}"] = bool(value)
+
+    package_report: dict[str, Any] | None = None
+    package_checks: dict[str, Any] = {}
+    package_error: str | None = None
+    if args.zip:
+        zip_path = Path(args.zip).expanduser()
+        manifest_path_arg = Path(args.manifest).expanduser() if args.manifest else None
+        package_checks["package_zip_exists"] = zip_path.exists()
+        if zip_path.exists():
+            try:
+                package_report = verify_export_package(zip_path, manifest_path_arg=manifest_path_arg, check_local_files=args.check_local_files)
+                package_checks["package_verify_pass"] = package_report.get("status") == "pass"
+            except (OSError, json.JSONDecodeError, zipfile.BadZipFile, SystemExit) as exc:
+                package_checks["package_verify_pass"] = False
+                package_error = str(exc)
+        else:
+            package_checks["package_verify_pass"] = False
+        required_checks["package.package_zip_exists"] = package_checks["package_zip_exists"]
+        required_checks["package.package_verify_pass"] = package_checks["package_verify_pass"]
+
+    status = "pass" if all(required_checks.values()) else "review_required"
+    report = {
+        "schema": "crab-archi-design-doctor-report-v1",
+        "created_at": now(),
+        "status": status,
+        "python": {
+            "version": sys.version.split()[0],
+            "executable": sys.executable,
+            "minimum_supported": "3.9",
+        },
+        "paths": {
+            "repo_root": str(repo),
+            "project_root": str(root),
+            "project_dir": str(project_dir(args.project_id, root)) if args.project_id else None,
+            "zip": str(Path(args.zip).expanduser()) if args.zip else None,
+        },
+        "local_checks": local_checks,
+        "project_checks": project_checks,
+        "package_checks": package_checks,
+        "required_checks": required_checks,
+        "project_error": project_error,
+        "package_error": package_error,
+        "project_status": project_status,
+        "package_verification": package_report,
+    }
+
+    if args.output_dir:
+        out_dir = Path(args.output_dir).expanduser()
+    elif args.project_id:
+        out_dir = project_dir(args.project_id, root) / "diagnostics"
+    elif args.zip:
+        out_dir = Path(args.zip).expanduser().parent
+    else:
+        out_dir = Path("diagnostics")
+    seq = next_sequence(out_dir, "doctor_report_*.json")
+    out = out_dir / f"doctor_report_{seq:03d}.json"
+    write_json(out, report)
+    print(out)
+    print(json.dumps({"status": status, "required_checks": required_checks}, ensure_ascii=False))
+    if args.strict and status != "pass":
+        raise SystemExit(f"doctor failed; report: {out}")
+
+
 def command_doodle_editor(args: argparse.Namespace) -> None:
     candidates = [
         Path(__file__).resolve().parents[2] / "tools" / "doodle_editor.html",
@@ -2978,6 +3120,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("--check-local-files", action="store_true", help="Also verify local source paths listed in the export manifest.")
     p_verify.add_argument("--strict", action="store_true", help="Exit non-zero if verification is not pass.")
     p_verify.set_defaults(func=command_verify_package)
+
+    p_doctor = sub.add_parser("doctor", help="Diagnose local install, optional project gates, and optional export ZIP.")
+    p_doctor.add_argument("--project-id", help="Optional project id to check.")
+    p_doctor.add_argument("--zip", help="Optional export ZIP path to verify.")
+    p_doctor.add_argument("--manifest", help="Optional external export manifest path for ZIP verification.")
+    p_doctor.add_argument("--output-dir", help="Directory for doctor_report_###.json.")
+    p_doctor.add_argument("--check-local-files", action="store_true", help="Also verify local source paths when checking an export ZIP.")
+    p_doctor.add_argument("--strict", action="store_true", help="Exit non-zero if any required diagnostic check fails.")
+    p_doctor.set_defaults(func=command_doctor)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

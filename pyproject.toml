@@ -7,7 +7,7 @@ name = "crab-archi-design"
 version = "0.1.0"
 description = "Original-SVG-first architectural community design copilot framework."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = { text = "Proprietary" }
 authors = [{ name = "AlexAI-MCP" }]
 dependencies = []

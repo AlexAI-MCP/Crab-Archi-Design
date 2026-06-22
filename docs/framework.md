@@ -61,6 +61,7 @@ recognize-svg
   -> project-status
   -> export-package
   -> verify-package
+  -> doctor
 ```
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints.
@@ -82,6 +83,8 @@ recognize-svg
 `export-package` creates the portable handoff bundle. It writes an export manifest and ZIP containing the latest project status, manifests, OpenCrab sync files, intents, design handoff, workflow report, apply report, engine reports, alternative SVG, and review panel. Source SVG is included only when explicitly requested.
 
 `verify-package` validates exported ZIPs before downstream use. It checks ZIP integrity, embedded manifest presence, archive membership, required artifacts, file sizes, and SHA-256 hashes. This is the recommended boundary before GitHub, SaaS, or another MCP agent consumes the package.
+
+`doctor` is the operational readiness check. It combines local install checks, OpenCrab MCP configuration checks, `project-status` gates, latest candidate SVG checks, and optional `verify-package` results into `diagnostics/doctor_report_###.json`. Use it before CI promotion, OAuth upload, MCP handoff, or GitHub release workflows.
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 
