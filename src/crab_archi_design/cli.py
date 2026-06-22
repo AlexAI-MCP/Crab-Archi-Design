@@ -505,6 +505,161 @@ def command_evidence_attach(args: argparse.Namespace) -> None:
     print(json.dumps({"status": existing["status"], "evidence_count": existing["evidence_count"]}, ensure_ascii=False))
 
 
+def normalize_opencrab_evidence_item(item: Any, index: int) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        return {
+            "id": f"opencrab_item_{index:03d}",
+            "text": str(item),
+            "score": None,
+            "source": None,
+            "metadata": {},
+            "raw": item,
+        }
+    return {
+        "id": item.get("id") or item.get("node_id") or item.get("document_id") or f"opencrab_item_{index:03d}",
+        "document_id": item.get("document_id"),
+        "workspace_id": item.get("workspace_id"),
+        "text": item.get("text") or item.get("content") or item.get("summary") or item.get("answer"),
+        "score": item.get("score"),
+        "source": item.get("source") or item.get("source_file") or item.get("title"),
+        "metadata": item.get("metadata", {}),
+        "retrieval": item.get("retrieval", {}),
+        "raw": item,
+    }
+
+
+def normalize_opencrab_result(result: Any) -> dict[str, Any]:
+    if isinstance(result, list):
+        evidence = result
+        answer = None
+        query = None
+        status = None
+    elif isinstance(result, dict):
+        evidence = result.get("evidence") or result.get("items") or result.get("results") or result.get("chunks") or []
+        if not isinstance(evidence, list):
+            evidence = [evidence]
+        answer = result.get("answer") or result.get("summary")
+        query = result.get("query") or result.get("question")
+        status = result.get("status")
+    else:
+        evidence = [result]
+        answer = None
+        query = None
+        status = None
+    normalized = [normalize_opencrab_evidence_item(item, idx) for idx, item in enumerate(evidence, start=1)]
+    return {
+        "status": status,
+        "query": query,
+        "answer": answer,
+        "evidence_count": len(normalized),
+        "evidence": normalized,
+    }
+
+
+def read_opencrab_result_inputs(args: argparse.Namespace) -> tuple[list[dict[str, Any]], list[str]]:
+    raw_results: list[dict[str, Any]] = []
+    source_labels: list[str] = []
+    for raw_path in args.result_file or []:
+        path = Path(raw_path).expanduser()
+        if not path.exists():
+            raise SystemExit(f"Missing OpenCrab result file: {path}")
+        raw_results.append(read_json(path))
+        source_labels.append(str(path))
+    for idx, raw_text in enumerate(args.result_json or [], start=1):
+        raw_results.append(json.loads(raw_text))
+        source_labels.append(f"inline_json_{idx:03d}")
+    if not raw_results and not sys.stdin.isatty():
+        text = sys.stdin.read().strip()
+        if text:
+            raw_results.append(json.loads(text))
+            source_labels.append("stdin")
+    if not raw_results:
+        raise SystemExit("No OpenCrab result supplied. Pass --result-file, --result-json, or pipe JSON to stdin.")
+    return raw_results, source_labels
+
+
+def command_opencrab_sync(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    base = project_dir(args.project_id, root)
+    raw_results, source_labels = read_opencrab_result_inputs(args)
+    normalized_results = [normalize_opencrab_result(result) for result in raw_results]
+    normalized_evidence = [item for result in normalized_results for item in result["evidence"]]
+    result_queries = [result.get("query") for result in normalized_results if result.get("query")]
+    result_answers = [result.get("answer") for result in normalized_results if result.get("answer")]
+    query = args.query or " | ".join(str(item) for item in result_queries if item) or None
+    summary = args.summary or "\n\n".join(str(item) for item in result_answers if item) or "OpenCrab MCP evidence synchronized."
+
+    sync_dir = base / "opencrab"
+    seq = next_sequence(sync_dir, "opencrab_sync_*.json")
+    sync_payload = {
+        "schema": "crab-archi-design-opencrab-sync-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "source_tool": args.source_tool,
+        "workspace_id": args.workspace_id,
+        "pack_id": args.pack_id or manifest.get("ontology_pack"),
+        "query": query,
+        "summary": summary,
+        "source_labels": source_labels,
+        "normalized_evidence_count": len(normalized_evidence),
+        "normalized_results": normalized_results,
+        "raw_results": raw_results,
+    }
+    sync_path = sync_dir / f"opencrab_sync_{seq:03d}.json"
+    write_json(sync_path, sync_payload)
+
+    existing = None if args.replace else load_evidence_manifest(args.project_id, root)
+    evidence_manifest = existing or {
+        "schema": "crab-archi-design-evidence-manifest-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "opencrab_mcp": manifest.get("opencrab_mcp"),
+        "evidence_items": [],
+    }
+    item = {
+        "id": args.evidence_id or f"opencrab_sync_{len(evidence_manifest.get('evidence_items', [])) + 1:03d}",
+        "attached_at": now(),
+        "source": "opencrab_mcp",
+        "source_tool": args.source_tool,
+        "source_file": str(sync_path),
+        "source_labels": source_labels,
+        "pack_id": args.pack_id or manifest.get("ontology_pack"),
+        "workspace_id": args.workspace_id,
+        "query": query,
+        "summary": summary,
+        "metadata": {
+            **parse_metadata(args.metadata or []),
+            "sync_file": str(sync_path),
+            "normalized_evidence_count": str(len(normalized_evidence)),
+        },
+        "payload": {
+            "schema": "crab-archi-design-opencrab-evidence-payload-v1",
+            "normalized_evidence_count": len(normalized_evidence),
+            "evidence": normalized_evidence,
+        },
+    }
+    evidence_manifest.setdefault("evidence_items", []).append(item)
+    evidence_manifest["updated_at"] = now()
+    evidence_manifest["status"] = "verified" if count_evidence_items(evidence_manifest) > 0 and len(normalized_evidence) > 0 else "review_required"
+    evidence_manifest["evidence_count"] = len(evidence_manifest["evidence_items"])
+    evidence_manifest["required_for_final_svg"] = True
+    out = evidence_manifest_path(args.project_id, root)
+    write_json(out, evidence_manifest)
+    print(sync_path)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": evidence_manifest["status"],
+                "evidence_count": evidence_manifest["evidence_count"],
+                "normalized_evidence_count": len(normalized_evidence),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def command_constraint_attach(args: argparse.Namespace) -> None:
     root = Path(args.project_root)
     manifest = load_manifest(args.project_id, root)
@@ -1840,6 +1995,7 @@ def summarize_evidence_manifest(manifest: dict[str, Any] | None) -> list[dict[st
         {
             "id": item.get("id"),
             "source": item.get("source"),
+            "source_tool": item.get("source_tool"),
             "pack_id": item.get("pack_id"),
             "query": item.get("query"),
             "summary": item.get("summary"),
@@ -2122,6 +2278,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_evidence.add_argument("--evidence-id")
     p_evidence.add_argument("--metadata", action="append", default=[])
     p_evidence.set_defaults(func=command_evidence_attach)
+
+    p_opencrab_sync = sub.add_parser("opencrab-sync", help="Normalize OpenCrab MCP result JSON and attach it as project evidence.")
+    p_opencrab_sync.add_argument("--project-id", required=True)
+    p_opencrab_sync.add_argument("--result-file", action="append", default=[], help="OpenCrab MCP JSON result file. Repeatable.")
+    p_opencrab_sync.add_argument("--result-json", action="append", default=[], help="Inline OpenCrab MCP JSON result. Repeatable.")
+    p_opencrab_sync.add_argument("--source-tool", default="opencrab_mcp")
+    p_opencrab_sync.add_argument("--workspace-id")
+    p_opencrab_sync.add_argument("--pack-id")
+    p_opencrab_sync.add_argument("--query")
+    p_opencrab_sync.add_argument("--summary")
+    p_opencrab_sync.add_argument("--evidence-id")
+    p_opencrab_sync.add_argument("--metadata", action="append", default=[])
+    p_opencrab_sync.add_argument("--replace", action="store_true")
+    p_opencrab_sync.set_defaults(func=command_opencrab_sync)
 
     p_constraint = sub.add_parser("constraint-attach", help="Attach doodle-based lock/no-go/mutable constraints to a project.")
     p_constraint.add_argument("--project-id", required=True)

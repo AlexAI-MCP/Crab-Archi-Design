@@ -65,6 +65,11 @@ crab-archi-design evidence-attach \
   --pack-id community_svg_topology_ontology_v2 \
   --summary "OpenCrab/LocalCrab verified the precedent topology, evidence chunks, protected zones, and 900-household program targets."
 
+crab-archi-design opencrab-sync \
+  --project-id demo \
+  --result-file /path/to/opencrab_mcp_result.json \
+  --source-tool opencrab_search_documents
+
 crab-archi-design constraint-attach \
   --project-id demo \
   --sketch examples/constraint_sketch_sample.json
@@ -110,6 +115,8 @@ crab-archi-design qa --project-id demo
 
 `evidence-attach` writes `projects/<project>/evidence/evidence_manifest.json`. `qa` and `apply-edit` require this manifest to be verified before a final SVG alternative can pass.
 
+`opencrab-sync` normalizes JSON returned by OpenCrab MCP tools such as `opencrab_query` and `opencrab_search_documents`. It writes `projects/<project>/opencrab/opencrab_sync_###.json` and appends the normalized evidence to `projects/<project>/evidence/evidence_manifest.json`.
+
 `constraint-attach` writes `projects/<project>/constraints/constraint_manifest.json`. Use it for community shell, parking/core/column/ramp no-go edges, lock boundaries, mutable zones, and projectable zones. `qa` and `apply-edit` require an active constraint manifest before a final SVG alternative can pass.
 
 `doodle-editor` prints the local SVG doodle editor path and `file://` URL. The editor loads a source SVG from your machine, records vector strokes in source viewBox coordinates, and downloads sketch JSON for `sketch-intent`.
@@ -136,6 +143,7 @@ Original SVG
   -> Recognition Manifest
   -> Constraint Graph
   -> OpenCrab MCP Ontology Evidence
+  -> OpenCrab Sync
   -> Standards Evidence
   -> Standards Manifest
   -> Design Intent JSON

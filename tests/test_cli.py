@@ -283,6 +283,80 @@ def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
     assert brief_json["sketch_analysis"][0]["out_of_bounds_points"] == 1
 
 
+def test_opencrab_sync_attaches_mcp_evidence(tmp_path: Path) -> None:
+    source_svg = tmp_path / "original.svg"
+    source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'></svg>", encoding="utf-8")
+    mcp_result = tmp_path / "opencrab_result.json"
+    mcp_result.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "query": "community SVG topology 900 households",
+                "answer": "Use the A-801 topology evidence and keep protected zones locked.",
+                "evidence": [
+                    {
+                        "id": "ev-001",
+                        "document_id": "doc-001",
+                        "workspace_id": "workspace-001",
+                        "text": "A-801 room envelope is redraw ready for greenery, fitness, golf, and wellness groups.",
+                        "score": 0.91,
+                        "source": "Community SVG 다중 타깃 profile 검증 Evidence",
+                        "metadata": {"source_type": "mcp"},
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "init",
+        "--project-id",
+        "demo",
+        "--source-svg",
+        str(source_svg),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "opencrab-sync",
+        "--project-id",
+        "demo",
+        "--result-file",
+        str(mcp_result),
+        "--source-tool",
+        "opencrab_search_documents",
+        "--metadata",
+        "tool_call=live_mcp",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    sync_path = Path(result.stdout.splitlines()[0])
+    evidence_path = Path(result.stdout.splitlines()[1])
+    sync_json = json.loads(sync_path.read_text(encoding="utf-8"))
+    evidence_manifest = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert sync_json["schema"] == "crab-archi-design-opencrab-sync-v1"
+    assert sync_json["normalized_evidence_count"] == 1
+    assert sync_json["normalized_results"][0]["answer"].startswith("Use the A-801")
+    assert evidence_manifest["status"] == "verified"
+    assert evidence_manifest["evidence_count"] == 1
+    item = evidence_manifest["evidence_items"][0]
+    assert item["source"] == "opencrab_mcp"
+    assert item["source_tool"] == "opencrab_search_documents"
+    assert item["metadata"]["tool_call"] == "live_mcp"
+    assert item["metadata"]["normalized_evidence_count"] == "1"
+    assert item["payload"]["evidence"][0]["id"] == "ev-001"
+    assert "redraw ready" in item["payload"]["evidence"][0]["text"]
+
+
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
     source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><text x='2' y='2'>fitness</text></svg>", encoding="utf-8")

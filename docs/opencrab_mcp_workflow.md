@@ -16,15 +16,16 @@ OpenCrab MCP is the required knowledge path for Crab Archi Design.
 6. Attach user-confirmed community shell, no-go, lock, mutable, and projectable constraints.
 7. Query OpenCrab MCP for the selected ontology pack.
 8. Retrieve precedent topology, program hierarchy, adjacency levers, area standards, claims, and evidence references.
-9. Project the superior-case ontology onto the target drawing's mutable zones.
-10. Compile a `DesignIntent` JSON with OpenCrab evidence references.
-11. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
-12. Run `project-status` to confirm recognition, standards, OpenCrab evidence, constraints, and edit intents are ready.
-13. Build a `design-handoff` package for Codex, an LLM wrapper, an MCP tool, or the deterministic solver.
-14. Generate native SVG geometry through a deterministic solver.
-15. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
-16. Run `project-status` again to confirm the latest candidate and review panel are complete.
-17. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+9. Run `opencrab-sync` to normalize MCP results into the project evidence manifest.
+10. Project the superior-case ontology onto the target drawing's mutable zones.
+11. Compile a `DesignIntent` JSON with OpenCrab evidence references.
+12. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
+13. Run `project-status` to confirm recognition, standards, OpenCrab evidence, constraints, and edit intents are ready.
+14. Build a `design-handoff` package for Codex, an LLM wrapper, an MCP tool, or the deterministic solver.
+15. Generate native SVG geometry through a deterministic solver.
+16. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
+17. Run `project-status` again to confirm the latest candidate and review panel are complete.
+18. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -39,6 +40,14 @@ projects/<project>/evidence/evidence_manifest.json
 ```
 
 `qa` and `apply-edit` treat the candidate as `review_required` until that manifest has `status: verified`. The `opencrab_evidence_verified` check must pass before a generated SVG can be treated as an evidence-backed alternative.
+
+`opencrab-sync` is the preferred bridge when the evidence came directly from OpenCrab MCP. It records the raw MCP result in:
+
+```text
+projects/<project>/opencrab/opencrab_sync_###.json
+```
+
+Then it appends normalized `opencrab_query` or `opencrab_search_documents` evidence to the same evidence manifest used by `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit`.
 
 `edit-brief` should be run after natural-language or doodle input and before `apply-edit`. It does not replace OpenCrab MCP. It confirms the OpenCrab evidence gate, summarizes the requested operations, and catches basic drawing-coordinate mistakes such as doodle strokes outside the source SVG viewBox.
 

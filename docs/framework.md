@@ -38,6 +38,8 @@ recognize-svg
   -> recognition/recognition_manifest.json
   -> evidence-attach
   -> evidence/evidence_manifest.json
+  -> opencrab-sync
+  -> opencrab/opencrab_sync_###.json
   -> standards-attach
   -> standards/standards_manifest.json
   -> constraint-attach
@@ -56,6 +58,8 @@ recognize-svg
 ```
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints.
+
+`opencrab-sync` is the MCP bridge. It normalizes `opencrab_query`, `opencrab_search_documents`, or similar OpenCrab MCP JSON results into a project sync artifact and appends the extracted evidence to the evidence manifest.
 
 `constraint-attach` converts doodle strokes into enforceable project constraints such as community shell, no-go zones, lock boundaries, mutable zones, and projectable zones.
 

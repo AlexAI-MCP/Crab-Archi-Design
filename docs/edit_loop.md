@@ -42,6 +42,26 @@ projects/a801-802-opencrab-test/evidence/evidence_manifest.json
 
 `qa` reports `review_required` until this evidence manifest is verified.
 
+## Sync OpenCrab MCP Results
+
+When Codex or another agent calls OpenCrab MCP directly, save the returned JSON and normalize it into the project evidence gate:
+
+```bash
+crab-archi-design --project-root projects opencrab-sync \
+  --project-id a801-802-opencrab-test \
+  --result-file /path/to/opencrab_mcp_result.json \
+  --source-tool opencrab_search_documents
+```
+
+You can also pass inline JSON with `--result-json` or pipe JSON through stdin. The command creates:
+
+```text
+projects/a801-802-opencrab-test/opencrab/opencrab_sync_###.json
+projects/a801-802-opencrab-test/evidence/evidence_manifest.json
+```
+
+`opencrab-sync` understands common OpenCrab MCP result shapes, including `answer` plus `evidence` from `opencrab_query` and evidence arrays from `opencrab_search_documents`. The normalized evidence is then available to `edit-brief`, `project-status`, `design-handoff`, and `apply-edit`.
+
 ## Attach Standards
 
 Attach the area, program, or finish standards before running a layout alternative. If no `--file` is supplied, the command uses the files passed to `init --standards`.
@@ -262,7 +282,7 @@ For architectural layout revisions, use this order:
 
 1. `recognize-svg`: attach source SVG parse, primitives, and labels.
 2. `standards-attach`: attach household-count standards and selected rows.
-3. `evidence-attach`: attach OpenCrab/LocalCrab ontology evidence.
+3. `evidence-attach` or `opencrab-sync`: attach OpenCrab/LocalCrab ontology evidence.
 4. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
 5. Natural language: describe the design intent and constraints.
 6. Doodle: mark the exact edge, room, circulation line, or wall segment.
