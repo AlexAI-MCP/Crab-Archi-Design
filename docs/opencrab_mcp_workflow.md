@@ -28,7 +28,8 @@ The full flow can be run manually step by step, or through `workflow-run` once t
 16. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
 17. Run `project-status` again to confirm the latest candidate and review panel are complete.
 18. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
-19. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+19. Run `verify-package` to validate the exported ZIP before handoff or upload.
+20. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -63,6 +64,8 @@ Then it appends normalized `opencrab_query` or `opencrab_search_documents` evide
 `reference-svg-engine` can be used at the solver step to validate the full workflow without raster overlays. It produces a native SVG candidate and report, but it should be treated as a reference adapter until a project-specific room-envelope and partition redraw solver is connected.
 
 `export-package` is the portable output boundary for downstream systems. It bundles the latest OpenCrab-backed evidence, project status, design handoff, workflow report, apply report, native SVG candidate, and review panel. Include the source SVG only when the receiving environment is allowed to access the original drawing.
+
+`verify-package` is the receiving-side safety check. It confirms the ZIP can be opened, contains the embedded export manifest and all expected artifacts, and that archived files match the recorded hashes.
 
 ## Recognition Gate
 

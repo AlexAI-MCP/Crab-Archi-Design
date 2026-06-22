@@ -60,6 +60,7 @@ recognize-svg
   -> review-panel
   -> project-status
   -> export-package
+  -> verify-package
 ```
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints.
@@ -79,6 +80,8 @@ recognize-svg
 `design-handoff` writes a Codex/LLM/MCP/engine handoff package. It combines status gates, recognition summaries, OpenCrab evidence, standards excerpts, constraints, operations, prompt blocks, and output contracts so design generation starts from the same evidence-backed project state every time.
 
 `export-package` creates the portable handoff bundle. It writes an export manifest and ZIP containing the latest project status, manifests, OpenCrab sync files, intents, design handoff, workflow report, apply report, engine reports, alternative SVG, and review panel. Source SVG is included only when explicitly requested.
+
+`verify-package` validates exported ZIPs before downstream use. It checks ZIP integrity, embedded manifest presence, archive membership, required artifacts, file sizes, and SHA-256 hashes. This is the recommended boundary before GitHub, SaaS, or another MCP agent consumes the package.
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 

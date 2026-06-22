@@ -544,6 +544,33 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     assert any(name.endswith("workflow_run_001.json") for name in names)
     assert any(name.endswith("original.svg") for name in names)
 
+    result = run_cli("--project-root", "projects", "verify-package", "--zip", str(zip_path), "--strict", cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    verify_report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert verify_report["schema"] == "crab-archi-design-export-verification-v1"
+    assert verify_report["status"] == "pass"
+    assert verify_report["checks"]["zip_integrity_ok"] is True
+    assert verify_report["checks"]["archive_file_hashes_ok"] is True
+    assert verify_report["missing_archive_paths"] == []
+    assert verify_report["hash_mismatches"] == []
+
+    result = run_cli(
+        "--project-root",
+        "projects",
+        "verify-package",
+        "--zip",
+        str(zip_path),
+        "--manifest",
+        str(export_manifest_path),
+        "--check-local-files",
+        "--strict",
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    verify_report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert verify_report["status"] == "pass"
+    assert verify_report["checks"]["local_file_hashes_ok"] is True
+
 
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"

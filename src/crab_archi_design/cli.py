@@ -2673,6 +2673,129 @@ def command_export_package(args: argparse.Namespace) -> None:
     )
 
 
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def load_export_manifest_from_zip(zip_path: Path) -> dict[str, Any]:
+    with zipfile.ZipFile(zip_path) as archive:
+        try:
+            data = archive.read("export_manifest.json")
+        except KeyError as exc:
+            raise SystemExit(f"Missing export_manifest.json in ZIP: {zip_path}") from exc
+    return json.loads(data.decode("utf-8"))
+
+
+def verify_export_package(zip_path: Path, manifest_path_arg: Path | None = None, check_local_files: bool = False) -> dict[str, Any]:
+    if not zip_path.exists():
+        raise SystemExit(f"Missing export ZIP: {zip_path}")
+    manifest = read_json(manifest_path_arg) if manifest_path_arg else load_export_manifest_from_zip(zip_path)
+
+    checks: dict[str, Any] = {
+        "zip_exists": zip_path.exists(),
+        "zip_readable": False,
+        "zip_has_export_manifest": False,
+        "zip_integrity_ok": False,
+        "manifest_schema_ok": manifest.get("schema") == "crab-archi-design-export-package-v1",
+        "manifest_package_status_pass": manifest.get("package_status") == "pass",
+        "project_status_candidate_ready": manifest.get("project_status", {}).get("overall_status") in {"complete_candidate_ready", "ready_for_apply"},
+        "no_missing_required_files": not manifest.get("missing_required"),
+        "archive_file_hashes_ok": False,
+        "local_file_hashes_ok": True,
+    }
+    archive_entries: list[dict[str, Any]] = []
+    missing_archive_paths: list[str] = []
+    hash_mismatches: list[dict[str, Any]] = []
+    local_mismatches: list[dict[str, Any]] = []
+
+    with zipfile.ZipFile(zip_path) as archive:
+        checks["zip_readable"] = True
+        checks["zip_has_export_manifest"] = "export_manifest.json" in archive.namelist()
+        checks["zip_integrity_ok"] = archive.testzip() is None
+        names = set(archive.namelist())
+        for item in manifest.get("files", []):
+            if not item.get("exists") or not item.get("archive_path"):
+                continue
+            archive_path = str(item["archive_path"])
+            entry = {
+                "role": item.get("role"),
+                "archive_path": archive_path,
+                "exists_in_zip": archive_path in names,
+                "sha256_ok": None,
+                "size_ok": None,
+            }
+            if archive_path not in names:
+                missing_archive_paths.append(archive_path)
+                archive_entries.append(entry)
+                continue
+            data = archive.read(archive_path)
+            expected_hash = item.get("sha256")
+            expected_size = item.get("size_bytes")
+            entry["sha256_ok"] = not expected_hash or sha256_bytes(data) == expected_hash
+            entry["size_ok"] = expected_size is None or len(data) == expected_size
+            if entry["sha256_ok"] is False or entry["size_ok"] is False:
+                hash_mismatches.append(
+                    {
+                        "role": item.get("role"),
+                        "archive_path": archive_path,
+                        "expected_sha256": expected_hash,
+                        "actual_sha256": sha256_bytes(data),
+                        "expected_size_bytes": expected_size,
+                        "actual_size_bytes": len(data),
+                    }
+                )
+            archive_entries.append(entry)
+
+    checks["archive_file_hashes_ok"] = not missing_archive_paths and not hash_mismatches
+
+    if check_local_files:
+        for item in manifest.get("files", []):
+            expected_hash = item.get("sha256")
+            raw_path = item.get("path")
+            if not raw_path or not expected_hash:
+                continue
+            path = Path(raw_path).expanduser()
+            if not path.exists():
+                local_mismatches.append({"role": item.get("role"), "path": raw_path, "error": "missing"})
+                continue
+            actual_hash = sha256_file(path)
+            if actual_hash != expected_hash:
+                local_mismatches.append({"role": item.get("role"), "path": raw_path, "expected_sha256": expected_hash, "actual_sha256": actual_hash})
+        checks["local_file_hashes_ok"] = not local_mismatches
+
+    status = "pass" if all(checks.values()) else "review_required"
+    return {
+        "schema": "crab-archi-design-export-verification-v1",
+        "created_at": now(),
+        "status": status,
+        "zip_path": str(zip_path),
+        "manifest_path": str(manifest_path_arg) if manifest_path_arg else "zip:export_manifest.json",
+        "project_id": manifest.get("project_id"),
+        "checks": checks,
+        "file_count": manifest.get("file_count"),
+        "archive_entry_count": len(archive_entries),
+        "missing_archive_paths": missing_archive_paths,
+        "hash_mismatches": hash_mismatches,
+        "local_mismatches": local_mismatches,
+        "archive_entries": archive_entries,
+        "export_manifest": manifest,
+    }
+
+
+def command_verify_package(args: argparse.Namespace) -> None:
+    zip_path = Path(args.zip).expanduser()
+    manifest_path_arg = Path(args.manifest).expanduser() if args.manifest else None
+    report = verify_export_package(zip_path, manifest_path_arg=manifest_path_arg, check_local_files=args.check_local_files)
+    out_dir = Path(args.output_dir).expanduser() if args.output_dir else zip_path.parent
+    seq = next_sequence(out_dir, "verify_report_*.json")
+    out = out_dir / f"verify_report_{seq:03d}.json"
+    write_json(out, report)
+    print(out)
+    print(json.dumps({"status": report["status"], "checks": report["checks"], "missing_archive_paths": report["missing_archive_paths"]}, ensure_ascii=False))
+    if args.strict and report["status"] != "pass":
+        raise SystemExit(f"verify-package failed; report: {out}")
+
+
 def command_doodle_editor(args: argparse.Namespace) -> None:
     candidates = [
         Path(__file__).resolve().parents[2] / "tools" / "doodle_editor.html",
@@ -2847,6 +2970,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--only-latest", action="store_true", help="Skip all edit intents and include only latest summary artifacts.")
     p_export.add_argument("--skip-opencrab-sync", action="store_true", help="Do not include OpenCrab sync artifacts.")
     p_export.set_defaults(func=command_export_package)
+
+    p_verify = sub.add_parser("verify-package", help="Verify an exported Crab Archi Design ZIP package.")
+    p_verify.add_argument("--zip", required=True, help="Export ZIP path.")
+    p_verify.add_argument("--manifest", help="Optional external export_manifest_###.json path. Defaults to export_manifest.json inside the ZIP.")
+    p_verify.add_argument("--output-dir", help="Directory for verify_report_###.json. Defaults to ZIP directory.")
+    p_verify.add_argument("--check-local-files", action="store_true", help="Also verify local source paths listed in the export manifest.")
+    p_verify.add_argument("--strict", action="store_true", help="Exit non-zero if verification is not pass.")
+    p_verify.set_defaults(func=command_verify_package)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

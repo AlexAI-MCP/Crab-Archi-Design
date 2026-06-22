@@ -332,6 +332,22 @@ projects/a801-802-opencrab-test/exports/a801-802-opencrab-test_export_###.zip
 
 By default, the package includes latest project status, recognition, evidence, standards, constraints, edit intents, OpenCrab sync artifacts, design handoff, workflow report, apply report, engine reports, alternative SVG, and review panel. The original source SVG is excluded unless you pass `--include-source-svg`, which is useful for local handoff but should be deliberate for proprietary drawings.
 
+Verify the package before handoff:
+
+```bash
+crab-archi-design --project-root projects verify-package \
+  --zip projects/a801-802-opencrab-test/exports/a801-802-opencrab-test_export_###.zip \
+  --strict
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/exports/verify_report_###.json
+```
+
+`verify-package` checks ZIP integrity, embedded manifest presence, required artifact membership, file sizes, and SHA-256 hashes. Use `--check-local-files` to also compare local source paths against the export manifest.
+
 ## Practical Revision Pattern
 
 For architectural layout revisions, use this order:
@@ -350,7 +366,8 @@ For architectural layout revisions, use this order:
 12. `review-panel`: inspect before/after.
 13. `project-status`: confirm the latest candidate and review artifacts are complete.
 14. `export-package`: bundle the latest artifacts for handoff.
-15. Repeat with another short prompt or doodle repair intent.
+15. `verify-package`: validate the ZIP before upload or handoff.
+16. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

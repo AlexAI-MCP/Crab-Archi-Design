@@ -121,6 +121,10 @@ crab-archi-design export-package \
   --project-id demo \
   --include-source-svg
 
+crab-archi-design verify-package \
+  --zip projects/demo/exports/demo_export_001.zip \
+  --strict
+
 crab-archi-design qa --project-id demo
 ```
 
@@ -151,6 +155,8 @@ crab-archi-design qa --project-id demo
 `review-panel` generates a local before/after HTML panel with original SVG, alternative SVG, intent summary, apply checks, and engine QA gates.
 
 `export-package` writes `projects/<project>/exports/export_manifest_###.json` and `projects/<project>/exports/<project>_export_###.zip`. The ZIP bundles the latest status, manifests, OpenCrab sync results, edit intents, handoff, workflow report, apply report, engine reports, alternative SVG, and review panel for downstream agents or SaaS upload. Source SVG inclusion is opt-in with `--include-source-svg`.
+
+`verify-package` validates an exported ZIP before handoff. It checks ZIP integrity, the embedded export manifest, required files, archive membership, file sizes, and SHA-256 hashes. Use `--check-local-files` when validating on the same machine that produced the package.
 
 For the full revision loop, see [docs/edit_loop.md](docs/edit_loop.md).
 
