@@ -330,7 +330,7 @@ crab-archi-design --project-root projects apply-edit \
   --skip-preview
 ```
 
-The layout engine writes a native SVG candidate with a standards-backed room-envelope redraw layer and an engine report. It uses the community shell, mutable zone, and no-go constraints to keep the proposed program rooms inside the allowed area.
+The layout engine writes a native SVG candidate with a standards-backed room-envelope redraw layer and an engine report. It uses the community shell, mutable zone, and no-go constraints to keep the proposed program rooms inside the allowed area, then adds a plan-detail layer for partition walls, door openings, the corridor axis, and lounge/hall glazing.
 
 For a diagnostic smoke test, `reference-svg-engine` remains available. It writes a native SVG candidate with an additive reference layer and verifies that recognition, OpenCrab evidence, standards, constraints, intents, solver handoff, artifact discovery, QA, and review panels all connect correctly.
 

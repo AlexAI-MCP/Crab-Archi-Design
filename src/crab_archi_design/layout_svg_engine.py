@@ -471,6 +471,265 @@ def choose_room_plan(
     }
 
 
+def room_by_role(rooms: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {item["role"]: item for item in rooms}
+
+
+def shared_boundary(left: dict[str, Any], right: dict[str, Any], tolerance: float = 1e-3) -> dict[str, float | str] | None:
+    ax, ay, aw, ah = room_box(left)
+    bx, by, bw, bh = room_box(right)
+    overlap_y1 = max(ay, by)
+    overlap_y2 = min(ay + ah, by + bh)
+    if overlap_y2 > overlap_y1:
+        if abs(ax + aw - bx) <= tolerance:
+            return {"orientation": "vertical", "x": ax + aw, "y1": overlap_y1, "y2": overlap_y2}
+        if abs(bx + bw - ax) <= tolerance:
+            return {"orientation": "vertical", "x": ax, "y1": overlap_y1, "y2": overlap_y2}
+    overlap_x1 = max(ax, bx)
+    overlap_x2 = min(ax + aw, bx + bw)
+    if overlap_x2 > overlap_x1:
+        if abs(ay + ah - by) <= tolerance:
+            return {"orientation": "horizontal", "y": ay + ah, "x1": overlap_x1, "x2": overlap_x2}
+        if abs(by + bh - ay) <= tolerance:
+            return {"orientation": "horizontal", "y": ay, "x1": overlap_x1, "x2": overlap_x2}
+    return None
+
+
+def add_line(parent: ET.Element, x1: float, y1: float, x2: float, y2: float, attrs: dict[str, str]) -> ET.Element:
+    line_attrs = dict(attrs)
+    line_attrs.update({"x1": f"{x1:.3f}", "y1": f"{y1:.3f}", "x2": f"{x2:.3f}", "y2": f"{y2:.3f}"})
+    return ET.SubElement(parent, qname("line"), line_attrs)
+
+
+def add_plan_rect_outline(parent: ET.Element, planned: dict[str, Any], wall: float) -> None:
+    ET.SubElement(
+        parent,
+        qname("rect"),
+        {
+            "x": f"{planned['x']:.3f}",
+            "y": f"{planned['y']:.3f}",
+            "width": f"{planned['width']:.3f}",
+            "height": f"{planned['height']:.3f}",
+            "fill": "none",
+            "stroke": "#050505",
+            "stroke-width": f"{wall * 1.15:.3f}",
+            "stroke-linejoin": "miter",
+            "data-role": "partition-wall",
+            "data-program-boundary": planned["role"],
+        },
+    )
+
+
+def add_glazing(parent: ET.Element, boundary: dict[str, float | str], wall: float) -> int:
+    common = {
+        "stroke": "#2563eb",
+        "stroke-width": f"{wall * 0.55:.3f}",
+        "stroke-dasharray": f"{wall * 1.4:.3f} {wall * 1.1:.3f}",
+        "stroke-linecap": "butt",
+        "data-role": "interior-glazing",
+    }
+    if boundary["orientation"] == "vertical":
+        add_line(parent, float(boundary["x"]), float(boundary["y1"]), float(boundary["x"]), float(boundary["y2"]), common)
+    else:
+        add_line(parent, float(boundary["x1"]), float(boundary["y"]), float(boundary["x2"]), float(boundary["y"]), common)
+    return 1
+
+
+def add_door_opening(
+    parent: ET.Element,
+    boundary: dict[str, float | str],
+    wall: float,
+    door_between: str,
+    swing_toward: dict[str, Any] | None = None,
+) -> None:
+    if boundary["orientation"] == "vertical":
+        x = float(boundary["x"])
+        y1 = float(boundary["y1"])
+        y2 = float(boundary["y2"])
+        overlap = y2 - y1
+        size = max(wall * 7.5, min(overlap * 0.42, wall * 18.0))
+        center = (y1 + y2) * 0.5
+        start = center - size * 0.5
+        end = center + size * 0.5
+        sign = 1.0
+        if swing_toward:
+            sx, _sy, sw, _sh = room_box(swing_toward)
+            sign = 1.0 if sx + sw * 0.5 > x else -1.0
+        add_line(
+            parent,
+            x,
+            start,
+            x,
+            end,
+            {
+                "stroke": "#ffffff",
+                "stroke-width": f"{wall * 2.9:.3f}",
+                "stroke-linecap": "butt",
+                "data-role": "door-opening",
+                "data-door-between": door_between,
+            },
+        )
+        leaf = size * 0.72
+        add_line(
+            parent,
+            x,
+            start,
+            x + sign * leaf,
+            start,
+            {
+                "stroke": "#050505",
+                "stroke-width": f"{wall * 0.55:.3f}",
+                "stroke-linecap": "square",
+                "data-role": "door-leaf",
+                "data-door-between": door_between,
+            },
+        )
+        ET.SubElement(
+            parent,
+            qname("path"),
+            {
+                "d": f"M {x + sign * leaf:.3f} {start:.3f} Q {x + sign * leaf:.3f} {center:.3f} {x:.3f} {end:.3f}",
+                "fill": "none",
+                "stroke": "#050505",
+                "stroke-width": f"{wall * 0.35:.3f}",
+                "data-role": "door-swing",
+                "data-door-between": door_between,
+            },
+        )
+        return
+
+    y = float(boundary["y"])
+    x1 = float(boundary["x1"])
+    x2 = float(boundary["x2"])
+    overlap = x2 - x1
+    size = max(wall * 7.5, min(overlap * 0.42, wall * 18.0))
+    center = (x1 + x2) * 0.5
+    start = center - size * 0.5
+    end = center + size * 0.5
+    sign = 1.0
+    if swing_toward:
+        _sx, sy, _sw, sh = room_box(swing_toward)
+        sign = 1.0 if sy + sh * 0.5 > y else -1.0
+    add_line(
+        parent,
+        start,
+        y,
+        end,
+        y,
+        {
+            "stroke": "#ffffff",
+            "stroke-width": f"{wall * 2.9:.3f}",
+            "stroke-linecap": "butt",
+            "data-role": "door-opening",
+            "data-door-between": door_between,
+        },
+    )
+    leaf = size * 0.72
+    add_line(
+        parent,
+        start,
+        y,
+        start,
+        y + sign * leaf,
+        {
+            "stroke": "#050505",
+            "stroke-width": f"{wall * 0.55:.3f}",
+            "stroke-linecap": "square",
+            "data-role": "door-leaf",
+            "data-door-between": door_between,
+        },
+    )
+    ET.SubElement(
+        parent,
+        qname("path"),
+        {
+            "d": f"M {start:.3f} {y + sign * leaf:.3f} Q {center:.3f} {y + sign * leaf:.3f} {end:.3f} {y:.3f}",
+            "fill": "none",
+            "stroke": "#050505",
+            "stroke-width": f"{wall * 0.35:.3f}",
+            "data-role": "door-swing",
+            "data-door-between": door_between,
+        },
+    )
+
+
+def add_corridor_axis(parent: ET.Element, hall: dict[str, Any], wall: float) -> int:
+    x, y, w, h = room_box(hall)
+    attrs = {
+        "stroke": "#64748b",
+        "stroke-width": f"{wall * 0.42:.3f}",
+        "stroke-dasharray": f"{wall * 1.2:.3f} {wall * 1.8:.3f}",
+        "stroke-linecap": "butt",
+        "data-role": "corridor-axis",
+    }
+    inset = wall * 4.0
+    if h >= w:
+        add_line(parent, x + w * 0.5, y + inset, x + w * 0.5, y + h - inset, attrs)
+    else:
+        add_line(parent, x + inset, y + h * 0.5, x + w - inset, y + h * 0.5, attrs)
+    return 1
+
+
+def add_plan_detail_layer(parent: ET.Element, rooms: list[dict[str, Any]], layout: tuple[float, float, float, float], wall: float) -> dict[str, Any]:
+    detail = ET.SubElement(
+        parent,
+        qname("g"),
+        {
+            "id": "crab_archi_design_plan_detail_layer",
+            "data-role": "wall-door-corridor-plan",
+        },
+    )
+    for planned in rooms:
+        add_plan_rect_outline(detail, planned, wall)
+
+    rooms_by_role = room_by_role(rooms)
+    hall = rooms_by_role.get("hall_lobby")
+    door_count = 0
+    glazing_count = 0
+    corridor_axis_count = 0
+    if hall:
+        corridor_axis_count += add_corridor_axis(detail, hall, wall)
+        for role in ["greenery_lounge", "fitness_gx", "golf_screen", "sauna_locker_shower", "management_support", "support"]:
+            target = rooms_by_role.get(role)
+            if not target:
+                continue
+            boundary = shared_boundary(hall, target)
+            if not boundary:
+                continue
+            if role == "greenery_lounge":
+                glazing_count += add_glazing(detail, boundary, wall)
+            add_door_opening(detail, boundary, wall, f"hall_lobby:{role}", swing_toward=hall)
+            door_count += 1
+
+        hx, hy, hw, hh = room_box(hall)
+        main_entry = {"orientation": "horizontal", "y": hy + hh, "x1": hx, "x2": hx + hw}
+        add_door_opening(detail, main_entry, wall, "main_entry:hall_lobby", swing_toward=None)
+        door_count += 1
+
+    lx, ly, lw, lh = layout
+    ET.SubElement(
+        detail,
+        qname("rect"),
+        {
+            "x": f"{lx:.3f}",
+            "y": f"{ly:.3f}",
+            "width": f"{lw:.3f}",
+            "height": f"{lh:.3f}",
+            "fill": "none",
+            "stroke": "#050505",
+            "stroke-width": f"{wall * 1.85:.3f}",
+            "stroke-linejoin": "miter",
+            "data-role": "community-perimeter-wall",
+        },
+    )
+    return {
+        "partition_wall_count": len(rooms),
+        "door_opening_count": door_count,
+        "corridor_axis_count": corridor_axis_count,
+        "interior_glazing_count": glazing_count,
+    }
+
+
 def add_text(parent: ET.Element, x: float, y: float, text: str, size: float, fill: str = "#111827") -> ET.Element:
     element = ET.SubElement(
         parent,
@@ -581,6 +840,8 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
         if planned["target_area_m2"] is not None:
             add_text(group, planned["x"] + wall * 3, planned["y"] + label_size * 2.75, f"target {planned['target_area_m2']:.0f} m2", label_size * 0.58, "#374151")
 
+    plan_detail_summary = add_plan_detail_layer(group, rooms, layout, wall)
+
     if shell_points:
         add_polygon(
             group,
@@ -653,6 +914,7 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
         "no_go_intrusions": no_go_intrusions,
         "room_shell_violations": shell_violations,
         "room_aspect_violations": aspect_violations,
+        "plan_detail": plan_detail_summary,
         "program_areas": program_areas,
         "rooms": rooms,
         "room_count": len(rooms),
@@ -707,6 +969,9 @@ def main() -> None:
                 "no_go_intrusion_free": not summary["no_go_intrusions"],
                 "layout_coverage_sufficient": summary["layout_fill_ratio"] >= 0.98,
                 "room_aspect_efficiency": not summary["room_aspect_violations"],
+                "plan_detail_layer_added": summary["plan_detail"]["partition_wall_count"] >= summary["room_count"],
+                "door_openings_planned": summary["plan_detail"]["door_opening_count"] >= 4,
+                "corridor_axis_planned": summary["plan_detail"]["corridor_axis_count"] >= 1,
                 "standards_available": bool(standards_roles),
                 "standard_programs_planned": planned_standard_roles >= standards_roles if standards_roles else False,
                 "large_programs_present": set(summary["large_program_roles_present"]) >= {"greenery_lounge", "fitness_gx", "golf_screen"},
