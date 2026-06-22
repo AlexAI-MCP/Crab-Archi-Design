@@ -117,6 +117,10 @@ crab-archi-design apply-edit \
 crab-archi-design review-panel \
   --project-id demo
 
+crab-archi-design export-package \
+  --project-id demo \
+  --include-source-svg
+
 crab-archi-design qa --project-id demo
 ```
 
@@ -146,6 +150,8 @@ crab-archi-design qa --project-id demo
 
 `review-panel` generates a local before/after HTML panel with original SVG, alternative SVG, intent summary, apply checks, and engine QA gates.
 
+`export-package` writes `projects/<project>/exports/export_manifest_###.json` and `projects/<project>/exports/<project>_export_###.zip`. The ZIP bundles the latest status, manifests, OpenCrab sync results, edit intents, handoff, workflow report, apply report, engine reports, alternative SVG, and review panel for downstream agents or SaaS upload. Source SVG inclusion is opt-in with `--include-source-svg`.
+
 For the full revision loop, see [docs/edit_loop.md](docs/edit_loop.md).
 
 ## Repository Scope
@@ -170,6 +176,7 @@ Original SVG
   -> Design Handoff
   -> Native SVG Solver
   -> QA
+  -> Export Package
   -> Natural Language / Doodle Edit Loop
 ```
 

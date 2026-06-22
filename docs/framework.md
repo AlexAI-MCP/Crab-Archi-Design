@@ -59,6 +59,7 @@ recognize-svg
   -> apply_edit_report.json
   -> review-panel
   -> project-status
+  -> export-package
 ```
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, raster image detection, text label candidates, and program role hints.
@@ -77,6 +78,8 @@ recognize-svg
 
 `design-handoff` writes a Codex/LLM/MCP/engine handoff package. It combines status gates, recognition summaries, OpenCrab evidence, standards excerpts, constraints, operations, prompt blocks, and output contracts so design generation starts from the same evidence-backed project state every time.
 
+`export-package` creates the portable handoff bundle. It writes an export manifest and ZIP containing the latest project status, manifests, OpenCrab sync files, intents, design handoff, workflow report, apply report, engine reports, alternative SVG, and review panel. Source SVG is included only when explicitly requested.
+
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 
 The built-in `reference-svg-engine` adapter is available for end-to-end validation. It reads `solver_input.json`, copies the source SVG into a native SVG candidate, adds a compact reference layer with operations/evidence/standards/constraints summary, and writes a quality-gated engine report. Production projects should replace it with a geometry solver that edits recognized room envelopes and partitions.
@@ -89,4 +92,5 @@ The local `tools/doodle_editor.html` utility turns hand-drawn browser strokes in
 2. CLI adapter for local project-specific geometry execution.
 3. OpenCrab MCP adapter for pack lookup, evidence retrieval, topology projection, and QA citation.
 4. MCP adapter for agent-safe drawing operations.
-5. OAuth/SaaS adapter for user-scoped standards, pack access, run history, and exports.
+5. Export package adapter for GitHub handoff and SaaS upload.
+6. OAuth/SaaS adapter for user-scoped standards, pack access, run history, and exports.

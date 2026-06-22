@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import hashlib
 import html
 import io
 import json
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import webbrowser
 import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -2528,6 +2530,149 @@ def command_workflow_run(args: argparse.Namespace) -> None:
     )
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def package_arcname(project_id: str, base: Path, path: Path, role: str) -> str:
+    try:
+        relative = path.resolve().relative_to(base.resolve())
+        return f"project/{slugify(project_id)}/{relative.as_posix()}"
+    except ValueError:
+        return f"external/{role}/{path.name}"
+
+
+def append_package_file(files: list[dict[str, Any]], project_id: str, base: Path, role: str, path: Path | None, required: bool = False) -> None:
+    if path is None:
+        files.append({"role": role, "path": None, "archive_path": None, "exists": False, "required": required})
+        return
+    expanded = path.expanduser()
+    exists = expanded.exists()
+    item = {
+        "role": role,
+        "path": str(expanded),
+        "archive_path": package_arcname(project_id, base, expanded, role) if exists else None,
+        "exists": exists,
+        "required": required,
+    }
+    if exists and expanded.is_file():
+        item["size_bytes"] = expanded.stat().st_size
+        item["sha256"] = sha256_file(expanded)
+    files.append(item)
+
+
+def append_many_package_files(files: list[dict[str, Any]], project_id: str, base: Path, role: str, paths: list[Path]) -> None:
+    for index, path in enumerate(paths, start=1):
+        append_package_file(files, project_id, base, f"{role}_{index:03d}", path)
+
+
+def latest_handoff_files(base: Path) -> list[Path]:
+    json_path = latest_file(base / "handoffs", "design_handoff_*.json")
+    if not json_path:
+        return []
+    md_path = json_path.with_suffix(".md")
+    return [path for path in [json_path, md_path] if path.exists()]
+
+
+def collect_export_files(project_id: str, root: Path, include_source_svg: bool, include_all_intents: bool, include_opencrab_sync: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    manifest = load_manifest(project_id, root)
+    base = project_dir(project_id, root)
+    status = build_project_status(project_id, root)
+    status_path = base / "status" / "project_status.json"
+    write_json(status_path, status)
+    files: list[dict[str, Any]] = []
+
+    append_package_file(files, project_id, base, "project_manifest", manifest_path(project_id, root), required=True)
+    append_package_file(files, project_id, base, "project_status", status_path, required=True)
+    if include_source_svg:
+        append_package_file(files, project_id, base, "source_svg", Path(manifest["source_svg"]), required=True)
+
+    latest_artifacts = status.get("latest_artifacts", {})
+    for role, raw_path in latest_artifacts.items():
+        append_package_file(files, project_id, base, role, Path(raw_path) if raw_path else None, required=role in {"recognition_manifest", "evidence_manifest", "constraint_manifest", "standards_manifest"})
+
+    for handoff_path in latest_handoff_files(base):
+        append_package_file(files, project_id, base, f"design_handoff_{handoff_path.suffix.lstrip('.')}", handoff_path)
+
+    latest_workflow = latest_file(base / "workflow", "workflow_run_*.json")
+    append_package_file(files, project_id, base, "workflow_report", latest_workflow)
+
+    apply_report_path = latest_artifacts.get("apply_report")
+    if apply_report_path and Path(apply_report_path).exists():
+        apply_report = read_json(Path(apply_report_path))
+        solver_input = apply_report.get("solver_input")
+        append_package_file(files, project_id, base, "solver_input", Path(solver_input) if solver_input else None)
+        for raw_report in apply_report.get("copied_artifacts", {}).get("report", []):
+            append_package_file(files, project_id, base, "engine_report", Path(raw_report))
+
+    if include_all_intents:
+        append_many_package_files(files, project_id, base, "edit_intent", sorted_json_files(base / "edit_intents", "*.json"))
+    if include_opencrab_sync:
+        append_many_package_files(files, project_id, base, "opencrab_sync", sorted_json_files(base / "opencrab", "opencrab_sync_*.json"))
+
+    return status, files
+
+
+def command_export_package(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    base = project_dir(args.project_id, root)
+    status, files = collect_export_files(
+        args.project_id,
+        root,
+        include_source_svg=args.include_source_svg,
+        include_all_intents=not args.only_latest,
+        include_opencrab_sync=not args.skip_opencrab_sync,
+    )
+    export_dir = base / "exports"
+    seq = next_sequence(export_dir, "export_manifest_*.json")
+    zip_path = export_dir / f"{slugify(args.project_id)}_export_{seq:03d}.zip"
+    manifest_path_out = export_dir / f"export_manifest_{seq:03d}.json"
+    export_manifest = {
+        "schema": "crab-archi-design-export-package-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "package_status": "pass" if all(not item.get("required") or item.get("exists") for item in files) else "review_required",
+        "project_status": status,
+        "zip_path": str(zip_path),
+        "include_source_svg": args.include_source_svg,
+        "file_count": sum(1 for item in files if item.get("exists")),
+        "missing_required": [item for item in files if item.get("required") and not item.get("exists")],
+        "files": files,
+    }
+    write_json(manifest_path_out, export_manifest)
+
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(manifest_path_out, "export_manifest.json")
+        for item in files:
+            if not item.get("exists") or not item.get("archive_path"):
+                continue
+            path = Path(item["path"])
+            if path.is_file():
+                archive.write(path, item["archive_path"])
+
+    export_manifest["zip_size_bytes"] = zip_path.stat().st_size
+    export_manifest["zip_sha256"] = sha256_file(zip_path)
+    write_json(manifest_path_out, export_manifest)
+    print(manifest_path_out)
+    print(zip_path)
+    print(
+        json.dumps(
+            {
+                "status": export_manifest["package_status"],
+                "zip_path": str(zip_path),
+                "file_count": export_manifest["file_count"],
+                "missing_required_count": len(export_manifest["missing_required"]),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def command_doodle_editor(args: argparse.Namespace) -> None:
     candidates = [
         Path(__file__).resolve().parents[2] / "tools" / "doodle_editor.html",
@@ -2695,6 +2840,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_workflow.add_argument("--replace-constraints", action="store_true")
     p_workflow.add_argument("--reinit", action="store_true")
     p_workflow.set_defaults(func=command_workflow_run)
+
+    p_export = sub.add_parser("export-package", help="Create a ZIP package of latest project artifacts for handoff or SaaS upload.")
+    p_export.add_argument("--project-id", required=True)
+    p_export.add_argument("--include-source-svg", action="store_true", help="Include the original source SVG in the ZIP.")
+    p_export.add_argument("--only-latest", action="store_true", help="Skip all edit intents and include only latest summary artifacts.")
+    p_export.add_argument("--skip-opencrab-sync", action="store_true", help="Do not include OpenCrab sync artifacts.")
+    p_export.set_defaults(func=command_export_package)
 
     p_qa = sub.add_parser("qa", help="Run lightweight framework QA.")
     p_qa.add_argument("--project-id", required=True)

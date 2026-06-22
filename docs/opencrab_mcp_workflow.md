@@ -27,7 +27,8 @@ The full flow can be run manually step by step, or through `workflow-run` once t
 15. Generate native SVG geometry through a deterministic solver.
 16. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
 17. Run `project-status` again to confirm the latest candidate and review panel are complete.
-18. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
+18. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
+19. Accept natural-language or doodle revisions, then repeat from the OpenCrab evidence projection step.
 
 ## Design Rule
 
@@ -60,6 +61,8 @@ Then it appends normalized `opencrab_query` or `opencrab_search_documents` evide
 `design-handoff` writes `projects/<project>/handoffs/design_handoff_###.json` and `.md`. It packages the prompt blocks, OpenCrab evidence summaries, standards excerpts, constraints, recognized drawing context, and deterministic engine contract after the readiness gates are satisfied.
 
 `reference-svg-engine` can be used at the solver step to validate the full workflow without raster overlays. It produces a native SVG candidate and report, but it should be treated as a reference adapter until a project-specific room-envelope and partition redraw solver is connected.
+
+`export-package` is the portable output boundary for downstream systems. It bundles the latest OpenCrab-backed evidence, project status, design handoff, workflow report, apply report, native SVG candidate, and review panel. Include the source SVG only when the receiving environment is allowed to access the original drawing.
 
 ## Recognition Gate
 

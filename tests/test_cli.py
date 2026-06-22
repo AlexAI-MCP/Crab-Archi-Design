@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import textwrap
+import zipfile
 from pathlib import Path
 
 
@@ -521,6 +522,27 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     assert alternative.exists()
     assert panel.exists()
     assert "crab_archi_design_reference_engine_candidate" in alternative.read_text(encoding="utf-8")
+
+    result = run_cli("--project-root", "projects", "export-package", "--project-id", "demo", "--include-source-svg", cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    export_manifest_path = tmp_path / result.stdout.splitlines()[0]
+    zip_path = tmp_path / result.stdout.splitlines()[1]
+    export_manifest = json.loads(export_manifest_path.read_text(encoding="utf-8"))
+    assert export_manifest["schema"] == "crab-archi-design-export-package-v1"
+    assert export_manifest["package_status"] == "pass"
+    assert export_manifest["project_status"]["overall_status"] == "complete_candidate_ready"
+    assert export_manifest["file_count"] >= 10
+    assert export_manifest["zip_sha256"]
+    assert zip_path.exists()
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+    assert "export_manifest.json" in names
+    assert any(name.endswith("project_manifest.json") for name in names)
+    assert any(name.endswith("project_status.json") for name in names)
+    assert any(name.endswith("alternative_001.svg") for name in names)
+    assert any(name.endswith(".html") and "review_panel" in name for name in names)
+    assert any(name.endswith("workflow_run_001.json") for name in names)
+    assert any(name.endswith("original.svg") for name in names)
 
 
 def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:

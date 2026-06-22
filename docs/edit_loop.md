@@ -314,6 +314,24 @@ projects/a801-802-opencrab-test/panels/review_panel_###.html
 
 The panel embeds the original SVG and generated alternative SVG side by side, then shows the intent summary, apply checks, engine QA gates, and SVG inspection counts.
 
+## Export the Package
+
+When the candidate is ready for another agent, a GitHub handoff, or a SaaS/OAuth upload flow, package the latest artifacts:
+
+```bash
+crab-archi-design --project-root projects export-package \
+  --project-id a801-802-opencrab-test
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/exports/export_manifest_###.json
+projects/a801-802-opencrab-test/exports/a801-802-opencrab-test_export_###.zip
+```
+
+By default, the package includes latest project status, recognition, evidence, standards, constraints, edit intents, OpenCrab sync artifacts, design handoff, workflow report, apply report, engine reports, alternative SVG, and review panel. The original source SVG is excluded unless you pass `--include-source-svg`, which is useful for local handoff but should be deliberate for proprietary drawings.
+
 ## Practical Revision Pattern
 
 For architectural layout revisions, use this order:
@@ -331,7 +349,8 @@ For architectural layout revisions, use this order:
 11. `apply-edit`: generate a native SVG candidate.
 12. `review-panel`: inspect before/after.
 13. `project-status`: confirm the latest candidate and review artifacts are complete.
-14. Repeat with another short prompt or doodle repair intent.
+14. `export-package`: bundle the latest artifacts for handoff.
+15. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 
