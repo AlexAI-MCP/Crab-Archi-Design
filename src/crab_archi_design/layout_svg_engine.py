@@ -1027,7 +1027,7 @@ def main() -> None:
                 "large_programs_present": set(summary["large_program_roles_present"]) >= {"greenery_lounge", "fitness_gx", "golf_screen"},
                 "large_program_hierarchy": summary["large_program_hierarchy_ok"],
                 "room_count_positive": summary["room_count"] > 0,
-                "recognized_columns_preserved": summary["recognized_column_count"] >= 0,
+                "recognized_columns_preserved": summary["recognized_column_count"] > 0,
             }
         },
     }

@@ -25,6 +25,7 @@ DEFAULT_PROJECT_ROOT = Path("projects")
 OPENCRAB_HOMEPAGE = "https://opencrab.sh"
 PROJECT_NAME = "crab-archi-design"
 PROJECT_VERSION = "0.1.0"
+SVG_NUMBER_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 
 
 def now() -> str:
@@ -364,8 +365,36 @@ def element_text(el: ET.Element) -> str:
 def svg_float(value: Any, default: float = 0.0) -> float:
     if value is None:
         return default
-    match = re.search(r"-?\d+(?:\.\d+)?", str(value).replace(",", ""))
+    match = re.search(SVG_NUMBER_RE, str(value).replace(",", ""))
     return float(match.group(0)) if match else default
+
+
+def svg_numbers(value: Any) -> list[float]:
+    if value is None:
+        return []
+    return [float(item) for item in re.findall(SVG_NUMBER_RE, str(value).replace(",", ""))]
+
+
+def text_position(el: ET.Element) -> tuple[float | None, float | None, str | None]:
+    raw_x = el.attrib.get("x")
+    raw_y = el.attrib.get("y")
+    if raw_x is not None and raw_y is not None:
+        return svg_float(raw_x), svg_float(raw_y), "xy"
+
+    transform = el.attrib.get("transform", "")
+    matrix_match = re.search(r"matrix\(([^)]*)\)", transform)
+    if matrix_match:
+        numbers = svg_numbers(matrix_match.group(1))
+        if len(numbers) >= 6:
+            return numbers[4], numbers[5], "matrix_transform"
+
+    translate_match = re.search(r"translate\(([^)]*)\)", transform)
+    if translate_match:
+        numbers = svg_numbers(translate_match.group(1))
+        if len(numbers) >= 2:
+            return numbers[0], numbers[1], "translate_transform"
+
+    return None, None, None
 
 
 def svg_points_bbox(raw_points: Any) -> dict[str, float] | None:
@@ -373,7 +402,7 @@ def svg_points_bbox(raw_points: Any) -> dict[str, float] | None:
     if not raw_points:
         return None
     if isinstance(raw_points, str):
-        numbers = [float(item) for item in re.findall(r"-?\d+(?:\.\d+)?", raw_points)]
+        numbers = svg_numbers(raw_points)
         points = list(zip(numbers[0::2], numbers[1::2]))
     elif isinstance(raw_points, list):
         for point in raw_points:
@@ -421,7 +450,7 @@ def element_bbox(el: ET.Element, tag: str) -> dict[str, float] | None:
         if rx > 0 and ry > 0:
             return {"x": cx - rx, "y": cy - ry, "width": rx * 2, "height": ry * 2}
     if tag == "path":
-        numbers = [float(item) for item in re.findall(r"-?\d+(?:\.\d+)?", el.attrib.get("d", ""))]
+        numbers = svg_numbers(el.attrib.get("d", ""))
         points = list(zip(numbers[0::2], numbers[1::2]))
         return svg_points_bbox([[x, y] for x, y in points])
     return None
@@ -568,14 +597,16 @@ def analyze_svg_recognition(path: Path, max_labels: int = 500) -> dict[str, Any]
             text = element_text(el)
             if text and len(label_candidates) < max_labels:
                 role = classify_label_role(text)
+                x, y, position_source = text_position(el)
                 label = {
                     "text": text,
                     "role_hint": role,
                     "tag": tag,
                     "id": el.attrib.get("id"),
                     "class": el.attrib.get("class"),
-                    "x": el.attrib.get("x"),
-                    "y": el.attrib.get("y"),
+                    "x": x,
+                    "y": y,
+                    "position_source": position_source,
                 }
                 label_candidates.append(label)
                 if role:
@@ -1491,6 +1522,122 @@ def command_topology_build(args: argparse.Namespace) -> None:
     )
 
 
+def latest_recognition_audit_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path | None:
+    return latest_file(project_dir(project_id, root) / "audits", "recognition_audit_*.json")
+
+
+def constraint_roles(manifest: dict[str, Any] | None) -> set[str]:
+    return {str(item.get("role")) for item in (manifest or {}).get("constraint_items", []) if item.get("role")}
+
+
+def topology_edge_counts(manifest: dict[str, Any] | None) -> dict[str, int]:
+    summary = (manifest or {}).get("graph_summary", {})
+    counts = summary.get("edge_counts_by_type")
+    if isinstance(counts, dict):
+        return {str(key): int(value) for key, value in counts.items()}
+    return edge_type_counts((manifest or {}).get("edges", []))
+
+
+def recognition_audit_blocking_issues(gates: dict[str, bool]) -> list[str]:
+    messages = {
+        "source_svg_parse_ok": "Source SVG must parse before architectural recognition.",
+        "recognition_manifest_active": "Run recognize-svg and verify that the recognition manifest is active.",
+        "program_labels_detected": "No community program labels were detected.",
+        "program_labels_positioned": "Program labels need usable SVG coordinates, including transform-derived coordinates.",
+        "wall_candidates_detected": "Wall candidates were not detected strongly enough for plan topology.",
+        "column_candidates_detected": "Column candidates were not detected; final redesign must not proceed without column preservation evidence.",
+        "community_shell_confirmed": "A user-confirmed or inferred community shell is required before mutation.",
+        "mutable_zone_confirmed": "A mutable/projectable community interior zone is required before mutation.",
+        "protected_zone_confirmed": "No-go/lock/protect constraints for parking, cores, ramps, or structure are required.",
+        "topology_manifest_active": "Run topology-build and verify that target drawing topology is active.",
+        "label_topology_edges_present": "Program labels are not connected to room envelopes in the topology graph.",
+    }
+    return [message for key, message in messages.items() if not gates.get(key)]
+
+
+def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
+    manifest = load_manifest(project_id, root)
+    source_svg = Path(manifest["source_svg"]).expanduser()
+    source_info = inspect_svg(source_svg)
+    recognition = load_recognition_manifest(project_id, root)
+    topology = load_topology_manifest(project_id, root)
+    constraints = load_constraint_manifest(project_id, root)
+    geometry_summary = (recognition or {}).get("geometry_summary", {})
+    program_labels = (recognition or {}).get("program_label_candidates", [])
+    positioned_program_labels = [label for label in program_labels if label_point(label) is not None]
+    roles = constraint_roles(constraints)
+    edge_counts = topology_edge_counts(topology)
+    label_topology_edge_count = edge_counts.get("label_inside_envelope", 0) + edge_counts.get("label_nearest_envelope", 0)
+    gates = {
+        "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
+        "recognition_manifest_active": recognition_status(recognition) == "active",
+        "program_labels_detected": len(program_labels) > 0,
+        "program_labels_positioned": len(program_labels) > 0 and len(positioned_program_labels) == len(program_labels),
+        "wall_candidates_detected": int(geometry_summary.get("wall_candidate_count", 0) or 0) > 0,
+        "column_candidates_detected": int(geometry_summary.get("column_candidate_count", 0) or 0) > 0,
+        "community_shell_confirmed": "community_shell" in roles,
+        "mutable_zone_confirmed": bool(roles & {"mutable", "projectable"}),
+        "protected_zone_confirmed": bool(roles & {"no_go", "lock", "protect"}),
+        "topology_manifest_active": topology_status(topology) == "active",
+        "label_topology_edges_present": label_topology_edge_count > 0,
+    }
+    blocking_issues = recognition_audit_blocking_issues(gates)
+    next_actions = [
+        "Fix SVG recognition before running layout generation." if not gates["recognition_manifest_active"] else None,
+        "Add or correct a community shell constraint from actual community outer walls." if not gates["community_shell_confirmed"] else None,
+        "Add a tight mutable zone only inside the existing community boundary." if not gates["mutable_zone_confirmed"] else None,
+        "Add no-go/lock constraints for parking, cores, ramps, and structural zones." if not gates["protected_zone_confirmed"] else None,
+        "Improve column detection or attach confirmed column lock geometry." if not gates["column_candidates_detected"] else None,
+        "Rebuild topology after recognition/constraint fixes." if not gates["label_topology_edges_present"] else None,
+    ]
+    return {
+        "schema": "crab-archi-design-recognition-audit-v1",
+        "created_at": now(),
+        "project_id": project_id,
+        "source_svg": str(source_svg),
+        "status": "pass" if all(gates.values()) else "review_required",
+        "purpose": "Gate design generation until the target drawing is understood as an architectural SVG, not a blank zoning canvas.",
+        "design_generation_policy": "allow_projection_and_svg_mutation" if all(gates.values()) else "blocked_until_recognition_audit_passes",
+        "gates": gates,
+        "blocking_issues": blocking_issues,
+        "metrics": {
+            "program_label_count": len(program_labels),
+            "positioned_program_label_count": len(positioned_program_labels),
+            "wall_candidate_count": int(geometry_summary.get("wall_candidate_count", 0) or 0),
+            "column_candidate_count": int(geometry_summary.get("column_candidate_count", 0) or 0),
+            "room_envelope_candidate_count": int(geometry_summary.get("room_envelope_candidate_count", 0) or 0),
+            "constraint_roles": sorted(roles),
+            "topology_node_count": (topology or {}).get("node_count", 0),
+            "topology_edge_count": (topology or {}).get("edge_count", 0),
+            "label_topology_edge_count": label_topology_edge_count,
+        },
+        "next_actions": [action for action in next_actions if action],
+    }
+
+
+def command_recognition_audit(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    load_manifest(args.project_id, root)
+    audit = build_recognition_audit(args.project_id, root)
+    out_dir = project_dir(args.project_id, root) / "audits"
+    seq = next_sequence(out_dir, "recognition_audit_*.json")
+    out = out_dir / f"recognition_audit_{seq:03d}.json"
+    write_json(out, audit)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": audit["status"],
+                "design_generation_policy": audit["design_generation_policy"],
+                "blocking_issue_count": len(audit["blocking_issues"]),
+                "failed_gates": [key for key, value in audit["gates"].items() if not value],
+                "metrics": audit["metrics"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def sorted_json_files(path: Path, pattern: str) -> list[Path]:
     return sorted(path.glob(pattern), key=lambda item: (item.stat().st_mtime, item.name))
 
@@ -2389,6 +2536,34 @@ def select_candidate_svg(discovered_svgs: list[Path], source_svg: str | None) ->
     return discovered_svgs[0] if discovered_svgs else None
 
 
+def summarize_engine_reports(report_paths: list[str]) -> dict[str, Any]:
+    statuses = []
+    gate_groups: dict[str, dict[str, bool]] = {}
+    for raw_path in report_paths:
+        path = Path(raw_path)
+        if not path.exists() or path.suffix.lower() != ".json":
+            continue
+        try:
+            data = read_json(path)
+        except json.JSONDecodeError:
+            continue
+        gates = data.get("quality", {}).get("gates")
+        if not isinstance(gates, dict):
+            continue
+        schema = str(data.get("schema") or path.stem)
+        statuses.append(str(data.get("status") or "missing"))
+        gate_groups[schema] = {str(key): bool(value) for key, value in gates.items()}
+    gate_values = [value for gates in gate_groups.values() for value in gates.values()]
+    return {
+        "report_count": len(statuses),
+        "statuses": statuses,
+        "gates": gate_groups,
+        "quality_found": bool(gate_values),
+        "all_status_pass": bool(statuses) and all(status == "pass" for status in statuses),
+        "all_gates_pass": bool(gate_values) and all(gate_values),
+    }
+
+
 def command_apply_edit(args: argparse.Namespace) -> None:
     root = Path(args.project_root)
     manifest = load_manifest(args.project_id, root)
@@ -2491,8 +2666,12 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         copied["preview"].append(str(copy_artifact(preview, run_dir, f"preview_{idx:03d}")))
 
     svg_info = inspect_svg(alternative_svg) if alternative_svg else {"xml_parse": "missing", "image_elements": None}
+    engine_report_quality = summarize_engine_reports(copied["report"])
     checks = {
         "engine_returncode_zero": proc.returncode == 0,
+        "engine_report_quality_found": engine_report_quality["quality_found"],
+        "engine_report_status_pass": engine_report_quality["all_status_pass"],
+        "engine_quality_gates_pass": engine_report_quality["all_gates_pass"],
         "candidate_svg_exists": alternative_svg is not None and alternative_svg.exists(),
         "native_svg_no_images": svg_info.get("xml_parse") == "ok" and svg_info.get("image_elements") == 0,
         "recognition_manifest_active": recognition_status(recognition_manifest) == "active",
@@ -2514,6 +2693,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "discovered_outputs": {key: [str(path) for path in paths] for key, paths in discovered.items()},
         "copied_artifacts": copied,
         "svg_inspection": svg_info,
+        "engine_report_quality": engine_report_quality,
         "checks": checks,
         "status": "pass" if all(checks.values()) else "review_required",
     }
@@ -2590,6 +2770,8 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
     apply_report = read_json(latest_apply) if latest_apply else None
     latest_alternative = resolve_latest_alternative(base, apply_report)
     latest_panel = latest_file(base / "panels", "review_panel_*.html")
+    latest_recognition_audit = latest_recognition_audit_path(project_id, root)
+    recognition_audit = read_json(latest_recognition_audit) if latest_recognition_audit else None
     alternative_info = inspect_svg(latest_alternative) if latest_alternative else {"xml_parse": "missing", "image_elements": None}
 
     gates = {
@@ -2601,6 +2783,7 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
         "standards_manifest_active": standards_status(standards_manifest) == "active",
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
+        "recognition_audit_pass": recognition_audit is not None and recognition_audit.get("status") == "pass",
         "edit_intent_exists": len(edit_intent_paths) > 0,
         "latest_apply_pass": bool(apply_report and apply_report.get("status") == "pass"),
         "latest_alternative_exists": latest_alternative is not None and latest_alternative.exists(),
@@ -2643,6 +2826,7 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
             "standards_manifest": str(standards_manifest_path(project_id, root)) if standards_manifest else None,
             "evidence_manifest": str(evidence_manifest_path(project_id, root)) if evidence_manifest else None,
             "constraint_manifest": str(constraint_manifest_path(project_id, root)) if constraint_manifest else None,
+            "recognition_audit": str(latest_recognition_audit) if latest_recognition_audit else None,
             "edit_brief": str(latest_brief) if latest_brief else None,
             "apply_report": str(latest_apply) if latest_apply else None,
             "alternative_svg": str(latest_alternative) if latest_alternative else None,
@@ -2663,6 +2847,8 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
             "evidence_count": count_evidence_items(evidence_manifest),
             "constraint_count": count_constraint_items(constraint_manifest),
             "enforced_constraint_count": count_constraint_items(constraint_manifest, enforced_only=True),
+            "recognition_audit_status": recognition_audit.get("status") if recognition_audit else None,
+            "recognition_audit_blocking_issue_count": len(recognition_audit.get("blocking_issues", [])) if recognition_audit else None,
             "edit_intent_count": len(edit_intent_paths),
             "latest_apply_status": apply_report.get("status") if apply_report else None,
             "latest_alternative_image_elements": alternative_info.get("image_elements"),
@@ -4705,6 +4891,14 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["topology_manifest_active"],
         },
         {
+            "id": "recognition_audit",
+            "cli_subcommand": "recognition-audit",
+            "description": "Audit whether the target SVG is understood well enough for ontology projection and native SVG mutation.",
+            "required_args": ["--project-id"],
+            "outputs": ["audits/recognition_audit_###.json"],
+            "gates": ["program_labels_positioned", "columns_detected", "community_shell_confirmed", "mutable_zone_confirmed", "protected_zone_confirmed", "label_topology_edges_present"],
+        },
+        {
             "id": "opencrab_request",
             "cli_subcommand": "opencrab-request",
             "description": "Create an OpenCrab MCP tool-call request package from the current project context before evidence sync.",
@@ -4890,7 +5084,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "saas_job_runner": ["create_job", "validate_job", "run_job"],
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"],
             "revision_loop": ["revision_run", "export_package", "verify_package", "doctor", "release_audit"],
-            "manual_revision_loop": ["topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
+            "manual_revision_loop": ["topology_build", "recognition_audit", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
             "opencrab_first_manual_loop": ["opencrab_request", "opencrab_sync", "constraint_attach", "topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
             "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
@@ -5154,6 +5348,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_topology = sub.add_parser("topology-build", help="Build a target topology graph from recognition, standards, evidence, and constraints.")
     p_topology.add_argument("--project-id", required=True)
     p_topology.set_defaults(func=command_topology_build)
+
+    p_recognition_audit = sub.add_parser("recognition-audit", help="Gate SVG mutation on target drawing recognition quality.")
+    p_recognition_audit.add_argument("--project-id", required=True)
+    p_recognition_audit.set_defaults(func=command_recognition_audit)
 
     p_standards = sub.add_parser("standards-attach", help="Attach standards files such as CSV, Excel, PDF, or JSON to a project.")
     p_standards.add_argument("--project-id", required=True)

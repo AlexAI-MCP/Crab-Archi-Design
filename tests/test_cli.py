@@ -444,6 +444,44 @@ def test_recognize_svg_extracts_geometry_candidates(tmp_path: Path) -> None:
     assert recognition["geometry_candidates"]["column_candidates"][0]["bbox"]["width"] == 22.0
 
 
+def test_recognize_svg_extracts_text_matrix_transform_positions(tmp_path: Path) -> None:
+    source_svg = tmp_path / "matrix-labels.svg"
+    source_svg.write_text(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600">
+              <rect x="50" y="50" width="700" height="420" fill="none" stroke="#111" stroke-width="5"/>
+              <rect x="100" y="100" width="22" height="22" fill="#111"/>
+              <text transform="matrix(1 -9.3132e-10 9.3132e-10 1 123.5 234.5)">작은도서관</text>
+            </svg>
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "init",
+        "--project-id",
+        "matrix-label-demo",
+        "--source-svg",
+        str(source_svg),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "recognize-svg", "--project-id", "matrix-label-demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    recognition = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    label = recognition["program_label_candidates"][0]
+    assert label["role_hint"] == "greenery_lounge"
+    assert label["x"] == 123.5
+    assert label["y"] == 234.5
+    assert label["position_source"] == "matrix_transform"
+
+
 def test_topology_build_creates_target_graph(tmp_path: Path) -> None:
     source_svg = tmp_path / "topology.svg"
     source_svg.write_text(
@@ -494,6 +532,56 @@ def test_topology_build_creates_target_graph(tmp_path: Path) -> None:
     assert {"program_label", "room_envelope", "structural_column", "standard_program", "constraint"} <= node_types
     assert {"label_inside_envelope", "column_inside_envelope", "standard_applies_to_program", "ontology_adjacency_target"} <= edge_types
     assert topology["graph_summary"]["protected_node_count"] >= 1
+
+
+def test_recognition_audit_gates_svg_mutation_readiness(tmp_path: Path) -> None:
+    source_svg = tmp_path / "audit.svg"
+    source_svg.write_text(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 340">
+              <rect x="30" y="30" width="360" height="250" fill="none" stroke="#111" stroke-width="5"/>
+              <line x1="60" y1="160" x2="360" y2="160" stroke="#111" stroke-width="7"/>
+              <rect x="130" y="145" width="12" height="12" fill="#111"/>
+              <text transform="matrix(1 0 0 1 80 90)">작은도서관</text>
+              <text x="80" y="220">피트니스</text>
+            </svg>
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    constraint = tmp_path / "constraint.json"
+    constraint.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [
+                    {"stroke_id": "shell", "mode": "community_shell", "target_hint": "community_outer_shell", "points": [[30, 30], [390, 30], [390, 280], [30, 280], [30, 30]]},
+                    {"stroke_id": "mutable", "mode": "mutable", "target_hint": "internal_community_program_rework", "points": [[50, 50], [370, 50], [370, 260], [50, 260], [50, 50]]},
+                    {"stroke_id": "no-go", "mode": "no_go", "target_hint": "parking_core_no_go", "points": [[400, 40], [470, 40], [470, 130], [400, 130], [400, 40]]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for args in [
+        ("init", "--project-id", "audit-demo", "--source-svg", str(source_svg), "--ontology-pack", "community_svg_topology_ontology_v2"),
+        ("recognize-svg", "--project-id", "audit-demo"),
+        ("constraint-attach", "--project-id", "audit-demo", "--sketch", str(constraint)),
+        ("topology-build", "--project-id", "audit-demo"),
+    ]:
+        result = run_cli("--project-root", str(tmp_path / "projects"), *args, cwd=ROOT)
+        assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "recognition-audit", "--project-id", "audit-demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    audit = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert audit["status"] == "pass"
+    assert audit["design_generation_policy"] == "allow_projection_and_svg_mutation"
+    assert all(audit["gates"].values())
+    assert audit["metrics"]["positioned_program_label_count"] == 2
+    assert audit["metrics"]["column_candidate_count"] >= 1
 
 
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
@@ -736,6 +824,9 @@ def test_apply_edit_runs_builtin_reference_engine(tmp_path: Path) -> None:
         report_path = command_cwd / report_path
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["status"] == "pass"
+    assert report["checks"]["engine_report_quality_found"] is True
+    assert report["checks"]["engine_report_status_pass"] is True
+    assert report["checks"]["engine_quality_gates_pass"] is True
     assert report["checks"]["native_svg_no_images"] is True
     alternative = Path(report["copied_artifacts"]["svg"][0])
     if not alternative.is_absolute():
@@ -836,6 +927,9 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
     assert report["status"] == "pass"
+    assert report["checks"]["engine_report_quality_found"] is True
+    assert report["checks"]["engine_report_status_pass"] is True
+    assert report["checks"]["engine_quality_gates_pass"] is True
     alternative = Path(report["copied_artifacts"]["svg"][0])
     alternative_text = alternative.read_text(encoding="utf-8")
     assert "crab_archi_design_layout_engine_candidate" in alternative_text
@@ -880,6 +974,71 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     assert engine_report["summary"]["plan_detail"]["partition_wall_count"] >= engine_report["summary"]["room_count"]
     assert engine_report["summary"]["plan_detail"]["door_opening_count"] >= 4
     assert engine_report["summary"]["plan_detail"]["corridor_axis_count"] >= 1
+
+
+def test_apply_edit_marks_review_required_when_columns_are_unrecognized(tmp_path: Path) -> None:
+    source_svg = tmp_path / "no_columns.svg"
+    source_svg.write_text(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 340">
+              <rect x="30" y="30" width="300" height="260" fill="#fff" stroke="#111"/>
+              <text x="55" y="70">작은도서관</text>
+              <text x="55" y="210">피트니스</text>
+              <text x="260" y="190">골프</text>
+            </svg>
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    standards = tmp_path / "standards.csv"
+    standards.write_text(
+        "세대,프로그램,면적_m2\n"
+        "900세대,그리너리 라운지,80\n"
+        "900세대,피트니스,70\n"
+        "900세대,골프클럽,95\n"
+        "900세대,사우나/라커/샤워,85\n",
+        encoding="utf-8",
+    )
+    constraint = tmp_path / "constraint.json"
+    constraint.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [
+                    {"stroke_id": "shell", "mode": "community_shell", "target_hint": "community_outer_shell", "points": [[30, 30], [330, 30], [390, 130], [300, 300], [40, 290], [30, 30]]},
+                    {"stroke_id": "mutable", "mode": "mutable_zone", "target_hint": "internal_community_program_rework", "points": [[55, 55], [310, 55], [330, 250], [70, 270], [55, 55]]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    opencrab_result = tmp_path / "opencrab.json"
+    opencrab_result.write_text(
+        json.dumps({"status": "ok", "query": "community topology", "evidence": [{"id": "e1", "text": "Use hall-linked community topology.", "source": "OpenCrab"}]}),
+        encoding="utf-8",
+    )
+    for args in [
+        ("init", "--project-id", "demo", "--source-svg", str(source_svg), "--households", "900", "--standards", str(standards), "--ontology-pack", "community_svg_topology_ontology_v2", "--engine-adapter", "layout-svg-engine"),
+        ("recognize-svg", "--project-id", "demo"),
+        ("opencrab-sync", "--project-id", "demo", "--result-file", str(opencrab_result)),
+        ("standards-attach", "--project-id", "demo", "--file", str(standards), "--households", "900"),
+        ("constraint-attach", "--project-id", "demo", "--sketch", str(constraint)),
+        ("topology-build", "--project-id", "demo"),
+        ("prompt-edit", "--project-id", "demo", "--text", "Create a standards-based layout with preserved structure."),
+    ]:
+        result = run_cli("--project-root", str(tmp_path / "projects"), *args, cwd=ROOT)
+        assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "apply-edit", "--project-id", "demo", "--skip-preview", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert report["status"] == "review_required"
+    assert report["checks"]["engine_report_quality_found"] is True
+    assert report["checks"]["engine_report_status_pass"] is False
+    assert report["checks"]["engine_quality_gates_pass"] is False
+    gates = next(iter(report["engine_report_quality"]["gates"].values()))
+    assert gates["recognized_columns_preserved"] is False
 
 
 def test_layout_engine_repairs_rooms_inside_community_shell() -> None:
@@ -1493,7 +1652,10 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     report_path = Path(result.stdout.splitlines()[0])
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    assert report["status"] == "pass"
+    assert report["status"] == "review_required"
+    assert report["checks"]["engine_report_quality_found"] is False
+    assert report["checks"]["engine_report_status_pass"] is False
+    assert report["checks"]["engine_quality_gates_pass"] is False
     assert report["checks"]["native_svg_no_images"] is True
     assert report["checks"]["recognition_manifest_active"] is True
     assert report["checks"]["topology_manifest_active"] is True
@@ -1541,13 +1703,13 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     status_path = Path(result.stdout.splitlines()[0])
     status_json = json.loads(status_path.read_text(encoding="utf-8"))
     assert status_path.name == "project_status.json"
-    assert status_json["overall_status"] == "complete_candidate_ready"
-    assert status_json["gates"]["latest_apply_pass"] is True
+    assert status_json["overall_status"] == "candidate_review_required"
+    assert status_json["gates"]["latest_apply_pass"] is False
     assert status_json["gates"]["latest_alternative_exists"] is True
     assert status_json["gates"]["latest_alternative_native_svg"] is True
     assert status_json["latest_artifacts"]["alternative_svg"].endswith("alternative_001.svg")
     assert status_json["latest_artifacts"]["review_panel"].endswith(".html")
-    assert status_json["metrics"]["latest_apply_status"] == "pass"
+    assert status_json["metrics"]["latest_apply_status"] == "review_required"
 
 
 def test_doodle_editor_command_prints_local_editor() -> None:

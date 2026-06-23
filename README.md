@@ -69,7 +69,8 @@ GitHub Actions runs the same core contract used by local handoff:
 10. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
 11. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
 12. Execute `revision-run` on the same project to verify the repeat-edit path.
-13. Run `export-package`, `verify-package --strict`, `doctor --strict`, and `release-audit --strict`.
+13. Run `recognition-audit` when a target drawing needs a recognition-first gate before mutation.
+14. Run `export-package`, `verify-package --strict`, `doctor --strict`, and `release-audit --strict`.
 
 The CI sample uses:
 
@@ -248,6 +249,8 @@ crab-archi-design qa --project-id demo
 `recognize-svg` writes `projects/<project>/recognition/recognition_manifest.json`. It stores SVG parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, label candidates, and program role hints before any layout mutation.
 
 `topology-build` writes `projects/<project>/topology/topology_manifest.json`. It turns recognition candidates, standards rows, OpenCrab evidence, and doodle constraints into an explicit node/edge graph for labels, room envelopes, columns, walls, program standards, protected constraints, and ontology adjacency targets. `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit` require this manifest to be active before a final SVG alternative can pass.
+
+`recognition-audit` writes `projects/<project>/audits/recognition_audit_###.json`. It is the recognition-first gate for real architectural drawings: program labels must have coordinates, wall and column candidates must be detected, the community shell/mutable zone/protected no-go zones must be confirmed, and topology must connect labels to room envelopes. If this audit is `review_required`, the correct next step is to improve recognition or user-confirmed constraints, not to generate another zoning block.
 
 `standards-attach` writes `projects/<project>/standards/standards_manifest.json`. CSV files are parsed into selected rows for the household count; Excel, PDF, and JSON files are attached as verified standards references for the engine adapter.
 

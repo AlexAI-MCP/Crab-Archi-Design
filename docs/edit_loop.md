@@ -158,6 +158,21 @@ projects/a801-802-opencrab-test/topology/topology_manifest.json
 
 The topology manifest links recognized program labels, room envelopes, protected columns, wall candidates, standards roles, drawing constraints, and OpenCrab adjacency targets. `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit` report `review_required` until this manifest is active.
 
+Before asking for SVG mutation on a real target drawing, run the recognition-first gate:
+
+```bash
+crab-archi-design --project-root projects recognition-audit \
+  --project-id a801-802-opencrab-test
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/audits/recognition_audit_###.json
+```
+
+The audit must pass before a production redraw workflow should proceed. It checks positioned program labels, wall candidates, column candidates, confirmed community shell, mutable zone, protected no-go zones, active topology, and label-to-envelope edges. If it fails, fix recognition or constraints first.
+
 ## Natural Language
 
 ```bash
@@ -426,18 +441,19 @@ For architectural layout revisions, use this order:
 5. `evidence-attach` or `opencrab-sync`: attach OpenCrab/LocalCrab ontology evidence.
 6. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
 7. `topology-build`: connect recognition, standards, evidence, and constraints into the target topology graph.
-8. Natural language: describe the design intent and constraints.
-9. Doodle: mark the exact edge, room, circulation line, or wall segment.
-10. `edit-brief`: check recognition, topology, evidence, standards, constraints, source SVG parse, and sketch bounds.
-11. `project-status`: confirm the project is ready for solver handoff.
-12. `design-handoff`: package the current topology, evidence, standards, constraints, and prompt blocks.
-13. `apply-edit`: generate a native SVG candidate.
-14. `review-panel`: inspect before/after.
-15. `project-status`: confirm the latest candidate and review artifacts are complete.
-16. `export-package`: bundle the latest artifacts for handoff.
-17. `verify-package`: validate the ZIP before upload or handoff.
-18. `doctor`: diagnose local install, project gates, OpenCrab configuration, candidate readiness, and optional package verification.
-19. Repeat with another short prompt or doodle repair intent.
+8. `recognition-audit`: block SVG mutation until the target drawing is actually understood.
+9. Natural language: describe the design intent and constraints.
+10. Doodle: mark the exact edge, room, circulation line, or wall segment.
+11. `edit-brief`: check recognition, topology, evidence, standards, constraints, source SVG parse, and sketch bounds.
+12. `project-status`: confirm the project is ready for solver handoff.
+13. `design-handoff`: package the current topology, evidence, standards, constraints, and prompt blocks.
+14. `apply-edit`: generate a native SVG candidate.
+15. `review-panel`: inspect before/after.
+16. `project-status`: confirm the latest candidate and review artifacts are complete.
+17. `export-package`: bundle the latest artifacts for handoff.
+18. `verify-package`: validate the ZIP before upload or handoff.
+19. `doctor`: diagnose local install, project gates, OpenCrab configuration, candidate readiness, and optional package verification.
+20. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 
