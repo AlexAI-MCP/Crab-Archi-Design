@@ -782,6 +782,8 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["metrics"]["editable_source_geometry_candidate_count"] >= 1
     assert plan["program_clusters"]
     assert plan["program_anchors"][0]["position_source"] == "topology.label_inside_space_region"
+    assert isinstance(plan["program_anchors"][0]["source_document_index"], int)
+    assert plan["program_anchors"][0]["source_node_id"]
     assert plan["same_layer_mutable_candidates"][0]["addressing"] == "source_svg_element_index"
     assert plan["same_layer_mutable_candidates"][0]["recognition_source"] == "recognition_ir_v2.nodes"
     assert plan["same_layer_mutable_candidates"][0]["source_document_index"] == plan["same_layer_mutable_candidates"][0]["element_index"]
@@ -853,6 +855,43 @@ def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
     assert partition.attrib["display"] == "none"
     assert partition.attrib["data-crab-original-x2"] == "80"
     assert partition.attrib["data-crab-program-role"] == "greenery_lounge"
+
+
+def test_solver_same_layer_geometry_patch_applies_program_relabels() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 80">
+          <text id="library-label" x="20" y="30">작은도서관</text>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "program_anchors": [
+            {
+                "text": "작은도서관",
+                "role_hint": "greenery_lounge",
+                "source_node_id": "n0002",
+                "source_document_index": 2,
+                "program_cluster_id": "program_cluster_lounge",
+                "point": [20, 30],
+            }
+        ],
+        "same_layer_mutable_candidates": [],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=1, apply_program_relabels=True)
+    label = next(element for element in root.iter() if element.attrib.get("id") == "library-label")
+
+    assert summary["program_relabel_count"] == 1
+    assert summary["same_layer_semantic_mutation_count"] == 1
+    assert summary["same_layer_design_change_count"] == 1
+    assert summary["program_relabel_mutations"][0]["original_text"] == "작은도서관"
+    assert summary["program_relabel_mutations"][0]["replacement_text"] == "그리너리 라운지"
+    assert label.text == "그리너리 라운지"
+    assert label.attrib["data-crab-original-text"] == "작은도서관"
+    assert label.attrib["data-crab-design-change"] == "program_redefinition"
 
 
 def test_solver_same_layer_geometry_patch_uses_intent_projection_for_selection() -> None:

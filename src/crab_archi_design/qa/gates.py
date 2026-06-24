@@ -48,6 +48,7 @@ SOFT_ENGINE_GATES = {
     "large_programs_present",
     "large_program_hierarchy",
     "program_cluster_targets_used",
+    "program_relabels_applied_or_not_requested",
     "same_layer_openings_applied_or_not_requested",
     "same_layer_endpoint_moves_applied_or_not_requested",
     "edit_capability_summary_present",

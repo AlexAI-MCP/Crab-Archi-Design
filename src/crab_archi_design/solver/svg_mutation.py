@@ -10,6 +10,7 @@ from crab_archi_design.solver.svg_edit_ops import (
     edit_capability_report,
     local_tag,
     move_line_endpoint,
+    original_attr_name,
     preserve_original_attrs,
     split_line_for_opening,
     split_polyline_for_opening,
@@ -116,6 +117,120 @@ def selected_candidate_index(candidate: dict[str, Any]) -> int | None:
     except (TypeError, ValueError):
         return None
     return index if index > 0 else None
+
+
+PROGRAM_RELABELS = {
+    "작은도서관": "그리너리 라운지",
+    "주민카페": "라운지 카페",
+    "피트니스": "피트니스/GX",
+    "GX룸": "GX/스트레칭",
+    "실내골프장": "골프클럽",
+    "스크린": "스크린골프",
+    "홀": "메인 로비홀",
+    "락커": "락커/샤워",
+    "사우나": "사우나",
+}
+
+
+def element_text_content(element: Element) -> str:
+    return " ".join(part.strip() for part in element.itertext() if part and part.strip())
+
+
+def relabel_text_element(element: Element, replacement: str, anchor: dict[str, Any]) -> dict[str, Any]:
+    original = element_text_content(element)
+    if original_attr_name("text") not in element.attrib:
+        element.set(original_attr_name("text"), original)
+    element.text = replacement
+    element.set("data-crab-action", "semantic_program_relabel")
+    element.set("data-crab-design-change", "program_redefinition")
+    element.set("data-crab-original-program-label", original)
+    element.set("data-crab-program-role", str(anchor.get("role_hint") or ""))
+    if anchor.get("program_cluster_id"):
+        element.set("data-crab-program-cluster", str(anchor["program_cluster_id"]))
+    return {
+        "action": "semantic_program_relabel",
+        "target_element_index": anchor.get("source_document_index"),
+        "source_node_id": anchor.get("source_node_id"),
+        "program_cluster_id": anchor.get("program_cluster_id"),
+        "program_role": anchor.get("role_hint"),
+        "original_text": original,
+        "replacement_text": replacement,
+        "point": anchor.get("point"),
+        "geometry_mutated": False,
+        "same_layer_semantic_mutation": True,
+    }
+
+
+def design_relabel_for_anchor(anchor: dict[str, Any]) -> str | None:
+    text = str(anchor.get("text") or "").strip()
+    if text in PROGRAM_RELABELS:
+        return PROGRAM_RELABELS[text]
+    role = str(anchor.get("role_hint") or "")
+    if role == "greenery_lounge" and text:
+        return "그리너리 라운지"
+    if role == "golf_screen" and text:
+        return "골프클럽"
+    if role == "hall_lobby" and text:
+        return "메인 로비홀"
+    return None
+
+
+def apply_program_relabel_candidates(
+    plan: dict[str, Any],
+    element_map: dict[int, Element],
+    locked_indices: set[int],
+    max_relabels: int = 16,
+) -> dict[str, Any]:
+    applied: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for anchor in plan.get("program_anchors", []):
+        if len(applied) >= max_relabels:
+            break
+        element_index = selected_candidate_index({"element_index": anchor.get("source_document_index")})
+        replacement = design_relabel_for_anchor(anchor)
+        if element_index is None or not replacement:
+            continue
+        if element_index in seen:
+            continue
+        seen.add(element_index)
+        if element_index in locked_indices:
+            skipped.append(
+                {
+                    "target_element_index": element_index,
+                    "operation": "semantic_program_relabel",
+                    "reason": "target text element is locked/protected by patch plan",
+                }
+            )
+            continue
+        element = element_map.get(element_index)
+        if element is None or local_tag(element) != "text":
+            skipped.append(
+                {
+                    "target_element_index": element_index,
+                    "operation": "semantic_program_relabel",
+                    "reason": "target text element not found",
+                }
+            )
+            continue
+        original = element_text_content(element)
+        if original == replacement:
+            skipped.append(
+                {
+                    "target_element_index": element_index,
+                    "operation": "semantic_program_relabel",
+                    "reason": "existing label already matches proposed program label",
+                    "text": original,
+                }
+            )
+            continue
+        applied.append(relabel_text_element(element, replacement, anchor))
+    return {
+        "program_relabel_candidate_count": len(plan.get("program_anchors", [])),
+        "program_relabel_count": len(applied),
+        "program_relabel_mutations": applied,
+        "program_relabel_skips": skipped,
+    }
 
 
 def element_state(element: Element) -> dict[str, Any]:
@@ -692,6 +807,8 @@ def apply_same_layer_geometry_patch(
     max_openings: int = 4,
     apply_endpoint_moves: bool = False,
     max_endpoint_moves: int = 4,
+    apply_program_relabels: bool = False,
+    max_program_relabels: int = 16,
     intents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     plan = project_intents_onto_patch_plan(plan, intents)
@@ -707,6 +824,17 @@ def apply_same_layer_geometry_patch(
     locked_before = capture_locked_element_states(root, plan)
     capability_summary = edit_capability_summary(plan, element_map, parent_map, transform_map, locked_indices)
     capability_totals = edit_capability_totals(capability_summary)
+    program_relabel_summary = apply_program_relabel_candidates(
+        plan,
+        element_map,
+        locked_indices,
+        max_relabels=max_program_relabels,
+    ) if apply_program_relabels else {
+        "program_relabel_candidate_count": len(plan.get("program_anchors", [])),
+        "program_relabel_count": 0,
+        "program_relabel_mutations": [],
+        "program_relabel_skips": [],
+    }
     opening_summary = apply_opening_candidates(
         root,
         plan,
@@ -765,7 +893,8 @@ def apply_same_layer_geometry_patch(
     removal_geometry_mutation_count = sum(1 for item in mutated if item.get("geometry_mutated"))
     opening_program_cluster_count = sum(1 for item in opening_summary["opening_mutations"] if item.get("program_cluster_id"))
     endpoint_program_cluster_count = sum(1 for item in endpoint_summary["endpoint_move_mutations"] if item.get("program_cluster_id"))
-    intent_role_coverage = build_intent_role_coverage(plan, mutated, opening_summary["opening_mutations"], endpoint_summary["endpoint_move_mutations"])
+    semantic_mutations = program_relabel_summary["program_relabel_mutations"]
+    intent_role_coverage = build_intent_role_coverage(plan, [*mutated, *semantic_mutations], opening_summary["opening_mutations"], endpoint_summary["endpoint_move_mutations"])
     intent_repair_recommendations = build_intent_repair_recommendations(plan, intent_role_coverage)
     return {
         "mutation_strategy": "same_layer_geometry_patch",
@@ -780,14 +909,20 @@ def apply_same_layer_geometry_patch(
         "edit_capability_manual_review_count": capability_totals["manual_review_count"],
         "selected_candidate_count": len(selected),
         "same_layer_mutation_count": len(mutated),
+        "same_layer_semantic_mutation_count": program_relabel_summary["program_relabel_count"],
+        "same_layer_design_change_count": program_relabel_summary["program_relabel_count"] + len(mutated) + opening_summary["same_layer_opening_split_count"] + endpoint_summary["same_layer_endpoint_move_count"],
         "same_layer_removal_count": sum(1 for item in mutated if item.get("same_layer_removed")),
         "same_layer_geometry_mutation_count": removal_geometry_mutation_count + opening_summary["same_layer_opening_split_count"] + endpoint_summary["same_layer_endpoint_move_count"],
+        "program_relabel_candidate_count": program_relabel_summary["program_relabel_candidate_count"],
+        "program_relabel_count": program_relabel_summary["program_relabel_count"],
         "same_layer_opening_split_count": opening_summary["same_layer_opening_split_count"],
         "same_layer_segment_added_count": opening_summary["same_layer_segment_added_count"],
         "same_layer_endpoint_move_count": endpoint_summary["same_layer_endpoint_move_count"],
         "program_cluster_mutation_count": sum(1 for item in mutated if item.get("program_cluster_id")) + opening_program_cluster_count + endpoint_program_cluster_count,
         "missing_element_indices": missing,
         "mutations": mutated,
+        "program_relabel_mutations": program_relabel_summary["program_relabel_mutations"],
+        "program_relabel_skips": program_relabel_summary["program_relabel_skips"],
         "partition_remove_skips": partition_skips,
         "opening_mutations": opening_summary["opening_mutations"],
         "opening_skips": opening_summary["opening_skips"],

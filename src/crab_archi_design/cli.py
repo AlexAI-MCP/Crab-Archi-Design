@@ -2336,9 +2336,27 @@ def candidate_program_cluster(box: dict[str, float], clusters: list[dict[str, An
     return sorted(matches, key=lambda cluster: bbox_area(normalize_bbox_dict(cluster.get("bbox"))))[0]
 
 
-def program_anchors_from_topology(topology: dict[str, Any] | None, mutable_polygons: list[dict[str, Any]], shell_polygons: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def recognition_ir_node_document_indexes(ir: dict[str, Any] | None) -> dict[str, int]:
+    indexes: dict[str, int] = {}
+    if recognition_ir_v2_status(ir) != "active":
+        return indexes
+    for node in ir.get("nodes", []):
+        node_id = node.get("id")
+        source_index = node.get("source_document_index")
+        if node_id and isinstance(source_index, int):
+            indexes[str(node_id)] = source_index
+    return indexes
+
+
+def program_anchors_from_topology(
+    topology: dict[str, Any] | None,
+    mutable_polygons: list[dict[str, Any]],
+    shell_polygons: list[dict[str, Any]],
+    source_index_by_node_id: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
     if not topology:
         return []
+    source_index_by_node_id = source_index_by_node_id or {}
     nodes = {node["id"]: node for node in topology.get("nodes", []) if node.get("id")}
     space_region_to_cluster: dict[str, dict[str, Any]] = {}
     for edge in topology.get("edges", []):
@@ -2371,6 +2389,8 @@ def program_anchors_from_topology(topology: dict[str, Any] | None, mutable_polyg
                 "text": label.get("label"),
                 "role_hint": label.get("role"),
                 "point": list(point),
+                "source_node_id": label.get("source_node_id"),
+                "source_document_index": source_index_by_node_id.get(str(label.get("source_node_id") or "")),
                 "space_region_id": region.get("id"),
                 "space_region_bbox": region.get("bbox"),
                 "program_cluster_id": cluster.get("id") if cluster else None,
@@ -2454,7 +2474,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
     opening_candidates = build_opening_candidates(mutable_candidates, topology, min(max_candidates, 24))
     endpoint_move_candidates = build_endpoint_move_candidates(mutable_candidates, topology, min(max_candidates, 24))
 
-    program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons)
+    program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons, recognition_ir_node_document_indexes(recognition_ir))
     if not program_anchors:
         for item in (recognition or {}).get("program_label_candidates", []):
             point = label_point(item)

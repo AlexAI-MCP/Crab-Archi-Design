@@ -41,6 +41,8 @@ def main() -> None:
     parser.add_argument("--max-openings", type=int, default=4)
     parser.add_argument("--apply-endpoint-moves", action="store_true")
     parser.add_argument("--max-endpoint-moves", type=int, default=4)
+    parser.add_argument("--apply-program-relabels", action="store_true")
+    parser.add_argument("--max-program-relabels", type=int, default=16)
     args, _ = parser.parse_known_args()
 
     solver_input_path = Path(os.environ["CRAB_ARCHI_SOLVER_INPUT"])
@@ -81,6 +83,8 @@ def main() -> None:
         max_openings=max(1, args.max_openings),
         apply_endpoint_moves=args.apply_endpoint_moves,
         max_endpoint_moves=max(1, args.max_endpoint_moves),
+        apply_program_relabels=args.apply_program_relabels,
+        max_program_relabels=max(1, args.max_program_relabels),
         intents=solver_input.get("intents", []),
     )
     output_svg = run_dir / "same_layer_engine_candidate.svg"
@@ -103,9 +107,10 @@ def main() -> None:
             and "review_required_count" in capability_totals
             and summary.get("edit_capability_review_required_count") == capability_totals.get("review_required_count")
         ),
-        "source_element_addresses_used": summary["selected_candidate_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
-        "existing_elements_mutated": summary["same_layer_mutation_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
+        "source_element_addresses_used": summary["selected_candidate_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0 or summary["program_relabel_count"] > 0,
+        "existing_elements_mutated": summary["same_layer_mutation_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0 or summary["program_relabel_count"] > 0,
         "existing_geometry_mutated": summary["same_layer_geometry_mutation_count"] > 0,
+        "program_relabels_applied_or_not_requested": (not args.apply_program_relabels) or summary["program_relabel_count"] > 0,
         "same_layer_internal_partitions_removed": summary["same_layer_removal_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
         "same_layer_openings_applied_or_not_requested": (not args.apply_openings) or summary["same_layer_opening_split_count"] > 0,
         "same_layer_endpoint_moves_applied_or_not_requested": (not args.apply_endpoint_moves) or summary["same_layer_endpoint_move_count"] > 0,
