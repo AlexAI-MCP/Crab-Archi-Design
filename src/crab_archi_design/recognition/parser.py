@@ -6,6 +6,7 @@ from xml.etree.ElementTree import Element
 
 from crab_archi_design.recognition.ir import empty_recognition_ir
 from crab_archi_design.recognition.classify import classify_node
+from crab_archi_design.svg.defs import collect_id_index, referenced_element, use_instance_matrix
 from crab_archi_design.svg.namespace import local_name
 from crab_archi_design.svg.safe_load import SvgLoadError, safe_load_svg
 from crab_archi_design.svg.shapes import build_shape_node
@@ -37,7 +38,8 @@ def build_recognition_ir_v2(path: Path) -> dict[str, Any]:
     )
     nodes: list[dict[str, Any]] = []
     raster_nodes: list[dict[str, Any]] = []
-    walk_svg(root, identity_matrix(), [], {}, nodes, raster_nodes, ir["warnings"])
+    id_index = collect_id_index(root)
+    walk_svg(root, identity_matrix(), [], {}, nodes, raster_nodes, ir["warnings"], id_index)
     drawing_area = max(1.0, viewbox.width * viewbox.height)
     for node in nodes:
         role_hint, confidence = classify_node(node, drawing_area)
@@ -57,6 +59,8 @@ def walk_svg(
     nodes: list[dict[str, Any]],
     raster_nodes: list[dict[str, Any]],
     warnings: list[dict[str, Any]],
+    id_index: dict[str, Element],
+    use_stack: tuple[str, ...] = (),
 ) -> None:
     tag = local_name(element.tag)
     style = inherited_style(parent_style, element)
@@ -65,6 +69,22 @@ def walk_svg(
     if tag in {"g", "svg", "symbol"}:
         group_id = element.attrib.get("id")
         next_group_path = [*group_path, group_id] if group_id else group_path
+    if tag == "defs":
+        return
+    if tag == "use":
+        referenced, error = referenced_element(element, id_index)
+        use_id = element.attrib.get("id") or f"use_{len(nodes) + 1:04d}"
+        if error or referenced is None:
+            warnings.append({"code": error or "use_reference_failed", "node": use_id, "source_id": element.attrib.get("id")})
+            return
+        reference_id = referenced.attrib.get("id")
+        if reference_id in use_stack:
+            warnings.append({"code": "use_reference_cycle", "node": use_id, "source_id": element.attrib.get("id"), "reference_id": reference_id})
+            return
+        use_matrix = multiply_matrix(matrix, use_instance_matrix(element, referenced))
+        use_group_path = [*group_path, use_id]
+        walk_svg(referenced, use_matrix, use_group_path, style, nodes, raster_nodes, warnings, id_index, (*use_stack, reference_id or ""))
+        return
     if tag == "image":
         raster_nodes.append({"source_id": element.attrib.get("id"), "group_path": group_path})
     elif tag in SHAPE_TAGS:
@@ -77,7 +97,7 @@ def walk_svg(
             node["transform_chain"] = [[round(item, 6) for item in matrix]]
             nodes.append(node)
     for child in list(element):
-        walk_svg(child, matrix, next_group_path, style, nodes, raster_nodes, warnings)
+        walk_svg(child, matrix, next_group_path, style, nodes, raster_nodes, warnings, id_index, use_stack)
 
 
 def summarize_nodes(nodes: list[dict[str, Any]], raster_nodes: list[dict[str, Any]]) -> dict[str, int]:

@@ -38,6 +38,8 @@ def test_svg_geometry_and_transform_helpers_are_deterministic() -> None:
     assert inverse_matrix(matrix) is not None
     assert apply_inverse_matrix(matrix, (16.0, 28.0)) == (3.0, 4.0)
     assert apply_inverse_linear(matrix, (10.0, 0.0)) == (5.0, 0.0)
+    assert tuple(round(item, 3) for item in apply_matrix(parse_transform("skewX(45)"), (10.0, 5.0))) == (15.0, 5.0)
+    assert tuple(round(item, 3) for item in apply_matrix(parse_transform("skewY(45)"), (10.0, 5.0))) == (10.0, 15.0)
 
 
 def test_svg_edit_ops_split_line_opening_is_same_parent_native_svg() -> None:
@@ -466,6 +468,37 @@ def test_recognition_ir_v2_flattens_basic_paths_in_world_coordinates(tmp_path) -
     assert path["is_closed"] is True
     assert path["analytic"]["subpath_count"] == 1
     assert ir["warnings"] == []
+
+
+def test_recognition_ir_v2_expands_defs_symbol_use_instances(tmp_path) -> None:
+    source = tmp_path / "symbol_use.svg"
+    source.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1000 400">
+          <defs>
+            <symbol id="column-symbol" viewBox="0 0 10 10">
+              <rect id="column-shape" x="1" y="1" width="8" height="8" fill="#111"/>
+            </symbol>
+          </defs>
+          <use id="column-a" href="#column-symbol" x="20" y="30" width="20" height="20"/>
+          <use id="column-b" xlink:href="#column-symbol" x="60" y="30" width="10" height="10" transform="translate(5 0)"/>
+        </svg>
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    ir = build_recognition_ir_v2(source)
+    columns = [node for node in ir["nodes"] if node["source_id"] == "column-shape"]
+
+    assert ir["status"] == "active"
+    assert ir["summary"]["primitive_count"] == 2
+    assert len(columns) == 2
+    assert columns[0]["group_path"] == ["column-a", "column-symbol"]
+    assert columns[0]["bbox"] == {"x": 22.0, "y": 32.0, "w": 16.0, "h": 16.0}
+    assert columns[1]["group_path"] == ["column-b", "column-symbol"]
+    assert columns[1]["bbox"] == {"x": 66.0, "y": 31.0, "w": 8.0, "h": 8.0}
+    assert all(node["role_hint"] == "column" for node in columns)
+    assert ir["summary"]["column_candidate_count"] == 2
 
 
 def test_recognition_ir_v2_classifies_basic_drawing_roles(tmp_path) -> None:

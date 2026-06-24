@@ -92,5 +92,9 @@ def parse_transform(raw: str | None) -> Matrix:
                 op = multiply_matrix(multiply_matrix((1.0, 0.0, 0.0, 1.0, cx, cy), rotate), (1.0, 0.0, 0.0, 1.0, -cx, -cy))
             else:
                 op = rotate
+        elif name == "skewX" and numbers:
+            op = (1.0, 0.0, math.tan(math.radians(numbers[0])), 1.0, 0.0, 0.0)
+        elif name == "skewY" and numbers:
+            op = (1.0, math.tan(math.radians(numbers[0])), 0.0, 1.0, 0.0, 0.0)
         matrix = multiply_matrix(matrix, op)
     return matrix
