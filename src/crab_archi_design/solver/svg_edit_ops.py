@@ -151,10 +151,12 @@ def edit_capability_report(
 
     if tag == "line":
         opening_reason = None if line_points(element) is not None else "line requires x1/y1/x2/y2 attributes"
+    elif tag == "polyline":
+        opening_reason = None if len(polyline_points(element)) >= 2 else "polyline requires at least two points"
     elif tag == "path":
         opening_reason = path_reason
     else:
-        opening_reason = "opening split requires line or open single-subpath M/L/H/V path"
+        opening_reason = "opening split requires line, polyline, or open single-subpath M/L/H/V path"
     if opening_reason is None:
         opening_reason = parent_reason
     if opening_reason is None and tag == "path":
@@ -399,6 +401,70 @@ def split_line_for_opening(
         "before_segment": {"x1": coords[0], "y1": coords[1], "x2": start_x, "y2": start_y},
         "opening": {"x1": start_x, "y1": start_y, "x2": end_x, "y2": end_y},
         "after_segment": {"x1": end_x, "y1": end_y, "x2": coords[2], "y2": coords[3]},
+        "geometry_mutated": True,
+        "same_layer_segment_added": True,
+    }
+
+
+def split_polyline_for_opening(
+    parent: Element,
+    element: Element,
+    opening_start_ratio: float,
+    opening_end_ratio: float,
+    operation_id: str = "door_opening",
+) -> dict[str, Any]:
+    points = polyline_points(element)
+    children = list(parent)
+    split = split_polyline_points_for_opening(points, opening_start_ratio, opening_end_ratio)
+    if not points or element not in children or split is None:
+        return {
+            "action": "split_polyline_for_opening",
+            "status": "skipped",
+            "reason": "requires direct child polyline with at least two points and 0 < start < end < 1",
+            "geometry_mutated": False,
+            "same_layer_segment_added": False,
+        }
+
+    preserve_original_attr(element, "points")
+    after_segment = deepcopy(element)
+    source_id = element.attrib.get("id")
+    if source_id:
+        after_segment.set("id", f"{source_id}__crab_{operation_id}_after")
+        after_segment.set("data-crab-derived-from", source_id)
+
+    before_points = split["before_points"]
+    after_points = split["after_points"]
+    before_attr = format_polyline_points(before_points)
+    after_attr = format_polyline_points(after_points)
+
+    element.set("points", before_attr)
+    element.set("data-crab-action", "split_polyline_for_opening")
+    element.set("data-crab-same-layer-mutation", "same_layer_polyline_opening_split")
+    element.set("data-crab-opening-operation", operation_id)
+    element.set("data-crab-opening-segment", "before")
+    element.set("data-crab-opening-start-ratio", format_svg_number(opening_start_ratio))
+    element.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
+    element.set("data-crab-geometry-mutated", "true")
+
+    after_segment.set("points", after_attr)
+    after_segment.set("data-crab-action", "split_polyline_for_opening")
+    after_segment.set("data-crab-same-layer-mutation", "same_layer_polyline_opening_split")
+    after_segment.set("data-crab-opening-operation", operation_id)
+    after_segment.set("data-crab-opening-segment", "after")
+    after_segment.set("data-crab-opening-start-ratio", format_svg_number(opening_start_ratio))
+    after_segment.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
+    after_segment.set("data-crab-generated-same-layer-segment", "true")
+    after_segment.set("data-crab-geometry-mutated", "true")
+
+    parent.insert(children.index(element) + 1, after_segment)
+    return {
+        "action": "split_polyline_for_opening",
+        "status": "applied",
+        "operation_id": operation_id,
+        "source_id": source_id,
+        "before_segment": {"points": before_attr},
+        "opening": split["opening"],
+        "after_segment": {"points": after_attr},
         "geometry_mutated": True,
         "same_layer_segment_added": True,
     }

@@ -198,15 +198,21 @@ def build_opening_candidates(mutable_candidates: list[dict[str, Any]], topology:
         for item in mutable_candidates
         if item.get("tag") == "line" and item.get("program_cluster_id") and item.get("program_role") in preferred_roles
     ]
+    polyline_candidates = [
+        item
+        for item in mutable_candidates
+        if item.get("tag") == "polyline" and item.get("program_cluster_id") and item.get("program_role") in preferred_roles
+    ]
     path_candidates = [
         item
         for item in mutable_candidates
         if item.get("tag") == "path" and item.get("program_cluster_id") and item.get("program_role") in preferred_roles
     ]
     fallback_candidates = [item for item in mutable_candidates if item.get("tag") == "line" and item.get("program_cluster_id")]
+    fallback_polyline_candidates = [item for item in mutable_candidates if item.get("tag") == "polyline" and item.get("program_cluster_id")]
     fallback_path_candidates = [item for item in mutable_candidates if item.get("tag") == "path" and item.get("program_cluster_id")]
     seen_indices: set[Any] = set()
-    for source in [*line_candidates, *path_candidates, *fallback_candidates, *fallback_path_candidates]:
+    for source in [*line_candidates, *polyline_candidates, *path_candidates, *fallback_candidates, *fallback_polyline_candidates, *fallback_path_candidates]:
         element_index = source.get("element_index")
         if element_index in seen_indices:
             continue
@@ -230,11 +236,11 @@ def build_opening_candidates(mutable_candidates: list[dict[str, Any]], topology:
             "adjacency_rationale": adjacency.get("rationale") if adjacency else None,
             "topology_evidence": adjacency.get("evidence") if adjacency else None,
             "addressing": "source_svg_element_index",
-            "mutation_policy": "split_existing_path_in_same_parent" if source.get("tag") == "path" else "split_existing_line_in_same_parent",
+            "mutation_policy": f"split_existing_{source.get('tag')}_in_same_parent",
             "opening_start_ratio": 0.42,
             "opening_end_ratio": 0.58,
             "opening_priority": opening_candidate_priority(source, adjacency),
-            "reason": "Create a same-layer wall opening candidate on a recognized mutable line/path program boundary.",
+            "reason": "Create a same-layer wall opening candidate on a recognized mutable line/polyline/path program boundary.",
         }
         opening_candidates.append(candidate)
         if len(opening_candidates) >= max_candidates:

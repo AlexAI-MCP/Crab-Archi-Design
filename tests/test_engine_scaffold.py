@@ -3,7 +3,7 @@ from crab_archi_design.qa import gate_status
 from crab_archi_design.recognition import PARSER_VERSION, RECOGNITION_IR_SCHEMA, build_recognition_ir_v2, stable_node_id
 from crab_archi_design.recognition.ir import empty_recognition_ir
 from crab_archi_design.solver import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA, build_endpoint_move_candidates, build_opening_candidates
-from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening
+from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening, split_polyline_for_opening
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
 from crab_archi_design.svg.geometry import polygon_area, quantize_point
 from crab_archi_design.svg.transform import parse_transform
@@ -56,6 +56,22 @@ def test_svg_edit_ops_split_line_opening_is_same_parent_native_svg() -> None:
     assert all(child.attrib["data-crab-action"] == "split_line_for_opening" for child in root)
 
 
+def test_svg_edit_ops_split_polyline_opening_is_same_parent_native_svg() -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring('<svg><polyline id="wall" points="0,0 60,0 100,0" stroke="#111"/></svg>')
+    wall = root[0]
+
+    result = split_polyline_for_opening(root, wall, 0.25, 0.5, operation_id="door_001")
+
+    assert result["status"] == "applied"
+    assert len(list(root)) == 2
+    assert root[0].attrib["points"] == "0,0 25,0"
+    assert root[1].attrib["points"] == "50,0 60,0 100,0"
+    assert root[1].attrib["id"] == "wall__crab_door_001_after"
+    assert all(child.attrib["data-crab-action"] == "split_polyline_for_opening" for child in root)
+
+
 def test_svg_edit_ops_split_path_opening_uses_world_length_under_transform() -> None:
     import xml.etree.ElementTree as ET
 
@@ -97,6 +113,17 @@ def test_svg_edit_ops_reports_supported_and_review_required_operations() -> None
     assert curved_report["operations"]["endpoint_move"]["status"] == "review_required"
     assert curved_report["operations"]["partition_remove"]["status"] == "review_required"
     assert "C" in curved_report["operations"]["partition_remove"]["reason"]
+
+
+def test_svg_edit_ops_reports_polyline_opening_supported() -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring('<svg><polyline id="poly-wall" points="0,0 30,0 60,0"/></svg>')
+    report = edit_capability_report(root[0], root)
+
+    assert report["operations"]["opening_split"]["status"] == "supported"
+    assert report["operations"]["endpoint_move"]["status"] == "supported"
+    assert report["operations"]["partition_remove"]["status"] == "supported"
 
 
 def test_intent_and_gate_contracts() -> None:
@@ -186,6 +213,47 @@ def test_solver_patch_plan_builds_path_opening_candidates() -> None:
     assert openings[0]["operation"] == "split_line_for_opening"
     assert openings[0]["tag"] == "path"
     assert openings[0]["mutation_policy"] == "split_existing_path_in_same_parent"
+    assert openings[0]["connects_to_role"] == "hall_lobby"
+    assert openings[0]["topology_evidence"] == "OpenCrab topology prior"
+
+
+def test_solver_patch_plan_builds_polyline_opening_candidates() -> None:
+    candidates = [
+        {
+            "element_index": 31,
+            "tag": "polyline",
+            "bbox": {"x": 10, "y": 10, "width": 100, "height": 2},
+            "center": [60, 11],
+            "patch_priority": 700.0,
+            "program_cluster_id": "cluster_lounge",
+            "program_role": "greenery_lounge",
+            "space_region_ids": ["space_lounge"],
+        }
+    ]
+    topology = {
+        "nodes": [
+            {"id": "cluster_lounge", "type": "program_cluster", "role": "greenery_lounge", "bbox": {"x": 0, "y": 0, "width": 120, "height": 80}},
+            {"id": "cluster_hall", "type": "program_cluster", "role": "hall_lobby", "bbox": {"x": 110, "y": 0, "width": 80, "height": 80}},
+        ],
+        "edges": [
+            {
+                "id": "edge_topology_polyline_opening",
+                "type": "ontology_cluster_adjacency_target",
+                "source": "cluster_lounge",
+                "target": "cluster_hall",
+                "left_role": "greenery_lounge",
+                "right_role": "hall_lobby",
+                "rationale": "polyline wall opening follows the topology prior",
+                "evidence": "OpenCrab topology prior",
+            }
+        ],
+    }
+
+    openings = build_opening_candidates(candidates, topology, 4)
+
+    assert openings[0]["operation"] == "split_line_for_opening"
+    assert openings[0]["tag"] == "polyline"
+    assert openings[0]["mutation_policy"] == "split_existing_polyline_in_same_parent"
     assert openings[0]["connects_to_role"] == "hall_lobby"
     assert openings[0]["topology_evidence"] == "OpenCrab topology prior"
 

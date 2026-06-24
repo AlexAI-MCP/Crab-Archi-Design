@@ -11,6 +11,7 @@ from crab_archi_design.solver.svg_edit_ops import (
     move_line_endpoint,
     preserve_original_attrs,
     split_line_for_opening,
+    split_polyline_for_opening,
     split_path_for_opening,
     svg_float,
 )
@@ -440,12 +441,18 @@ def apply_opening_candidates(
         if element_index is None or element is None or parent is None:
             skipped.append({"target_element_index": element_index, "reason": "target element or parent not found"})
             continue
-        action = "split_path_for_opening" if local_tag(element) == "path" else "split_line_for_opening"
+        tag = local_tag(element)
+        if tag == "path":
+            action = "split_path_for_opening"
+        elif tag == "polyline":
+            action = "split_polyline_for_opening"
+        else:
+            action = "split_line_for_opening"
         capability = edit_capability_report(element, parent, transform_map.get(element_index))
         if capability["operations"]["opening_split"]["status"] != "supported":
             skipped.append(review_required_skip(candidate, element_index, action, capability, "opening_split"))
             continue
-        if local_tag(element) == "path":
+        if tag == "path":
             result = split_path_for_opening(
                 parent,
                 element,
@@ -453,6 +460,14 @@ def apply_opening_candidates(
                 svg_float(candidate.get("opening_end_ratio", 0.58)),
                 operation_id=str(candidate.get("operation_id") or f"opening_{len(applied) + 1:03d}"),
                 transform_matrix=transform_map.get(element_index),
+            )
+        elif tag == "polyline":
+            result = split_polyline_for_opening(
+                parent,
+                element,
+                svg_float(candidate.get("opening_start_ratio", 0.42)),
+                svg_float(candidate.get("opening_end_ratio", 0.58)),
+                operation_id=str(candidate.get("operation_id") or f"opening_{len(applied) + 1:03d}"),
             )
         else:
             result = split_line_for_opening(

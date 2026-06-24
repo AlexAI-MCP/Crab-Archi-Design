@@ -373,7 +373,7 @@ crab-archi-design --project-root projects apply-edit \
   --skip-preview
 ```
 
-This keeps the edit in the source SVG hierarchy: the target wall line or open single-subpath M/L/H/V path is shortened, an after-segment is inserted beside it in the same parent, and the gap between them becomes the opening. If a path sits under SVG transforms, the opening is measured in recognition/world length and converted back into local `d` coordinates before writing. Curved, arc, and closed paths stay unchanged and are reported as skips.
+This keeps the edit in the source SVG hierarchy: the target wall line, polyline, or open single-subpath M/L/H/V path is shortened, an after-segment is inserted beside it in the same parent, and the gap between them becomes the opening. If a path sits under SVG transforms, the opening is measured in recognition/world length and converted back into local `d` coordinates before writing. Curved, arc, and closed paths stay unchanged and are reported as skips.
 
 The same-layer engine delegates these primitive CAD-like operations to `solver/svg_edit_ops.py`; `solver/svg_mutation.py` only selects patch-plan candidates, enforces locked targets, and reports mutation/QA summaries. Before opening or endpoint geometry is touched, the engine runs the same capability checks used by `edit_capability_summary`; unsupported primitives are skipped with `review_required: true` and a concrete reason such as unsupported path commands or non-invertible transforms. This keeps future wall/path/polyline mutators testable without changing the higher-level OpenCrab/topology handoff.
 
