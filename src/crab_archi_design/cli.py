@@ -2462,6 +2462,9 @@ def build_engine_command(adapter: str, extra_args: list[str]) -> tuple[list[str]
     if adapter in {"layout-svg-engine", "builtin-layout", "crab-layout-engine", "room-envelope-engine"}:
         adapter_path = Path(__file__).resolve().parent / "layout_svg_engine.py"
         return [sys.executable, str(adapter_path), *extra_args], adapter_path
+    if adapter in {"same-layer-svg-engine", "builtin-same-layer", "crab-same-layer-engine", "native-svg-patch-engine"}:
+        adapter_path = Path(__file__).resolve().parent / "same_layer_svg_engine.py"
+        return [sys.executable, str(adapter_path), *extra_args], adapter_path
     adapter_path = Path(adapter).expanduser()
     if adapter_path.exists():
         if adapter_path.suffix == ".py":

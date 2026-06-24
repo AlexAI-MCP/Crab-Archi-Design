@@ -350,6 +350,18 @@ crab-archi-design --project-root projects apply-edit \
   --skip-preview
 ```
 
+After `svg-patch-plan`, run the built-in same-layer patch adapter with `--engine-adapter same-layer-svg-engine`:
+
+```bash
+crab-archi-design --project-root projects apply-edit \
+  --project-id a801-802-opencrab-test \
+  --intent all \
+  --engine-adapter same-layer-svg-engine \
+  --skip-preview
+```
+
+The same-layer engine consumes the latest `svg-patch-plan`, mutates existing SVG elements by source element index, and verifies that no overlay group, redraw layer, or raster image was added. It is the preferred built-in adapter for testing the production path before a full geometry trim/move solver is available.
+
 For diagnostic end-to-end testing only, the built-in room-envelope redraw path can still be run with `--engine-adapter layout-svg-engine`:
 
 ```bash

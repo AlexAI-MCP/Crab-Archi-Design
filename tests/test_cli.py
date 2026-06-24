@@ -701,6 +701,88 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert "program_cluster_id" in plan["same_layer_mutable_candidates"][0]
 
 
+def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -> None:
+    source_svg = tmp_path / "same-layer.svg"
+    source_svg.write_text(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 340">
+              <rect x="30" y="30" width="360" height="250" fill="none" stroke="#111" stroke-width="5"/>
+              <line id="space-left" x1="30" y1="30" x2="30" y2="280" stroke="#111" stroke-width="5"/>
+              <line id="space-right" x1="390" y1="30" x2="390" y2="280" stroke="#111" stroke-width="5"/>
+              <line id="space-top" x1="30" y1="30" x2="390" y2="30" stroke="#111" stroke-width="5"/>
+              <line id="space-bottom" x1="30" y1="280" x2="390" y2="280" stroke="#111" stroke-width="5"/>
+              <line id="partition-h" x1="60" y1="160" x2="360" y2="160" stroke="#111" stroke-width="7"/>
+              <line id="partition-v" x1="250" y1="50" x2="250" y2="260" stroke="#111" stroke-width="7"/>
+              <rect id="column-a" x="130" y="145" width="12" height="12" fill="#111"/>
+              <text x="80" y="90">작은도서관</text>
+              <text x="80" y="220">피트니스</text>
+            </svg>
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    standards = tmp_path / "standards.csv"
+    standards.write_text("세대,프로그램,면적_m2\n900세대,그리너리 라운지,80\n900세대,피트니스,70\n", encoding="utf-8")
+    evidence_source = tmp_path / "opencrab.json"
+    evidence_source.write_text(json.dumps({"quality_status": "pass"}), encoding="utf-8")
+    constraint = tmp_path / "constraint.json"
+    constraint.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [
+                    {"stroke_id": "shell", "mode": "community_shell", "target_hint": "community_outer_shell", "points": [[30, 30], [390, 30], [390, 280], [30, 280], [30, 30]]},
+                    {"stroke_id": "mutable", "mode": "mutable", "target_hint": "internal_community_program_rework", "points": [[50, 50], [370, 50], [370, 260], [50, 260], [50, 50]]},
+                    {"stroke_id": "no-go", "mode": "no_go", "target_hint": "parking_core_no_go", "points": [[400, 40], [470, 40], [470, 130], [400, 130], [400, 40]]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for args in [
+        ("init", "--project-id", "same-layer-demo", "--source-svg", str(source_svg), "--ontology-pack", "community_svg_topology_ontology_v2", "--engine-adapter", "same-layer-svg-engine"),
+        ("recognize-svg", "--project-id", "same-layer-demo"),
+        ("recognize-svg-v2", "--project-id", "same-layer-demo"),
+        ("evidence-attach", "--project-id", "same-layer-demo", "--source", "localcrab", "--pack-id", "community_svg_topology_ontology_v2", "--summary", "Topology pack evidence verified.", "--source-file", str(evidence_source)),
+        ("standards-attach", "--project-id", "same-layer-demo", "--file", str(standards), "--households", "900"),
+        ("constraint-attach", "--project-id", "same-layer-demo", "--sketch", str(constraint)),
+        ("topology-build", "--project-id", "same-layer-demo"),
+        ("recognition-audit", "--project-id", "same-layer-demo"),
+        ("svg-patch-plan", "--project-id", "same-layer-demo"),
+        ("prompt-edit", "--project-id", "same-layer-demo", "--text", "Merge the library and cafe into a greenery lounge while preserving columns and protected zones."),
+    ]:
+        result = run_cli("--project-root", str(tmp_path / "projects"), *args, cwd=ROOT)
+        assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "apply-edit", "--project-id", "same-layer-demo", "--skip-preview", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert report["status"] == "pass"
+    assert report["checks"]["engine_report_status_pass"] is True
+    assert report["checks"]["engine_quality_gates_pass"] is True
+    alternative = Path(report["copied_artifacts"]["svg"][0])
+    alternative_text = alternative.read_text(encoding="utf-8")
+    assert "crab_archi_design_same_layer_engine_candidate" in alternative_text
+    assert "data-crab-same-layer-mutation" in alternative_text
+    assert "<image" not in alternative_text
+    assert "crab_archi_design_layout_engine_candidate" not in alternative_text
+
+    source_count = sum(1 for _ in ET.parse(source_svg).getroot().iter())
+    alternative_count = sum(1 for _ in ET.parse(alternative).getroot().iter())
+    assert alternative_count == source_count
+
+    engine_report = json.loads(Path(report["copied_artifacts"]["report"][0]).read_text(encoding="utf-8"))
+    assert engine_report["schema"] == "crab-archi-design-same-layer-engine-report-v1"
+    assert engine_report["summary"]["mutation_strategy"] == "same_layer_element_attribute_patch"
+    assert engine_report["summary"]["same_layer_mutation_count"] >= 1
+    gates = engine_report["quality"]["gates"]
+    assert gates["new_overlay_elements_added"] is True
+    assert gates["existing_elements_mutated"] is True
+    assert gates["program_cluster_targets_used"] is True
+
+
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:
     source_svg = tmp_path / "original.svg"
     source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'></svg>", encoding="utf-8")

@@ -141,6 +141,8 @@ The split is intentionally closer to multiple small engines than one large Pytho
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 
+The built-in `same-layer-svg-engine` adapter consumes the latest `svg-patch-plan` and mutates addressed source SVG elements in place. It preserves the source element count, adds no redraw layer or raster image, and writes a quality-gated report that proves the pipeline can patch existing CAD-like geometry instead of covering it.
+
 The built-in `layout-svg-engine` adapter is now treated as a diagnostic room-envelope solver, not a sufficient production design author by itself. It writes an overlay-style redraw layer, which is useful for end-to-end QA but not acceptable as the high-quality architectural output. The production direction is to consume `svg-patch-plan` and mutate recognized source SVG elements in place.
 
 The built-in `reference-svg-engine` adapter remains available for end-to-end diagnostics. It copies the source SVG into a native SVG candidate, adds a compact reference layer with operations/evidence/standards/constraints summary, and writes a quality-gated engine report.
