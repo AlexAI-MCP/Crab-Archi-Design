@@ -577,8 +577,8 @@ def test_topology_build_creates_target_graph(tmp_path: Path) -> None:
     assert topology["edge_count"] > 0
     node_types = {node["type"] for node in topology["nodes"]}
     edge_types = {edge["type"] for edge in topology["edges"]}
-    assert {"program_label", "room_envelope", "space_region", "structural_column", "standard_program", "constraint"} <= node_types
-    assert {"label_inside_envelope", "label_inside_space_region", "column_inside_envelope", "standard_applies_to_program", "ontology_adjacency_target"} <= edge_types
+    assert {"program_label", "room_envelope", "space_region", "program_cluster", "structural_column", "standard_program", "constraint"} <= node_types
+    assert {"label_inside_envelope", "label_inside_space_region", "space_region_member_of_program_cluster", "column_inside_envelope", "standard_applies_to_program", "ontology_adjacency_target"} <= edge_types
     assert topology["graph_summary"]["protected_node_count"] >= 1
     assert topology["graph_summary"]["recognition_source"] == "recognition_ir_v2"
     assert topology["source_manifests"]["recognition_ir_v2"].endswith("recognition_ir_v2.json")
@@ -643,6 +643,10 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
             """
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 340">
               <rect x="30" y="30" width="360" height="250" fill="none" stroke="#111" stroke-width="5"/>
+              <line id="space-left" x1="30" y1="30" x2="30" y2="280" stroke="#111" stroke-width="5"/>
+              <line id="space-right" x1="390" y1="30" x2="390" y2="280" stroke="#111" stroke-width="5"/>
+              <line id="space-top" x1="30" y1="30" x2="390" y2="30" stroke="#111" stroke-width="5"/>
+              <line id="space-bottom" x1="30" y1="280" x2="390" y2="280" stroke="#111" stroke-width="5"/>
               <line x1="60" y1="160" x2="360" y2="160" stroke="#111" stroke-width="7"/>
               <line x1="250" y1="50" x2="250" y2="260" stroke="#111" stroke-width="7"/>
               <rect x="130" y="145" width="12" height="12" fill="#111"/>
@@ -671,6 +675,7 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     for args in [
         ("init", "--project-id", "patch-demo", "--source-svg", str(source_svg), "--ontology-pack", "community_svg_topology_ontology_v2"),
         ("recognize-svg", "--project-id", "patch-demo"),
+        ("recognize-svg-v2", "--project-id", "patch-demo"),
         ("constraint-attach", "--project-id", "patch-demo", "--sketch", str(constraint)),
         ("topology-build", "--project-id", "patch-demo"),
         ("recognition-audit", "--project-id", "patch-demo"),
@@ -687,8 +692,13 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["gates"]["overlay_generation_disallowed"] is True
     assert plan["metrics"]["mutable_candidate_count"] >= 1
     assert plan["metrics"]["program_anchor_count"] == 2
+    assert plan["metrics"]["program_cluster_count"] >= 1
+    assert plan["metrics"]["program_cluster_candidate_count"] >= 1
+    assert plan["program_clusters"]
+    assert plan["program_anchors"][0]["position_source"] == "topology.label_inside_space_region"
     assert plan["same_layer_mutable_candidates"][0]["addressing"] == "source_svg_element_index"
     assert plan["same_layer_mutable_candidates"][0]["mutation_policy"] == "modify_or_remove_existing_element_only"
+    assert "program_cluster_id" in plan["same_layer_mutable_candidates"][0]
 
 
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:

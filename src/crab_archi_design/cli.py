@@ -1613,6 +1613,28 @@ def points_bbox(points: list[tuple[float, float]]) -> dict[str, float] | None:
     return {"x": min(xs), "y": min(ys), "width": max(xs) - min(xs), "height": max(ys) - min(ys)}
 
 
+def bbox_union(boxes: list[dict[str, float]]) -> dict[str, float] | None:
+    boxes = [box for box in boxes if box and box.get("width", 0.0) >= 0 and box.get("height", 0.0) >= 0]
+    if not boxes:
+        return None
+    min_x = min(box["x"] for box in boxes)
+    min_y = min(box["y"] for box in boxes)
+    max_x = max(box["x"] + box["width"] for box in boxes)
+    max_y = max(box["y"] + box["height"] for box in boxes)
+    return {"x": min_x, "y": min_y, "width": max_x - min_x, "height": max_y - min_y}
+
+
+def bbox_intersects(left: dict[str, float], right: dict[str, float], pad: float = 0.0) -> bool:
+    if not left or not right:
+        return False
+    return not (
+        left["x"] + left["width"] < right["x"] - pad
+        or right["x"] + right["width"] < left["x"] - pad
+        or left["y"] + left["height"] < right["y"] - pad
+        or right["y"] + right["height"] < left["y"] - pad
+    )
+
+
 def nodes_touching_constraint(nodes: list[dict[str, Any]], points: list[tuple[float, float]], limit: int) -> list[dict[str, Any]]:
     if len(points) < 3:
         return nodes[:limit]
@@ -1629,6 +1651,73 @@ def labels_inside_constraint(nodes: list[dict[str, Any]], points: list[tuple[flo
         if point_raw and point_in_polygon((float(point_raw[0]), float(point_raw[1])), points):
             matches.append(node)
     return matches[:limit]
+
+
+def build_program_clusters(space_region_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_role: dict[str, list[dict[str, Any]]] = {}
+    for region in space_region_nodes:
+        role = str(region.get("role") or "")
+        if role:
+            by_role.setdefault(role, []).append(region)
+    clusters: list[dict[str, Any]] = []
+    cluster_index = 1
+    for role in sorted(by_role):
+        for regions in connected_region_groups(by_role[role]):
+            box = bbox_union([region.get("bbox") or {} for region in regions])
+            if not box:
+                continue
+            confidences = [float(region.get("confidence") or 0.0) for region in regions]
+            labels = sorted({str(region.get("label")) for region in regions if region.get("label")})
+            clusters.append(
+                {
+                    "id": f"program_cluster_{cluster_index:03d}",
+                    "type": "program_cluster",
+                    "role": role,
+                    "labels": labels,
+                    "space_region_ids": [region["id"] for region in regions],
+                    "bbox": box,
+                    "area": round(bbox_area(box), 3),
+                    "space_region_count": len(regions),
+                    "confidence": round(sum(confidences) / len(confidences), 3) if confidences else 0.0,
+                    "source": "topology.space_region_role_cluster",
+                }
+            )
+            cluster_index += 1
+    return clusters
+
+
+def connected_region_groups(regions: list[dict[str, Any]], max_gap: float = 260.0) -> list[list[dict[str, Any]]]:
+    ordered = sorted(regions, key=lambda region: (normalize_bbox_dict(region.get("bbox"))["x"], normalize_bbox_dict(region.get("bbox"))["y"], region["id"]))
+    groups: list[list[dict[str, Any]]] = []
+    unvisited = {region["id"] for region in ordered}
+    by_id = {region["id"]: region for region in ordered}
+    for region in ordered:
+        if region["id"] not in unvisited:
+            continue
+        group: list[dict[str, Any]] = []
+        queue = [region]
+        unvisited.remove(region["id"])
+        while queue:
+            current = queue.pop(0)
+            group.append(current)
+            current_box = normalize_bbox_dict(current.get("bbox"))
+            for other_id in list(unvisited):
+                other = by_id[other_id]
+                if bbox_gap_distance(current_box, normalize_bbox_dict(other.get("bbox"))) <= max_gap:
+                    unvisited.remove(other_id)
+                    queue.append(other)
+        groups.append(group)
+    return groups
+
+
+def bbox_gap_distance(left: dict[str, float], right: dict[str, float]) -> float:
+    left_max_x = left["x"] + left["width"]
+    left_max_y = left["y"] + left["height"]
+    right_max_x = right["x"] + right["width"]
+    right_max_y = right["y"] + right["height"]
+    gap_x = max(0.0, max(left["x"], right["x"]) - min(left_max_x, right_max_x))
+    gap_y = max(0.0, max(left["y"], right["y"]) - min(left_max_y, right_max_y))
+    return (gap_x**2 + gap_y**2) ** 0.5
 
 
 def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
@@ -1744,6 +1833,10 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
 
     envelope_nodes = [node for node in nodes if node.get("type") == "room_envelope"]
     space_region_nodes = [node for node in nodes if node.get("type") == "space_region"]
+    program_cluster_nodes = build_program_clusters(space_region_nodes)
+    for cluster in program_cluster_nodes:
+        nodes.append(cluster)
+        register_role(cluster.get("role"), cluster["id"])
     label_nodes = [node for node in nodes if node.get("type") == "program_label"]
     column_nodes = [node for node in nodes if node.get("type") == "structural_column"]
     wall_nodes = [node for node in nodes if node.get("type") == "wall_candidate"]
@@ -1779,6 +1872,10 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
             wall = wall_by_source_id.get(wall_source_id)
             if wall:
                 add_topology_edge(edges, region["id"], wall["id"], "space_region_bounded_by_wall", side=side, evidence="wall_ray_boundary")
+        for cluster in program_cluster_nodes:
+            if region["id"] in cluster.get("space_region_ids", []):
+                add_topology_edge(edges, region["id"], cluster["id"], "space_region_member_of_program_cluster", role=cluster.get("role"))
+                break
 
     for column in column_nodes:
         center = bbox_center(column.get("bbox") or {})
@@ -1822,6 +1919,19 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
                 left_nodes[0],
                 right_nodes[0],
                 "ontology_adjacency_target",
+                left_role=left_role,
+                right_role=right_role,
+                rationale=rationale,
+                evidence="OpenCrab topology prior",
+            )
+        left_clusters = [node for node in program_cluster_nodes if node.get("role") == left_role]
+        right_clusters = [node for node in program_cluster_nodes if node.get("role") == right_role]
+        if left_clusters and right_clusters:
+            add_topology_edge(
+                edges,
+                left_clusters[0]["id"],
+                right_clusters[0]["id"],
+                "ontology_cluster_adjacency_target",
                 left_role=left_role,
                 right_role=right_role,
                 rationale=rationale,
@@ -2043,7 +2153,7 @@ def constraint_polygons(manifest: dict[str, Any] | None, roles: set[str]) -> lis
 
 def candidate_patch_record(item: dict[str, Any], classification: str, reason: str) -> dict[str, Any]:
     box = item.get("bbox") or {}
-    return {
+    record = {
         "element_index": item.get("index"),
         "tag": item.get("tag"),
         "id": item.get("id"),
@@ -2056,6 +2166,80 @@ def candidate_patch_record(item: dict[str, Any], classification: str, reason: st
         "addressing": "source_svg_element_index",
         "mutation_policy": "modify_or_remove_existing_element_only" if classification == "mutable_candidate" else "lock_existing_element",
     }
+    if item.get("program_cluster_id"):
+        record["program_cluster_id"] = item.get("program_cluster_id")
+        record["program_role"] = item.get("program_role")
+        record["space_region_ids"] = item.get("space_region_ids", [])
+    return record
+
+
+def topology_nodes_of_type(manifest: dict[str, Any] | None, node_type: str) -> list[dict[str, Any]]:
+    return [node for node in (manifest or {}).get("nodes", []) if node.get("type") == node_type]
+
+
+def candidate_program_cluster(box: dict[str, float], clusters: list[dict[str, Any]]) -> dict[str, Any] | None:
+    matches = [cluster for cluster in clusters if bbox_intersects(box, normalize_bbox_dict(cluster.get("bbox")), pad=12.0)]
+    if not matches:
+        return None
+    return sorted(matches, key=lambda cluster: bbox_area(normalize_bbox_dict(cluster.get("bbox"))))[0]
+
+
+def program_anchors_from_topology(topology: dict[str, Any] | None, mutable_polygons: list[dict[str, Any]], shell_polygons: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not topology:
+        return []
+    nodes = {node["id"]: node for node in topology.get("nodes", []) if node.get("id")}
+    space_region_to_cluster: dict[str, dict[str, Any]] = {}
+    for edge in topology.get("edges", []):
+        if edge.get("type") != "space_region_member_of_program_cluster":
+            continue
+        region = nodes.get(edge.get("source"))
+        cluster = nodes.get(edge.get("target"))
+        if region and cluster:
+            space_region_to_cluster[region["id"]] = cluster
+    anchors: list[dict[str, Any]] = []
+    seen_labels: set[str] = set()
+    for edge in topology.get("edges", []):
+        if edge.get("type") != "label_inside_space_region":
+            continue
+        label = nodes.get(edge.get("source"))
+        region = nodes.get(edge.get("target"))
+        if not label or not region or label["id"] in seen_labels:
+            continue
+        point_raw = label.get("point")
+        if not point_raw:
+            continue
+        point = (float(point_raw[0]), float(point_raw[1]))
+        in_mutable = any(point_in_polygon(point, polygon["points"]) for polygon in mutable_polygons)
+        in_shell = any(point_in_polygon(point, polygon["points"]) for polygon in shell_polygons) if shell_polygons else True
+        if not (in_mutable and in_shell):
+            continue
+        cluster = space_region_to_cluster.get(region["id"])
+        anchors.append(
+            {
+                "text": label.get("label"),
+                "role_hint": label.get("role"),
+                "point": list(point),
+                "space_region_id": region.get("id"),
+                "space_region_bbox": region.get("bbox"),
+                "program_cluster_id": cluster.get("id") if cluster else None,
+                "program_cluster_bbox": cluster.get("bbox") if cluster else None,
+                "position_source": "topology.label_inside_space_region",
+                "use": "anchor_same_layer_patch_to_existing_wall_bounded_space",
+            }
+        )
+        seen_labels.add(label["id"])
+    return anchors
+
+
+def patch_role_priority(role: str | None) -> float:
+    return {
+        "greenery_lounge": 700.0,
+        "fitness_gx": 600.0,
+        "golf_screen": 520.0,
+        "sauna_locker_shower": 460.0,
+        "hall_lobby": 380.0,
+        "management_support": 120.0,
+    }.get(str(role or ""), 0.0)
 
 
 def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240) -> dict[str, Any]:
@@ -2069,6 +2253,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
     mutable_polygons = constraint_polygons(constraints, {"mutable", "projectable"})
     shell_polygons = constraint_polygons(constraints, {"community_shell"})
     protected_polygons = constraint_polygons(constraints, {"no_go", "lock", "protect"})
+    program_clusters = topology_nodes_of_type(topology, "program_cluster")
     mutable_candidates: list[dict[str, Any]] = []
     locked_candidates: list[dict[str, Any]] = []
 
@@ -2097,25 +2282,44 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             locked_candidates.append(candidate_patch_record(item, "locked_candidate", "inside protected no-go/lock/protect polygon"))
             continue
         if in_mutable and in_shell and role_hint in {"wall_candidate", "room_envelope_candidate"}:
-            mutable_candidates.append(candidate_patch_record(item, "mutable_candidate", "existing SVG element intersects mutable community zone"))
-
-    program_anchors = []
-    for item in (recognition or {}).get("program_label_candidates", []):
-        point = label_point(item)
-        if not point:
-            continue
-        in_mutable = any(point_in_polygon(point, polygon["points"]) for polygon in mutable_polygons)
-        in_shell = any(point_in_polygon(point, polygon["points"]) for polygon in shell_polygons) if shell_polygons else True
-        if in_mutable and in_shell:
-            program_anchors.append(
-                {
-                    "text": item.get("text"),
-                    "role_hint": item.get("role_hint"),
-                    "point": list(point),
-                    "position_source": item.get("position_source"),
-                    "use": "anchor_same_layer_patch_to_existing_room_label",
-                }
+            cluster = candidate_program_cluster(box, program_clusters)
+            item_for_record = dict(item)
+            reason = "existing SVG element intersects mutable community zone"
+            if cluster:
+                item_for_record["program_cluster_id"] = cluster.get("id")
+                item_for_record["program_role"] = cluster.get("role")
+                item_for_record["space_region_ids"] = cluster.get("space_region_ids", [])
+                reason = "existing SVG element intersects wall-bounded program cluster and mutable community zone"
+            record = candidate_patch_record(item_for_record, "mutable_candidate", reason)
+            record["patch_priority"] = round(
+                (1000.0 if cluster else 0.0)
+                + patch_role_priority(cluster.get("role") if cluster else None)
+                + max(float(box.get("width", 0.0)), float(box.get("height", 0.0)))
+                + min(250.0, bbox_area(box) / 50.0),
+                3,
             )
+            mutable_candidates.append(record)
+
+    mutable_candidates = sorted(mutable_candidates, key=lambda item: (float(item.get("patch_priority") or 0.0), bbox_area(item.get("bbox") or {})), reverse=True)
+
+    program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons)
+    if not program_anchors:
+        for item in (recognition or {}).get("program_label_candidates", []):
+            point = label_point(item)
+            if not point:
+                continue
+            in_mutable = any(point_in_polygon(point, polygon["points"]) for polygon in mutable_polygons)
+            in_shell = any(point_in_polygon(point, polygon["points"]) for polygon in shell_polygons) if shell_polygons else True
+            if in_mutable and in_shell:
+                program_anchors.append(
+                    {
+                        "text": item.get("text"),
+                        "role_hint": item.get("role_hint"),
+                        "point": list(point),
+                        "position_source": item.get("position_source"),
+                        "use": "anchor_same_layer_patch_to_existing_room_label",
+                    }
+                )
 
     gates = {
         "recognition_manifest_active": recognition_status(recognition) == "active",
@@ -2167,13 +2371,21 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
                 "target": "program_anchors",
                 "rule": "Use existing program label positions to keep edits tied to the original drawing topology.",
             },
+            {
+                "operation": "prioritize_program_cluster_boundary_edits",
+                "target": "program_clusters",
+                "rule": "Use wall-bounded space clusters to select existing SVG elements before any same-layer mutation.",
+            },
         ],
         "metrics": {
             "mutable_candidate_count": len(mutable_candidates),
+            "program_cluster_candidate_count": sum(1 for item in mutable_candidates if item.get("program_cluster_id")),
+            "program_cluster_count": len(program_clusters),
             "locked_candidate_count": len(locked_candidates),
             "program_anchor_count": len(program_anchors),
             "source_geometry_candidate_count": len(geometry_items),
         },
+        "program_clusters": program_clusters[:max_candidates],
     }
 
 
