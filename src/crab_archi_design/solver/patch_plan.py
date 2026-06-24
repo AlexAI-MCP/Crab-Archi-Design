@@ -41,6 +41,67 @@ def patch_role_priority(role: str | None) -> float:
     }.get(str(role or ""), 0.0)
 
 
+def local_search_role_order(solver_objective: dict[str, Any] | None) -> list[str]:
+    local_search = (solver_objective or {}).get("local_search") or {}
+    order = local_search.get("final_program_order") or []
+    return [str(role) for role in order if role]
+
+
+def local_search_role_rank(solver_objective: dict[str, Any] | None) -> dict[str, int]:
+    return {role: index + 1 for index, role in enumerate(local_search_role_order(solver_objective))}
+
+
+def local_search_placements(solver_objective: dict[str, Any] | None) -> list[dict[str, Any]]:
+    local_search = (solver_objective or {}).get("local_search") or {}
+    placements = local_search.get("final_placements") or []
+    return [item for item in placements if isinstance(item, dict)]
+
+
+def point_inside_box(point: tuple[float, float], box: dict[str, Any]) -> bool:
+    normalized = normalize_bbox_dict(box)
+    return (
+        normalized["x"] <= point[0] <= normalized["x"] + normalized["width"]
+        and normalized["y"] <= point[1] <= normalized["y"] + normalized["height"]
+    )
+
+
+def projected_role_from_solver_plan(candidate: dict[str, Any], solver_objective: dict[str, Any] | None) -> str | None:
+    center = bbox_center(candidate.get("bbox") or {})
+    for placement in sorted(local_search_placements(solver_objective), key=lambda item: int(item.get("order") or 0)):
+        role = str(placement.get("role") or "")
+        planned_box = placement.get("planned_box") or {}
+        if role and planned_box and point_inside_box(center, planned_box):
+            return role
+    return None
+
+
+def local_search_priority_boost(role: str | None, solver_objective: dict[str, Any] | None) -> float:
+    rank = local_search_role_rank(solver_objective).get(str(role or ""))
+    order_len = len(local_search_role_order(solver_objective))
+    if rank is None or order_len <= 0:
+        return 0.0
+    return round((order_len - rank + 1) * 75.0, 3)
+
+
+def annotate_candidate_with_solver_plan(candidate: dict[str, Any], solver_objective: dict[str, Any] | None) -> dict[str, Any]:
+    projected_role = projected_role_from_solver_plan(candidate, solver_objective) if not candidate.get("program_role") else None
+    role = str(candidate.get("program_role") or projected_role or "")
+    rank = local_search_role_rank(solver_objective).get(role)
+    boost = local_search_priority_boost(role, solver_objective)
+    base_priority = float(candidate.get("patch_priority_before_solver_plan", candidate.get("patch_priority") or 0.0))
+    candidate["patch_priority_before_solver_plan"] = round(base_priority, 3)
+    candidate["solver_plan_source"] = "solver.local_search" if rank is not None else "solver.role_priority"
+    candidate["solver_projected_role"] = projected_role
+    candidate["local_search_rank"] = rank
+    candidate["local_search_priority_boost"] = boost
+    candidate["patch_priority"] = round(base_priority + boost, 3)
+    return candidate
+
+
+def annotate_candidates_with_solver_plan(candidates: list[dict[str, Any]], solver_objective: dict[str, Any] | None) -> list[dict[str, Any]]:
+    return [annotate_candidate_with_solver_plan(candidate, solver_objective) for candidate in candidates]
+
+
 def topology_adjacency_targets(topology: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
     targets: dict[str, list[dict[str, Any]]] = {}
     if not topology:

@@ -45,7 +45,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from crab_archi_design.qa import build_candidate_quality_report
 from crab_archi_design.solver.objective import evaluate_topology_fit
-from crab_archi_design.solver.patch_plan import build_endpoint_move_candidates, build_opening_candidates, patch_role_priority
+from crab_archi_design.solver.patch_plan import annotate_candidates_with_solver_plan, build_endpoint_move_candidates, build_opening_candidates, patch_role_priority
 from crab_archi_design.solver.sizing import standard_role_rows_from_manifest
 
 
@@ -2390,6 +2390,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
     shell_polygons = constraint_polygons(constraints, {"community_shell"})
     protected_polygons = constraint_polygons(constraints, {"no_go", "lock", "protect"})
     program_clusters = topology_nodes_of_type(topology, "program_cluster")
+    solver_objective = evaluate_topology_fit(topology, standards, constraints, recognition_ir, scale_manifest)
     mutable_candidates: list[dict[str, Any]] = []
     locked_candidates: list[dict[str, Any]] = []
 
@@ -2438,10 +2439,10 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             )
             mutable_candidates.append(record)
 
+    mutable_candidates = annotate_candidates_with_solver_plan(mutable_candidates, solver_objective)
     mutable_candidates = sorted(mutable_candidates, key=lambda item: (float(item.get("patch_priority") or 0.0), bbox_area(item.get("bbox") or {})), reverse=True)
     opening_candidates = build_opening_candidates(mutable_candidates, topology, min(max_candidates, 24))
     endpoint_move_candidates = build_endpoint_move_candidates(mutable_candidates, topology, min(max_candidates, 24))
-    solver_objective = evaluate_topology_fit(topology, standards, constraints, recognition_ir, scale_manifest)
 
     program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons)
     if not program_anchors:
@@ -2495,6 +2496,13 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             "protected_polygon_count": len(protected_polygons),
         },
         "solver_objective": solver_objective,
+        "solver_plan_projection": {
+            "source": "solver.local_search",
+            "status": solver_objective.get("local_search", {}).get("status"),
+            "final_program_order": solver_objective.get("local_search", {}).get("final_program_order", []),
+            "satisfied_adjacency_count": solver_objective.get("local_search", {}).get("satisfied_adjacency_count"),
+            "use": "rank_same_layer_svg_mutation_candidates_before_native_geometry_patch",
+        },
         "program_anchors": program_anchors[:max_candidates],
         "same_layer_mutable_candidates": mutable_candidates[:max_candidates],
         "same_layer_opening_candidates": opening_candidates[:max_candidates],
@@ -2546,6 +2554,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             "local_search_status": solver_objective.get("local_search", {}).get("status"),
             "local_search_final_score": solver_objective.get("local_search", {}).get("final_score"),
             "local_search_satisfied_adjacency_count": solver_objective.get("local_search", {}).get("satisfied_adjacency_count"),
+            "local_search_ranked_mutable_candidate_count": sum(1 for item in mutable_candidates if item.get("local_search_rank") is not None),
             "scale_calibration_status": solver_objective.get("scale_calibration", {}).get("status"),
             "scale_calibration_confidence": solver_objective.get("scale_calibration", {}).get("confidence"),
         },

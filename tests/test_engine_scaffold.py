@@ -15,6 +15,7 @@ from crab_archi_design.solver import (
     build_local_search_report,
     resolve_architectural_scale,
 )
+from crab_archi_design.solver.patch_plan import annotate_candidates_with_solver_plan
 from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening, split_polyline_for_opening
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
 from crab_archi_design.svg.geometry import polygon_area, polyline_length, quantize_point, scaled_polyline_length
@@ -367,6 +368,61 @@ def test_solver_patch_plan_builds_endpoint_move_candidates() -> None:
     assert moves[0]["dy"] == 0
     assert moves[0]["connects_to_role"] == "hall_lobby"
     assert moves[0]["topology_evidence"] == "OpenCrab topology prior"
+
+
+def test_solver_patch_plan_projects_local_search_order_into_candidate_priority() -> None:
+    candidates = [
+        {"element_index": 1, "program_role": "fitness_gx", "patch_priority": 100.0},
+        {"element_index": 2, "program_role": "greenery_lounge", "patch_priority": 100.0},
+        {"element_index": 3, "program_role": "management_support", "patch_priority": 100.0},
+    ]
+    solver_objective = {
+        "local_search": {
+            "status": "active",
+            "final_program_order": ["greenery_lounge", "fitness_gx"],
+        }
+    }
+
+    annotated = annotate_candidates_with_solver_plan(candidates, solver_objective)
+
+    assert annotated[0]["local_search_rank"] == 2
+    assert annotated[0]["local_search_priority_boost"] == 75.0
+    assert annotated[0]["patch_priority_before_solver_plan"] == 100.0
+    assert annotated[0]["patch_priority"] == 175.0
+    assert annotated[1]["local_search_rank"] == 1
+    assert annotated[1]["local_search_priority_boost"] == 150.0
+    assert annotated[1]["patch_priority"] == 250.0
+    assert annotated[2]["local_search_rank"] is None
+    assert annotated[2]["local_search_priority_boost"] == 0.0
+    assert annotated[2]["solver_plan_source"] == "solver.role_priority"
+
+    annotated_again = annotate_candidates_with_solver_plan(annotated, solver_objective)
+    assert annotated_again[0]["patch_priority"] == 175.0
+    assert annotated_again[1]["patch_priority"] == 250.0
+
+
+def test_solver_patch_plan_projects_solver_role_for_unclustered_candidate() -> None:
+    candidates = [
+        {"element_index": 7, "bbox": {"x": 10, "y": 10, "width": 20, "height": 10}, "patch_priority": 50.0},
+    ]
+    solver_objective = {
+        "local_search": {
+            "status": "active",
+            "final_program_order": ["greenery_lounge", "fitness_gx"],
+            "final_placements": [
+                {"role": "greenery_lounge", "order": 1, "planned_box": {"x": 0, "y": 0, "width": 100, "height": 100}},
+                {"role": "fitness_gx", "order": 2, "planned_box": {"x": 100, "y": 0, "width": 100, "height": 100}},
+            ],
+        }
+    }
+
+    annotated = annotate_candidates_with_solver_plan(candidates, solver_objective)
+
+    assert annotated[0].get("program_role") is None
+    assert annotated[0]["solver_projected_role"] == "greenery_lounge"
+    assert annotated[0]["local_search_rank"] == 1
+    assert annotated[0]["local_search_priority_boost"] == 150.0
+    assert annotated[0]["patch_priority"] == 200.0
 
 
 def test_solver_patch_plan_builds_polyline_endpoint_move_candidates() -> None:
