@@ -625,6 +625,119 @@ def recognition_ir_v2_geometry_candidates(ir: dict[str, Any] | None, max_items: 
     return candidates
 
 
+SPACE_REGION_ROLES = {
+    "greenery_lounge",
+    "fitness_gx",
+    "golf_screen",
+    "hall_lobby",
+    "management_support",
+    "sauna_locker_shower",
+    "toilet_wet_core",
+}
+
+
+def recognition_ir_v2_axis_walls(ir: dict[str, Any] | None, min_length: float = 20.0) -> list[dict[str, Any]]:
+    walls: list[dict[str, Any]] = []
+    if recognition_ir_v2_status(ir) != "active":
+        return walls
+    for node in ir.get("nodes", []):
+        if node.get("role_hint") != "wall":
+            continue
+        box = normalize_bbox_dict(node.get("bbox"))
+        width = box["width"]
+        height = box["height"]
+        axis = None
+        if width >= min_length and width >= max(1.0, height * 4.0):
+            axis = "horizontal"
+        elif height >= min_length and height >= max(1.0, width * 4.0):
+            axis = "vertical"
+        if axis:
+            walls.append({"id": node.get("id"), "axis": axis, "bbox": box, "tag": node.get("tag")})
+    return walls
+
+
+def boundary_candidates(point: tuple[float, float], axis_walls: list[dict[str, Any]], max_distance: float = 800.0) -> dict[str, list[dict[str, Any]]]:
+    x, y = point
+    candidates = {"left": [], "right": [], "top": [], "bottom": []}
+    for wall in axis_walls:
+        box = wall["bbox"]
+        if wall["axis"] == "vertical" and box["y"] - 20.0 <= y <= box["y"] + box["height"] + 20.0:
+            distance = box["x"] - x
+            if -max_distance <= distance < 0:
+                candidates["left"].append({**wall, "distance": abs(distance), "line": box["x"]})
+            elif 0 < distance <= max_distance:
+                candidates["right"].append({**wall, "distance": distance, "line": box["x"]})
+        elif wall["axis"] == "horizontal" and box["x"] - 20.0 <= x <= box["x"] + box["width"] + 20.0:
+            distance = box["y"] - y
+            if -max_distance <= distance < 0:
+                candidates["top"].append({**wall, "distance": abs(distance), "line": box["y"]})
+            elif 0 < distance <= max_distance:
+                candidates["bottom"].append({**wall, "distance": distance, "line": box["y"]})
+    for side in candidates:
+        candidates[side] = sorted(candidates[side], key=lambda item: (float(item["distance"]), str(item.get("id"))))[:8]
+    return candidates
+
+
+def choose_space_boundary(candidates: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
+    best: dict[str, Any] | None = None
+    for left in candidates["left"]:
+        for right in candidates["right"]:
+            width = float(right["line"]) - float(left["line"])
+            if width < 45.0 or width > 900.0:
+                continue
+            for top in candidates["top"]:
+                for bottom in candidates["bottom"]:
+                    height = float(bottom["line"]) - float(top["line"])
+                    if height < 35.0 or height > 700.0:
+                        continue
+                    close_edge_penalty = sum(20.0 - min(20.0, float(item["distance"])) for item in [left, right, top, bottom])
+                    score = sum(float(item["distance"]) for item in [left, right, top, bottom]) + close_edge_penalty * 4.0
+                    option = {
+                        "bbox": {"x": float(left["line"]), "y": float(top["line"]), "width": width, "height": height},
+                        "boundary_walls": {"left": left["id"], "right": right["id"], "top": top["id"], "bottom": bottom["id"]},
+                        "boundary_distances": {
+                            "left": float(left["distance"]),
+                            "right": float(right["distance"]),
+                            "top": float(top["distance"]),
+                            "bottom": float(bottom["distance"]),
+                        },
+                        "score": round(score, 3),
+                        "confidence": round(max(0.25, min(0.85, 0.85 - close_edge_penalty / 120.0)), 3),
+                    }
+                    if best is None or option["score"] < best["score"]:
+                        best = option
+    return best
+
+
+def recognition_ir_v2_space_regions(labels: list[dict[str, Any]], ir: dict[str, Any] | None, max_regions: int = 200) -> list[dict[str, Any]]:
+    axis_walls = recognition_ir_v2_axis_walls(ir)
+    regions: list[dict[str, Any]] = []
+    for label in labels:
+        role = label.get("role_hint")
+        point = label_point(label)
+        if role not in SPACE_REGION_ROLES or point is None:
+            continue
+        boundary = choose_space_boundary(boundary_candidates(point, axis_walls))
+        if not boundary:
+            continue
+        regions.append(
+            {
+                "label": label.get("text"),
+                "role": role,
+                "point": list(point),
+                "bbox": boundary["bbox"],
+                "boundary_walls": boundary["boundary_walls"],
+                "boundary_distances": boundary["boundary_distances"],
+                "confidence": boundary["confidence"],
+                "source_node_id": label.get("source_node_id"),
+                "source": "recognition_ir_v2.wall_ray_space_region",
+            }
+        )
+        if len(regions) >= max_regions:
+            break
+    return regions
+
+
 def geometry_role_hint(tag: str, box: dict[str, float], el: ET.Element, viewbox: list[float]) -> str | None:
     max_dim = max(viewbox[2], viewbox[3])
     drawing_area = max(1.0, viewbox[2] * viewbox[3])
@@ -1528,6 +1641,7 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
     use_ir_v2 = recognition_ir_v2_status(recognition_ir) == "active"
     geometry = recognition_ir_v2_geometry_candidates(recognition_ir) if use_ir_v2 else (recognition or {}).get("geometry_candidates", {})
     program_labels = recognition_ir_v2_program_labels(recognition_ir) if use_ir_v2 else (recognition or {}).get("program_label_candidates", [])
+    space_regions = recognition_ir_v2_space_regions(program_labels, recognition_ir) if use_ir_v2 else []
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     role_to_nodes: dict[str, list[str]] = {}
@@ -1561,12 +1675,29 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
         }
         nodes.append(node)
 
+    for index, item in enumerate(space_regions, start=1):
+        node = {
+            "id": f"space_region_{index:03d}",
+            "type": "space_region",
+            "label": item.get("label"),
+            "role": item.get("role"),
+            "point": item.get("point"),
+            "bbox": normalize_bbox_dict(item.get("bbox")),
+            "boundary_walls": item.get("boundary_walls"),
+            "boundary_distances": item.get("boundary_distances"),
+            "confidence": item.get("confidence"),
+            "source_node_id": item.get("source_node_id"),
+            "source": item.get("source"),
+        }
+        nodes.append(node)
+
     for index, item in enumerate(geometry.get("column_candidates", []), start=1):
         node = {
             "id": f"column_{index:03d}",
             "type": "structural_column",
             "bbox": normalize_bbox_dict(item.get("bbox")),
             "tag": item.get("tag"),
+            "source_id": item.get("id"),
             "protected": True,
             "source": item.get("source", "recognition_ir_v2.nodes" if use_ir_v2 else "recognition.geometry_candidates.column_candidates"),
         }
@@ -1578,6 +1709,7 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
             "type": "wall_candidate",
             "bbox": normalize_bbox_dict(item.get("bbox")),
             "tag": item.get("tag"),
+            "source_id": item.get("id"),
             "source": item.get("source", "recognition_ir_v2.nodes" if use_ir_v2 else "recognition.geometry_candidates.wall_candidates"),
         }
         nodes.append(node)
@@ -1611,10 +1743,13 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
         register_role(role, node["id"])
 
     envelope_nodes = [node for node in nodes if node.get("type") == "room_envelope"]
+    space_region_nodes = [node for node in nodes if node.get("type") == "space_region"]
     label_nodes = [node for node in nodes if node.get("type") == "program_label"]
     column_nodes = [node for node in nodes if node.get("type") == "structural_column"]
+    wall_nodes = [node for node in nodes if node.get("type") == "wall_candidate"]
     standard_nodes = [node for node in nodes if node.get("type") == "standard_program"]
     constraint_nodes = [node for node in nodes if node.get("type") == "constraint"]
+    wall_by_source_id = {node.get("source_id"): node for node in wall_nodes if node.get("source_id")}
 
     for node in label_nodes:
         point_raw = node.get("point")
@@ -1628,6 +1763,22 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
         envelope, distance = nearest_envelope(point, envelope_nodes)
         if envelope:
             add_topology_edge(edges, node["id"], envelope["id"], "label_nearest_envelope", distance=distance, evidence="recognized_label_point")
+
+    for region in space_region_nodes:
+        for label in label_nodes:
+            if region.get("source_node_id"):
+                if region.get("source_node_id") != label.get("source_node_id"):
+                    continue
+                add_topology_edge(edges, label["id"], region["id"], "label_inside_space_region", evidence="wall_ray_boundary")
+                break
+            point_raw = label.get("point")
+            if point_raw and label.get("role") == region.get("role") and point_in_bbox((float(point_raw[0]), float(point_raw[1])), region.get("bbox") or {}):
+                add_topology_edge(edges, label["id"], region["id"], "label_inside_space_region", evidence="wall_ray_boundary")
+                break
+        for side, wall_source_id in (region.get("boundary_walls") or {}).items():
+            wall = wall_by_source_id.get(wall_source_id)
+            if wall:
+                add_topology_edge(edges, region["id"], wall["id"], "space_region_bounded_by_wall", side=side, evidence="wall_ray_boundary")
 
     for column in column_nodes:
         center = bbox_center(column.get("bbox") or {})
@@ -1769,7 +1920,7 @@ def recognition_audit_blocking_issues(gates: dict[str, bool]) -> list[str]:
         "mutable_zone_confirmed": "A mutable/projectable community interior zone is required before mutation.",
         "protected_zone_confirmed": "No-go/lock/protect constraints for parking, cores, ramps, or structure are required.",
         "topology_manifest_active": "Run topology-build and verify that target drawing topology is active.",
-        "label_topology_edges_present": "Program labels are not connected to room envelopes in the topology graph.",
+        "label_topology_edges_present": "Program labels are not connected to room envelopes or wall-bounded space regions in the topology graph.",
     }
     return [message for key, message in messages.items() if not gates.get(key)]
 
@@ -1788,7 +1939,8 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
     positioned_program_labels = [label for label in program_labels if label_point(label) is not None]
     roles = constraint_roles(constraints)
     edge_counts = topology_edge_counts(topology)
-    label_topology_edge_count = edge_counts.get("label_inside_envelope", 0) + edge_counts.get("label_nearest_envelope", 0)
+    label_space_region_edge_count = edge_counts.get("label_inside_space_region", 0)
+    label_topology_edge_count = edge_counts.get("label_inside_envelope", 0) + edge_counts.get("label_nearest_envelope", 0) + label_space_region_edge_count
     recognition_input_active = recognition_status(recognition) == "active" or use_ir_v2
     gates = {
         "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
@@ -1837,6 +1989,7 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
             "topology_node_count": (topology or {}).get("node_count", 0),
             "topology_edge_count": (topology or {}).get("edge_count", 0),
             "label_topology_edge_count": label_topology_edge_count,
+            "label_space_region_edge_count": label_space_region_edge_count,
         },
         "next_actions": [action for action in next_actions if action],
     }

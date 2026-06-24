@@ -532,6 +532,10 @@ def test_topology_build_creates_target_graph(tmp_path: Path) -> None:
             """
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600">
               <rect x="50" y="50" width="700" height="420" fill="none" stroke="#111" stroke-width="5"/>
+              <line id="space-left" x1="50" y1="50" x2="50" y2="470" stroke="#111" stroke-width="5"/>
+              <line id="space-right" x1="750" y1="50" x2="750" y2="470" stroke="#111" stroke-width="5"/>
+              <line id="space-top" x1="50" y1="50" x2="750" y2="50" stroke="#111" stroke-width="5"/>
+              <line id="space-bottom" x1="50" y1="470" x2="750" y2="470" stroke="#111" stroke-width="5"/>
               <rect x="100" y="100" width="22" height="22" fill="#111"/>
               <line x1="90" y1="260" x2="690" y2="260" stroke="#111" stroke-width="7"/>
               <text x="80" y="90">피트니스</text>
@@ -573,12 +577,13 @@ def test_topology_build_creates_target_graph(tmp_path: Path) -> None:
     assert topology["edge_count"] > 0
     node_types = {node["type"] for node in topology["nodes"]}
     edge_types = {edge["type"] for edge in topology["edges"]}
-    assert {"program_label", "room_envelope", "structural_column", "standard_program", "constraint"} <= node_types
-    assert {"label_inside_envelope", "column_inside_envelope", "standard_applies_to_program", "ontology_adjacency_target"} <= edge_types
+    assert {"program_label", "room_envelope", "space_region", "structural_column", "standard_program", "constraint"} <= node_types
+    assert {"label_inside_envelope", "label_inside_space_region", "column_inside_envelope", "standard_applies_to_program", "ontology_adjacency_target"} <= edge_types
     assert topology["graph_summary"]["protected_node_count"] >= 1
     assert topology["graph_summary"]["recognition_source"] == "recognition_ir_v2"
     assert topology["source_manifests"]["recognition_ir_v2"].endswith("recognition_ir_v2.json")
     assert topology["quality_gates"]["recognition_ir_v2_active"] is True
+    assert any(node["source"] == "recognition_ir_v2.wall_ray_space_region" for node in topology["nodes"] if node["type"] == "space_region")
 
 
 def test_recognition_audit_gates_svg_mutation_readiness(tmp_path: Path) -> None:
