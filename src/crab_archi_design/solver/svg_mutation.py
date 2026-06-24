@@ -6,6 +6,7 @@ from xml.etree.ElementTree import Element
 from crab_archi_design.solver.svg_edit_ops import (
     collapse_line_to_zero_length,
     count_images,
+    edit_capability_report,
     local_tag,
     move_line_endpoint,
     preserve_original_attrs,
@@ -204,6 +205,117 @@ def opening_sort_key(candidate: dict[str, Any]) -> tuple[float, int]:
 
 def endpoint_move_sort_key(candidate: dict[str, Any]) -> tuple[float, int]:
     return (float(candidate.get("endpoint_move_priority", candidate.get("patch_priority") or 0.0)), int(candidate.get("target_element_index") or 0))
+
+
+def candidate_capability_summary(
+    candidates: list[dict[str, Any]],
+    operation: str,
+    element_map: dict[int, Element],
+    parent_map: dict[int, Element | None] | None = None,
+    transform_map: dict[int, Matrix] | None = None,
+    locked_indices: set[int] | None = None,
+    max_review_examples: int = 12,
+) -> dict[str, Any]:
+    parent_map = parent_map or {}
+    transform_map = transform_map or {}
+    locked_indices = locked_indices or set()
+    by_tag: dict[str, dict[str, int]] = {}
+    supported: list[dict[str, Any]] = []
+    review_required: list[dict[str, Any]] = []
+    locked: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    for candidate in candidates:
+        element_index = selected_candidate_index(candidate)
+        if element_index in locked_indices:
+            locked.append(
+                {
+                    "target_element_index": element_index,
+                    "tag": candidate.get("tag"),
+                    "reason": "target element is locked/protected by patch plan",
+                }
+            )
+            continue
+        element = element_map.get(element_index or -1)
+        if element_index is None or element is None:
+            missing.append(
+                {
+                    "target_element_index": element_index,
+                    "tag": candidate.get("tag"),
+                    "reason": "target element not found",
+                }
+            )
+            continue
+        report = edit_capability_report(element, parent_map.get(element_index), transform_map.get(element_index))
+        tag = report["tag"]
+        tag_counts = by_tag.setdefault(tag, {"supported": 0, "review_required": 0})
+        operation_report = report["operations"][operation]
+        item = {
+            "target_element_index": element_index,
+            "tag": tag,
+            "id": report.get("id"),
+            "status": operation_report["status"],
+            "reason": operation_report["reason"],
+            "supported_operations": report["supported_operations"],
+        }
+        if operation_report["status"] == "supported":
+            tag_counts["supported"] += 1
+            supported.append(item)
+        else:
+            tag_counts["review_required"] += 1
+            if len(review_required) < max_review_examples:
+                review_required.append(item)
+    return {
+        "operation": operation,
+        "candidate_count": len(candidates),
+        "supported_count": len(supported),
+        "review_required_count": sum(item["review_required"] for item in by_tag.values()),
+        "locked_count": len(locked),
+        "missing_count": len(missing),
+        "by_tag": by_tag,
+        "review_required_examples": review_required,
+        "locked_examples": locked[:max_review_examples],
+        "missing_examples": missing[:max_review_examples],
+    }
+
+
+def edit_capability_summary(
+    plan: dict[str, Any],
+    element_map: dict[int, Element],
+    parent_map: dict[int, Element | None],
+    transform_map: dict[int, Matrix],
+    locked_indices: set[int],
+) -> dict[str, Any]:
+    mutable_candidates = [
+        candidate
+        for candidate in plan.get("same_layer_mutable_candidates", [])
+        if candidate.get("mutation_policy") == "modify_or_remove_existing_element_only"
+    ]
+    return {
+        "opening_split": candidate_capability_summary(
+            plan.get("same_layer_opening_candidates", []),
+            "opening_split",
+            element_map,
+            parent_map=parent_map,
+            transform_map=transform_map,
+            locked_indices=locked_indices,
+        ),
+        "endpoint_move": candidate_capability_summary(
+            plan.get("same_layer_endpoint_move_candidates", []),
+            "endpoint_move",
+            element_map,
+            parent_map=parent_map,
+            transform_map=transform_map,
+            locked_indices=locked_indices,
+        ),
+        "partition_remove": candidate_capability_summary(
+            mutable_candidates,
+            "partition_remove",
+            element_map,
+            parent_map=parent_map,
+            transform_map=transform_map,
+            locked_indices=locked_indices,
+        ),
+    }
 
 
 def apply_endpoint_move_candidates(
@@ -429,6 +541,7 @@ def apply_same_layer_geometry_patch(
     transform_map = element_matrices_by_document_index(root)
     locked_indices = locked_candidate_indices(plan)
     locked_before = capture_locked_element_states(root, plan)
+    capability_summary = edit_capability_summary(plan, element_map, parent_map, transform_map, locked_indices)
     opening_summary = apply_opening_candidates(
         root,
         plan,
@@ -485,6 +598,7 @@ def apply_same_layer_geometry_patch(
         "mutation_strategy": "same_layer_geometry_patch",
         "patch_plan_status": plan.get("status"),
         "patch_plan_candidate_count": len(plan.get("same_layer_mutable_candidates", [])),
+        "edit_capability_summary": capability_summary,
         "selected_candidate_count": len(selected),
         "same_layer_mutation_count": len(mutated),
         "same_layer_removal_count": sum(1 for item in mutated if item.get("same_layer_removed")),

@@ -3,7 +3,7 @@ from crab_archi_design.qa import gate_status
 from crab_archi_design.recognition import PARSER_VERSION, RECOGNITION_IR_SCHEMA, build_recognition_ir_v2, stable_node_id
 from crab_archi_design.recognition.ir import empty_recognition_ir
 from crab_archi_design.solver import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA, build_endpoint_move_candidates, build_opening_candidates
-from crab_archi_design.solver.svg_edit_ops import split_line_for_opening, split_path_for_opening
+from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
 from crab_archi_design.svg.geometry import polygon_area, quantize_point
 from crab_archi_design.svg.transform import parse_transform
@@ -72,6 +72,29 @@ def test_svg_edit_ops_split_path_opening_uses_world_length_under_transform() -> 
     assert result["world_opening"] == {"x1": 150.0, "y1": 0.0, "x2": 200.0, "y2": 25.0}
     assert group[0].attrib["d"] == "M 0,0 L 75,0"
     assert group[1].attrib["d"] == "M 100,25 L 100,100"
+
+
+def test_svg_edit_ops_reports_supported_and_review_required_operations() -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(
+        """
+        <svg>
+          <line id="line-wall" x1="0" y1="0" x2="100" y2="0"/>
+          <path id="curved-wall" d="M 0 0 C 10 10 20 10 30 0"/>
+        </svg>
+        """
+    )
+
+    line_report = edit_capability_report(root[0], root)
+    curved_report = edit_capability_report(root[1], root)
+
+    assert line_report["operations"]["opening_split"]["status"] == "supported"
+    assert line_report["operations"]["endpoint_move"]["status"] == "supported"
+    assert line_report["operations"]["partition_remove"]["status"] == "supported"
+    assert curved_report["operations"]["opening_split"]["status"] == "review_required"
+    assert "C" in curved_report["operations"]["opening_split"]["reason"]
+    assert curved_report["operations"]["endpoint_move"]["status"] == "review_required"
 
 
 def test_intent_and_gate_contracts() -> None:

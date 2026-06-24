@@ -929,6 +929,8 @@ def test_solver_same_layer_opening_splits_transformed_path_by_world_length() -> 
     assert after.attrib["d"] == "M 100,25 L 100,100"
     assert before.attrib["data-crab-transform-aware"] == "true"
     assert after.attrib["data-crab-transform-aware"] == "true"
+    assert summary["edit_capability_summary"]["opening_split"]["supported_count"] == 1
+    assert summary["edit_capability_summary"]["opening_split"]["review_required_count"] == 0
     assert mutation["transform_aware"] is True
     assert mutation["opening"] == {"x1": 75.0, "y1": 0.0, "x2": 100.0, "y2": 25.0}
     assert mutation["world_opening"] == {"x1": 150.0, "y1": 0.0, "x2": 200.0, "y2": 25.0}
@@ -967,6 +969,10 @@ def test_solver_same_layer_opening_skips_curved_path() -> None:
     assert summary["same_layer_opening_split_count"] == 0
     assert summary["opening_skips"][0]["action"] == "split_path_for_opening"
     assert summary["opening_skips"][0]["reason"] == "requires direct child open single-subpath M/L/H/V path and 0 < start < end < 1"
+    capability = summary["edit_capability_summary"]["opening_split"]
+    assert capability["supported_count"] == 0
+    assert capability["review_required_count"] == 1
+    assert "C" in capability["review_required_examples"][0]["reason"]
     assert "data-crab-action" not in paths[0].attrib
 
 

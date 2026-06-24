@@ -11,6 +11,7 @@ from crab_archi_design.svg.transform import (
     apply_inverse_matrix,
     apply_matrix,
     identity_matrix,
+    inverse_matrix,
     parse_numbers,
 )
 
@@ -88,6 +89,28 @@ def editable_path_points(element: Element) -> list[tuple[float, float]]:
     return points if len(points) >= 2 else []
 
 
+def path_editability_review_reason(element: Element) -> str | None:
+    if local_tag(element) != "path":
+        return "requires path target"
+    raw = element.attrib.get("d")
+    if raw is None:
+        return "path is missing d attribute"
+    commands = {token.upper() for token in TOKEN_RE.findall(raw) if len(token) == 1 and token.isalpha()}
+    if not commands:
+        return "path has no drawable commands"
+    unsupported = sorted(commands - {"M", "L", "H", "V"})
+    if unsupported:
+        return f"unsupported path commands for CAD-like edit: {','.join(unsupported)}"
+    parsed = parse_path(raw)
+    if path_is_closed(parsed):
+        return "closed path requires room/shell mutator review"
+    if len(parsed.subpaths) != 1:
+        return "multi-subpath path requires decomposition review"
+    if len(flatten_path_points(parsed)) < 2:
+        return "path needs at least two editable points"
+    return None
+
+
 def linear_endpoint_coords(element: Element) -> tuple[float, float, float, float] | None:
     line = line_points(element)
     if line is not None:
@@ -100,6 +123,61 @@ def linear_endpoint_coords(element: Element) -> tuple[float, float, float, float
     start = points[0]
     end = points[-1]
     return (start[0], start[1], end[0], end[1])
+
+
+def operation_status(supported: bool, reason: str | None = None) -> dict[str, str]:
+    if supported:
+        return {"status": "supported", "reason": "native same-layer edit available"}
+    return {"status": "review_required", "reason": reason or "unsupported SVG primitive for this edit"}
+
+
+def transform_review_reason(matrix: Matrix | None) -> str | None:
+    if matrix is None or matrix_is_identity(matrix):
+        return None
+    if inverse_matrix(matrix) is None:
+        return "requires invertible accumulated transform"
+    return None
+
+
+def edit_capability_report(
+    element: Element,
+    parent: Element | None = None,
+    transform_matrix: Matrix | None = None,
+) -> dict[str, Any]:
+    tag = local_tag(element)
+    parent_reason = None if parent is not None and element in list(parent) else "requires source element as direct child of parent"
+    transform_reason = transform_review_reason(transform_matrix)
+    path_reason = path_editability_review_reason(element) if tag == "path" else None
+
+    if tag == "line":
+        opening_reason = None if line_points(element) is not None else "line requires x1/y1/x2/y2 attributes"
+    elif tag == "path":
+        opening_reason = path_reason
+    else:
+        opening_reason = "opening split requires line or open single-subpath M/L/H/V path"
+    if opening_reason is None:
+        opening_reason = parent_reason or transform_reason
+
+    endpoint_reason = None if linear_endpoint_coords(element) is not None else "endpoint move requires line/polyline or open single-subpath M/L/H/V path with at least two points"
+    if endpoint_reason is None:
+        endpoint_reason = transform_reason
+
+    partition_reason = None if tag in {"line", "polyline", "path"} else "partition removal requires line/polyline/path source geometry"
+
+    operations = {
+        "opening_split": operation_status(opening_reason is None, opening_reason),
+        "endpoint_move": operation_status(endpoint_reason is None, endpoint_reason),
+        "partition_remove": operation_status(partition_reason is None, partition_reason),
+    }
+    supported_operations = [operation for operation, item in operations.items() if item["status"] == "supported"]
+    review_required_operations = [operation for operation, item in operations.items() if item["status"] == "review_required"]
+    return {
+        "tag": tag,
+        "id": element.attrib.get("id"),
+        "supported_operations": supported_operations,
+        "review_required_operations": review_required_operations,
+        "operations": operations,
+    }
 
 
 def format_polyline_points(points: list[tuple[float, float]]) -> str:
