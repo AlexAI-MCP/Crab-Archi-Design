@@ -2,7 +2,15 @@ from crab_archi_design.intents import DESIGN_INTENT_SCHEMA, EDIT_INTENT_SCHEMA, 
 from crab_archi_design.qa import gate_status
 from crab_archi_design.recognition import PARSER_VERSION, RECOGNITION_IR_SCHEMA, build_recognition_ir_v2, stable_node_id
 from crab_archi_design.recognition.ir import empty_recognition_ir
-from crab_archi_design.solver import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA, build_endpoint_move_candidates, build_opening_candidates
+from crab_archi_design.solver import (
+    SOLVER_INPUT_SCHEMA,
+    SOLVER_OUTPUT_SCHEMA,
+    build_endpoint_move_candidates,
+    build_feasible_report,
+    build_opening_candidates,
+    evaluate_topology_fit,
+    extract_program_targets,
+)
 from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening, split_polyline_for_opening
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
 from crab_archi_design.svg.geometry import polygon_area, polyline_length, quantize_point, scaled_polyline_length
@@ -403,6 +411,98 @@ def test_solver_patch_plan_builds_path_endpoint_move_candidates() -> None:
     assert moves[0]["endpoint"] == "end"
     assert moves[0]["dx"] > 0
     assert moves[0]["connects_to_role"] == "hall_lobby"
+
+
+def test_solver_sizing_extracts_household_grid_program_targets(tmp_path) -> None:
+    standards_csv = tmp_path / "standards.csv"
+    standards_csv.write_text(
+        "\n".join(
+            [
+                "구분,,,,,800,900,1000",
+                "세대수,,,,,800,900,1000",
+                "운동,필수,피트니스클럽,,면적(평),65,70,80",
+                ",,GX룸,,면적(평),20,20,20",
+                ",,골프클럽,,면적(평),85,95,105",
+                ",,스크린골프,,면적(평),12,12,12",
+                ",,샤워실,,면적(평),30,35,40",
+                ",,사우나,,면적(평),80,90,100",
+                ",특화,사우나,,면적(평),,55,60",
+                ",,건식사우나,,면적(평),,10,10",
+                "문화,필수,카페,,면적(평),30,32,34",
+                ",,작은도서관 (그리너리카페 면적 적용),,면적(평),48,48,48",
+                ",,그리너리 카페 (카페 + 작은도서관),,면적(평),75,80,85",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "household_count": 900,
+        "standard_items": [
+            {
+                "source_file": str(standards_csv),
+                "payload": {"selected_rows": []},
+            }
+        ],
+    }
+
+    targets = {target["role"]: target for target in extract_program_targets(manifest)}
+
+    assert targets["greenery_lounge"]["target_area_pyeong"] == 80.0
+    assert targets["greenery_lounge"]["aggregation_policy"] == "prefer_combined_greenery_cafe_library_row"
+    assert targets["fitness_gx"]["target_area_pyeong"] == 90.0
+    assert targets["golf_screen"]["target_area_pyeong"] == 107.0
+    assert targets["sauna_locker_shower"]["target_area_pyeong"] == 135.0
+    assert targets["greenery_lounge"]["target_area_m2"] == 264.463
+
+
+def test_solver_feasible_and_objective_report_constraints_and_targets(tmp_path) -> None:
+    standards_csv = tmp_path / "standards.csv"
+    standards_csv.write_text(
+        "\n".join(
+            [
+                "세대수,,,,,900",
+                "문화,필수,그리너리 카페 (카페 + 작은도서관),,면적(평),80",
+                "운동,필수,피트니스클럽,,면적(평),70",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    standards = {"household_count": 900, "standard_items": [{"source_file": str(standards_csv), "payload": {"selected_rows": []}}]}
+    constraints = {
+        "constraint_items": [
+            {"id": "shell", "role": "community_shell", "points": [[0, 0], [300, 0], [300, 200], [0, 200]]},
+            {"id": "mutable", "role": "mutable", "points": [[20, 20], [260, 20], [260, 180], [20, 180]]},
+            {"id": "no-go", "role": "no_go", "points": [[220, 120], [280, 120], [280, 190], [220, 190]]},
+        ]
+    }
+    topology = {
+        "nodes": [
+            {"id": "cluster_lounge", "type": "program_cluster", "role": "greenery_lounge", "area": 12000, "space_region_count": 1},
+            {"id": "cluster_fitness", "type": "program_cluster", "role": "fitness_gx", "area": 8000, "space_region_count": 1},
+        ],
+        "edges": [
+            {
+                "id": "edge_001",
+                "type": "ontology_cluster_adjacency_target",
+                "source": "cluster_lounge",
+                "target": "cluster_fitness",
+                "left_role": "greenery_lounge",
+                "right_role": "fitness_gx",
+                "evidence": "OpenCrab topology prior",
+            }
+        ],
+    }
+
+    feasible = build_feasible_report(constraints)
+    report = evaluate_topology_fit(topology, standards, constraints)
+
+    assert feasible["gates"]["shell_found"] is True
+    assert feasible["gates"]["mutable_zone_found"] is True
+    assert feasible["available_area_estimate"] > 0
+    assert report["target_program_count"] == 2
+    assert report["covered_target_role_count"] == 2
+    assert report["adjacency_summary"]["ontology_cluster_adjacency_target_count"] == 1
+    assert {item["role"] for item in report["role_evaluations"]} == {"greenery_lounge", "fitness_gx"}
 
 
 def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:

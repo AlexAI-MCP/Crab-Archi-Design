@@ -30,7 +30,9 @@ SRC_ROOT = Path(__file__).resolve().parents[1]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from crab_archi_design.solver.objective import evaluate_topology_fit
 from crab_archi_design.solver.patch_plan import build_endpoint_move_candidates, build_opening_candidates, patch_role_priority
+from crab_archi_design.solver.sizing import standard_role_rows_from_manifest
 
 
 def now() -> str:
@@ -1545,26 +1547,7 @@ def row_area_hint(row: dict[str, str]) -> float | None:
 
 
 def standard_role_rows(manifest: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    roles: dict[str, dict[str, Any]] = {}
-    if not manifest:
-        return roles
-    for item in manifest.get("standard_items", []):
-        rows = item.get("payload", {}).get("selected_rows", [])
-        if not isinstance(rows, list):
-            continue
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            normalized = {str(key): str(value) for key, value in row.items()}
-            role = classify_label_role(" ".join([*normalized.keys(), *normalized.values()]))
-            if not role:
-                continue
-            entry = roles.setdefault(role, {"role": role, "rows": [], "target_area_hint": None})
-            entry["rows"].append(normalized)
-            area = row_area_hint(normalized)
-            if area is not None:
-                entry["target_area_hint"] = area if entry["target_area_hint"] is None else entry["target_area_hint"] + area
-    return roles
+    return standard_role_rows_from_manifest(manifest)
 
 
 def node_type_counts(nodes: list[dict[str, Any]]) -> dict[str, int]:
@@ -1843,6 +1826,9 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
             "role": role,
             "row_count": len(entry["rows"]),
             "target_area_hint": entry.get("target_area_hint"),
+            "target_area_pyeong": entry.get("target_area_pyeong"),
+            "target_area_m2": entry.get("target_area_m2"),
+            "aggregation_policy": entry.get("aggregation_policy"),
             "source": "standards.selected_rows",
         }
         nodes.append(node)
@@ -2257,6 +2243,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
     recognition_ir = load_recognition_ir_v2(project_id, root)
     topology = load_topology_manifest(project_id, root)
     constraints = load_constraint_manifest(project_id, root)
+    standards = load_standards_manifest(project_id, root)
     recognition_audit_path = latest_recognition_audit_path(project_id, root)
     recognition_audit = read_json(recognition_audit_path) if recognition_audit_path else None
     use_ir_v2 = recognition_ir_v2_status(recognition_ir) == "active"
@@ -2317,6 +2304,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
     mutable_candidates = sorted(mutable_candidates, key=lambda item: (float(item.get("patch_priority") or 0.0), bbox_area(item.get("bbox") or {})), reverse=True)
     opening_candidates = build_opening_candidates(mutable_candidates, topology, min(max_candidates, 24))
     endpoint_move_candidates = build_endpoint_move_candidates(mutable_candidates, topology, min(max_candidates, 24))
+    solver_objective = evaluate_topology_fit(topology, standards, constraints)
 
     program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons)
     if not program_anchors:
@@ -2369,6 +2357,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             "community_shell_polygon_count": len(shell_polygons),
             "protected_polygon_count": len(protected_polygons),
         },
+        "solver_objective": solver_objective,
         "program_anchors": program_anchors[:max_candidates],
         "same_layer_mutable_candidates": mutable_candidates[:max_candidates],
         "same_layer_opening_candidates": opening_candidates[:max_candidates],
@@ -2412,6 +2401,9 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             "source_geometry_candidate_count": len(geometry_items),
             "editable_source_geometry_candidate_count": sum(1 for item in geometry_items if item.get("editable") is not False and item.get("index") is not None),
             "noneditable_source_geometry_candidate_count": sum(1 for item in geometry_items if item.get("editable") is False or item.get("index") is None),
+            "target_program_count": solver_objective.get("target_program_count", 0),
+            "covered_target_role_count": solver_objective.get("covered_target_role_count", 0),
+            "feasible_available_area_estimate": solver_objective.get("feasible_report", {}).get("available_area_estimate"),
         },
         "program_clusters": program_clusters[:max_candidates],
     }
