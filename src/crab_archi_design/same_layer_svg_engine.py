@@ -81,6 +81,7 @@ def main() -> None:
         max_openings=max(1, args.max_openings),
         apply_endpoint_moves=args.apply_endpoint_moves,
         max_endpoint_moves=max(1, args.max_endpoint_moves),
+        intents=solver_input.get("intents", []),
     )
     output_svg = run_dir / "same_layer_engine_candidate.svg"
     tree.write(output_svg, encoding="utf-8", xml_declaration=True)

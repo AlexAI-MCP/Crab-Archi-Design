@@ -823,6 +823,58 @@ def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
     assert partition.attrib["data-crab-program-role"] == "greenery_lounge"
 
 
+def test_solver_same_layer_geometry_patch_uses_intent_projection_for_selection() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80">
+          <line id="fitness-partition" x1="10" y1="20" x2="100" y2="20" stroke="#111" stroke-width="5"/>
+          <line id="lounge-partition" x1="10" y1="50" x2="100" y2="50" stroke="#111" stroke-width="5"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [
+            {
+                "element_index": 2,
+                "tag": "line",
+                "role_hint": "wall_candidate",
+                "bbox": {"x": 10, "y": 20, "width": 90, "height": 0},
+                "patch_priority": 900,
+                "mutation_policy": "modify_or_remove_existing_element_only",
+                "program_role": "fitness_gx",
+            },
+            {
+                "element_index": 3,
+                "tag": "line",
+                "role_hint": "wall_candidate",
+                "bbox": {"x": 10, "y": 50, "width": 90, "height": 0},
+                "patch_priority": 100,
+                "mutation_policy": "modify_or_remove_existing_element_only",
+                "program_role": "greenery_lounge",
+            },
+        ],
+        "locked_candidates": [],
+    }
+    intents = [
+        {
+            "source": {"type": "natural_language", "text": "Merge the greenery lounge partitions and open it toward the hall."},
+            "operations": [{"target": "greenery_lounge", "action": "revise_lounge_quality", "method": "adjust_opening_or_partition"}],
+        }
+    ]
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=1, intents=intents)
+    fitness = next(element for element in root.iter() if element.attrib.get("id") == "fitness-partition")
+    lounge = next(element for element in root.iter() if element.attrib.get("id") == "lounge-partition")
+
+    assert summary["intent_projection"]["status"] == "active"
+    assert summary["intent_projection"]["boosted_candidate_count"] == 1
+    assert summary["mutations"][0]["element_index"] == 3
+    assert "display" not in fitness.attrib
+    assert lounge.attrib["display"] == "none"
+    assert lounge.attrib["x2"] == lounge.attrib["x1"]
+
+
 def test_solver_same_layer_geometry_patch_collapses_polyline_and_path_partitions() -> None:
     root = ET.fromstring(
         """

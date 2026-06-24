@@ -15,7 +15,7 @@ from crab_archi_design.solver import (
     build_local_search_report,
     resolve_architectural_scale,
 )
-from crab_archi_design.solver.patch_plan import annotate_candidates_with_solver_plan
+from crab_archi_design.solver.patch_plan import annotate_candidates_with_solver_plan, project_intents_onto_patch_plan
 from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening, split_polyline_for_opening
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
 from crab_archi_design.svg.geometry import polygon_area, polyline_length, quantize_point, scaled_polyline_length
@@ -287,6 +287,47 @@ def test_solver_patch_plan_builds_path_opening_candidates() -> None:
     assert openings[0]["topology_evidence"] == "OpenCrab topology prior"
 
 
+def test_solver_patch_plan_builds_opening_from_solver_projected_role() -> None:
+    candidates = [
+        {
+            "element_index": 41,
+            "tag": "line",
+            "bbox": {"x": 10, "y": 10, "width": 100, "height": 2},
+            "center": [60, 11],
+            "patch_priority": 500.0,
+            "solver_projected_role": "greenery_lounge",
+            "local_search_rank": 1,
+            "space_region_ids": [],
+        }
+    ]
+    topology = {
+        "nodes": [
+            {"id": "cluster_hall", "type": "program_cluster", "role": "hall_lobby", "bbox": {"x": 120, "y": 0, "width": 90, "height": 80}},
+        ],
+        "edges": [
+            {
+                "id": "edge_projected_opening",
+                "type": "ontology_cluster_adjacency_target",
+                "source": "projected_lounge",
+                "target": "cluster_hall",
+                "left_role": "greenery_lounge",
+                "right_role": "hall_lobby",
+                "evidence": "OpenCrab topology prior",
+            }
+        ],
+    }
+
+    openings = build_opening_candidates(candidates, topology, 4)
+
+    assert openings[0]["target_element_index"] == 41
+    assert openings[0]["program_cluster_id"] is None
+    assert openings[0]["program_role"] == "greenery_lounge"
+    assert openings[0]["source_program_role"] is None
+    assert openings[0]["solver_projected_role"] == "greenery_lounge"
+    assert openings[0]["connects_to_role"] == "hall_lobby"
+    assert openings[0]["opening_priority"] > candidates[0]["patch_priority"]
+
+
 def test_solver_patch_plan_builds_polyline_opening_candidates() -> None:
     candidates = [
         {
@@ -370,6 +411,44 @@ def test_solver_patch_plan_builds_endpoint_move_candidates() -> None:
     assert moves[0]["topology_evidence"] == "OpenCrab topology prior"
 
 
+def test_solver_patch_plan_builds_endpoint_move_from_solver_projected_role() -> None:
+    candidates = [
+        {
+            "element_index": 42,
+            "tag": "line",
+            "bbox": {"x": 20, "y": 10, "width": 100, "height": 2},
+            "center": [70, 11],
+            "patch_priority": 500.0,
+            "solver_projected_role": "fitness_gx",
+        }
+    ]
+    topology = {
+        "nodes": [
+            {"id": "cluster_hall", "type": "program_cluster", "role": "hall_lobby", "bbox": {"x": 160, "y": 0, "width": 80, "height": 80}},
+        ],
+        "edges": [
+            {
+                "id": "edge_projected_endpoint",
+                "type": "ontology_cluster_adjacency_target",
+                "source": "projected_fitness",
+                "target": "cluster_hall",
+                "left_role": "fitness_gx",
+                "right_role": "hall_lobby",
+                "evidence": "OpenCrab topology prior",
+            }
+        ],
+    }
+
+    moves = build_endpoint_move_candidates(candidates, topology, 4)
+
+    assert moves[0]["target_element_index"] == 42
+    assert moves[0]["program_role"] == "fitness_gx"
+    assert moves[0]["source_program_role"] is None
+    assert moves[0]["solver_projected_role"] == "fitness_gx"
+    assert moves[0]["connects_to_role"] == "hall_lobby"
+    assert moves[0]["endpoint_move_priority"] > candidates[0]["patch_priority"]
+
+
 def test_solver_patch_plan_projects_local_search_order_into_candidate_priority() -> None:
     candidates = [
         {"element_index": 1, "program_role": "fitness_gx", "patch_priority": 100.0},
@@ -423,6 +502,39 @@ def test_solver_patch_plan_projects_solver_role_for_unclustered_candidate() -> N
     assert annotated[0]["local_search_rank"] == 1
     assert annotated[0]["local_search_priority_boost"] == 150.0
     assert annotated[0]["patch_priority"] == 200.0
+
+
+def test_solver_patch_plan_projects_edit_intent_into_candidate_priority() -> None:
+    plan = {
+        "same_layer_mutable_candidates": [
+            {"element_index": 1, "program_role": "fitness_gx", "patch_priority": 900.0},
+            {"element_index": 2, "program_role": "greenery_lounge", "patch_priority": 100.0},
+        ],
+        "same_layer_opening_candidates": [
+            {"target_element_index": 3, "program_role": "greenery_lounge", "connects_to_role": "hall_lobby", "opening_priority": 80.0},
+            {"target_element_index": 4, "program_role": "management_support", "connects_to_role": "hall_lobby", "opening_priority": 80.0},
+        ],
+        "same_layer_endpoint_move_candidates": [],
+    }
+    intents = [
+        {
+            "source": {"type": "natural_language", "text": "Open the greenery lounge toward the hall."},
+            "operations": [
+                {"target": "greenery_lounge", "action": "increase_visual_openness_to_hall", "method": "adjust_opening_or_partition"},
+            ],
+        }
+    ]
+
+    projected = project_intents_onto_patch_plan(plan, intents)
+
+    assert projected["intent_projection"]["status"] == "active"
+    assert projected["intent_projection"]["target_roles"] == ["greenery_lounge", "hall_lobby"]
+    assert projected["same_layer_mutable_candidates"][0]["program_role"] == "greenery_lounge"
+    assert projected["same_layer_mutable_candidates"][0]["intent_priority_boost"] > 0
+    greenery_opening = next(item for item in projected["same_layer_opening_candidates"] if item["program_role"] == "greenery_lounge")
+    management_opening = next(item for item in projected["same_layer_opening_candidates"] if item["program_role"] == "management_support")
+    assert greenery_opening["intent_priority_boost"] > projected["same_layer_mutable_candidates"][0]["intent_priority_boost"]
+    assert management_opening["intent_priority_boost"] < greenery_opening["intent_priority_boost"]
 
 
 def test_solver_patch_plan_builds_polyline_endpoint_move_candidates() -> None:

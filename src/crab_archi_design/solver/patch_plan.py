@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from crab_archi_design.solver.sizing import classify_program_role
+
 
 def svg_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -39,6 +41,10 @@ def patch_role_priority(role: str | None) -> float:
         "hall_lobby": 380.0,
         "management_support": 120.0,
     }.get(str(role or ""), 0.0)
+
+
+def effective_program_role(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("program_role") or candidate.get("solver_projected_role") or "")
 
 
 def local_search_role_order(solver_objective: dict[str, Any] | None) -> list[str]:
@@ -100,6 +106,144 @@ def annotate_candidate_with_solver_plan(candidate: dict[str, Any], solver_object
 
 def annotate_candidates_with_solver_plan(candidates: list[dict[str, Any]], solver_objective: dict[str, Any] | None) -> list[dict[str, Any]]:
     return [annotate_candidate_with_solver_plan(candidate, solver_objective) for candidate in candidates]
+
+
+def intent_text_fragments(intents: list[dict[str, Any]] | None) -> list[str]:
+    fragments: list[str] = []
+    for intent in intents or []:
+        source = intent.get("source") or {}
+        if source.get("text"):
+            fragments.append(str(source.get("text")))
+        if source.get("type"):
+            fragments.append(str(source.get("type")))
+        if intent.get("strategy"):
+            fragments.append(str(intent.get("strategy")))
+        for operation in intent.get("operations", []):
+            for key in ["target", "target_hint", "action", "edit_type", "method", "snap_policy"]:
+                value = operation.get(key)
+                if value:
+                    fragments.append(str(value))
+    return fragments
+
+
+def intent_target_roles(intents: list[dict[str, Any]] | None) -> set[str]:
+    roles: set[str] = set()
+    role_aliases = {
+        "greenery_lounge": "greenery_lounge",
+        "fitness_gx": "fitness_gx",
+        "golf_screen": "golf_screen",
+        "sauna_locker_shower": "sauna_locker_shower",
+        "hall_lobby": "hall_lobby",
+        "management_support": "management_support",
+        "main_hall": "hall_lobby",
+        "hall": "hall_lobby",
+        "lobby": "hall_lobby",
+    }
+    for fragment in intent_text_fragments(intents):
+        role = role_aliases.get(fragment) or classify_program_role(fragment)
+        if role:
+            roles.add(role)
+    return roles
+
+
+def intent_requests_opening(intents: list[dict[str, Any]] | None) -> bool:
+    text = " ".join(intent_text_fragments(intents)).lower()
+    return any(term in text for term in ["open", "opening", "connect", "connection", "개방", "열", "연결", "출입", "동선"])
+
+
+def intent_requests_partition_rework(intents: list[dict[str, Any]] | None) -> bool:
+    text = " ".join(intent_text_fragments(intents)).lower()
+    return any(term in text for term in ["merge", "rework", "partition", "revise", "통합", "구획", "벽", "파티션", "재구성", "개선"])
+
+
+def candidate_intent_roles(candidate: dict[str, Any]) -> set[str]:
+    roles = {
+        str(candidate.get("program_role") or ""),
+        str(candidate.get("solver_projected_role") or ""),
+        str(candidate.get("connects_to_role") or ""),
+    }
+    return {role for role in roles if role}
+
+
+def candidate_primary_intent_roles(candidate: dict[str, Any]) -> set[str]:
+    return {role for role in [effective_program_role(candidate)] if role}
+
+
+def candidate_connector_intent_roles(candidate: dict[str, Any]) -> set[str]:
+    return {role for role in [str(candidate.get("connects_to_role") or "")] if role}
+
+
+def intent_candidate_boost(candidate: dict[str, Any], intents: list[dict[str, Any]] | None, operation_kind: str) -> float:
+    target_roles = intent_target_roles(intents)
+    if not target_roles:
+        return 0.0
+    primary_matches = target_roles & candidate_primary_intent_roles(candidate)
+    connector_matches = target_roles & candidate_connector_intent_roles(candidate)
+    if not primary_matches and not connector_matches:
+        return 0.0
+    boost = 0.0
+    if primary_matches:
+        boost += 420.0 + 180.0 * len(primary_matches)
+    if connector_matches:
+        boost += 80.0 if primary_matches else 160.0
+    if operation_kind == "opening" and intent_requests_opening(intents):
+        boost += 320.0 if primary_matches else 80.0
+    if operation_kind == "partition_remove" and primary_matches and intent_requests_partition_rework(intents):
+        boost += 240.0
+    if operation_kind == "endpoint_move" and intent_requests_opening(intents):
+        boost += 120.0 if primary_matches else 40.0
+    return round(boost, 3)
+
+
+def annotate_candidate_with_intents(candidate: dict[str, Any], intents: list[dict[str, Any]] | None, priority_field: str, operation_kind: str) -> dict[str, Any]:
+    base = float(candidate.get(f"{priority_field}_before_intent", candidate.get(priority_field) or 0.0))
+    boost = intent_candidate_boost(candidate, intents, operation_kind)
+    candidate[f"{priority_field}_before_intent"] = round(base, 3)
+    candidate["intent_target_roles"] = sorted(intent_target_roles(intents))
+    candidate["intent_priority_boost"] = boost
+    candidate["intent_projection_source"] = "solver_input.intents" if boost > 0 else None
+    candidate[priority_field] = round(base + boost, 3)
+    return candidate
+
+
+def project_intents_onto_patch_plan(plan: dict[str, Any], intents: list[dict[str, Any]] | None) -> dict[str, Any]:
+    if not intents:
+        plan["intent_projection"] = {"status": "no_intents", "target_roles": [], "boosted_candidate_count": 0}
+        return plan
+    target_roles = sorted(intent_target_roles(intents))
+    boosted_count = 0
+    for candidate in plan.get("same_layer_mutable_candidates", []):
+        annotate_candidate_with_intents(candidate, intents, "patch_priority", "partition_remove")
+        boosted_count += 1 if candidate.get("intent_priority_boost") else 0
+    for candidate in plan.get("same_layer_opening_candidates", []):
+        annotate_candidate_with_intents(candidate, intents, "opening_priority", "opening")
+        boosted_count += 1 if candidate.get("intent_priority_boost") else 0
+    for candidate in plan.get("same_layer_endpoint_move_candidates", []):
+        annotate_candidate_with_intents(candidate, intents, "endpoint_move_priority", "endpoint_move")
+        boosted_count += 1 if candidate.get("intent_priority_boost") else 0
+    plan["same_layer_mutable_candidates"] = sorted(
+        plan.get("same_layer_mutable_candidates", []),
+        key=lambda item: (float(item.get("patch_priority") or 0.0), float((item.get("bbox") or {}).get("width") or 0.0) * float((item.get("bbox") or {}).get("height") or 0.0)),
+        reverse=True,
+    )
+    plan["same_layer_opening_candidates"] = sorted(
+        plan.get("same_layer_opening_candidates", []),
+        key=lambda item: (float(item.get("opening_priority") or 0.0), int(item.get("target_element_index") or 0)),
+        reverse=True,
+    )
+    plan["same_layer_endpoint_move_candidates"] = sorted(
+        plan.get("same_layer_endpoint_move_candidates", []),
+        key=lambda item: (float(item.get("endpoint_move_priority") or 0.0), int(item.get("target_element_index") or 0)),
+        reverse=True,
+    )
+    plan["intent_projection"] = {
+        "status": "active" if target_roles else "no_target_roles",
+        "target_roles": target_roles,
+        "opening_requested": intent_requests_opening(intents),
+        "partition_rework_requested": intent_requests_partition_rework(intents),
+        "boosted_candidate_count": boosted_count,
+    }
+    return plan
 
 
 def topology_adjacency_targets(topology: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
@@ -164,7 +308,7 @@ def opening_candidate_priority(source: dict[str, Any], adjacency: dict[str, Any]
     proximity_score = max(0.0, 600.0 - min(gap, 600.0))
     return round(
         float(source.get("patch_priority") or 0.0)
-        + adjacency_role_weight(source.get("program_role"), adjacency.get("target_role"))
+        + adjacency_role_weight(effective_program_role(source), adjacency.get("target_role"))
         + proximity_score,
         3,
     )
@@ -198,7 +342,7 @@ def endpoint_move_candidate_priority(source: dict[str, Any], adjacency: dict[str
     base = float(source.get("patch_priority") or 0.0) + min(300.0, line_span)
     if not adjacency:
         return round(base, 3)
-    return round(base + adjacency_role_weight(source.get("program_role"), adjacency.get("target_role")), 3)
+    return round(base + adjacency_role_weight(effective_program_role(source), adjacency.get("target_role")), 3)
 
 
 def build_endpoint_move_candidates(mutable_candidates: list[dict[str, Any]], topology: dict[str, Any] | None, max_candidates: int) -> list[dict[str, Any]]:
@@ -208,7 +352,7 @@ def build_endpoint_move_candidates(mutable_candidates: list[dict[str, Any]], top
         item
         for item in mutable_candidates
         if item.get("tag") in {"line", "polyline", "path"}
-        and item.get("program_cluster_id")
+        and (item.get("program_cluster_id") or effective_program_role(item))
         and max(normalize_bbox_dict(item.get("bbox"))["width"], normalize_bbox_dict(item.get("bbox"))["height"]) >= 12.0
     ]
     seen_indices: set[Any] = set()
@@ -217,7 +361,8 @@ def build_endpoint_move_candidates(mutable_candidates: list[dict[str, Any]], top
         if element_index in seen_indices:
             continue
         seen_indices.add(element_index)
-        adjacency_options = adjacency_by_role.get(str(source.get("program_role") or ""), [])
+        source_role = effective_program_role(source)
+        adjacency_options = adjacency_by_role.get(source_role, [])
         adjacency = sorted(adjacency_options, key=lambda item: endpoint_move_candidate_priority(source, item), reverse=True)[0] if adjacency_options else None
         endpoint, dx, dy = endpoint_move_vector(source, adjacency)
         move_index = len(endpoint_candidates) + 1
@@ -229,7 +374,9 @@ def build_endpoint_move_candidates(mutable_candidates: list[dict[str, Any]], top
             "bbox": source.get("bbox"),
             "center": source.get("center"),
             "program_cluster_id": source.get("program_cluster_id"),
-            "program_role": source.get("program_role"),
+            "program_role": source_role or source.get("program_role"),
+            "source_program_role": source.get("program_role"),
+            "solver_projected_role": source.get("solver_projected_role"),
             "space_region_ids": source.get("space_region_ids", []),
             "connects_to_role": adjacency.get("target_role") if adjacency else None,
             "connects_to_cluster_id": adjacency.get("target_cluster_id") if adjacency else None,
@@ -257,21 +404,21 @@ def build_opening_candidates(mutable_candidates: list[dict[str, Any]], topology:
     line_candidates = [
         item
         for item in mutable_candidates
-        if item.get("tag") == "line" and item.get("program_cluster_id") and item.get("program_role") in preferred_roles
+        if item.get("tag") == "line" and (item.get("program_cluster_id") or effective_program_role(item)) and effective_program_role(item) in preferred_roles
     ]
     polyline_candidates = [
         item
         for item in mutable_candidates
-        if item.get("tag") == "polyline" and item.get("program_cluster_id") and item.get("program_role") in preferred_roles
+        if item.get("tag") == "polyline" and (item.get("program_cluster_id") or effective_program_role(item)) and effective_program_role(item) in preferred_roles
     ]
     path_candidates = [
         item
         for item in mutable_candidates
-        if item.get("tag") == "path" and item.get("program_cluster_id") and item.get("program_role") in preferred_roles
+        if item.get("tag") == "path" and (item.get("program_cluster_id") or effective_program_role(item)) and effective_program_role(item) in preferred_roles
     ]
-    fallback_candidates = [item for item in mutable_candidates if item.get("tag") == "line" and item.get("program_cluster_id")]
-    fallback_polyline_candidates = [item for item in mutable_candidates if item.get("tag") == "polyline" and item.get("program_cluster_id")]
-    fallback_path_candidates = [item for item in mutable_candidates if item.get("tag") == "path" and item.get("program_cluster_id")]
+    fallback_candidates = [item for item in mutable_candidates if item.get("tag") == "line" and (item.get("program_cluster_id") or effective_program_role(item))]
+    fallback_polyline_candidates = [item for item in mutable_candidates if item.get("tag") == "polyline" and (item.get("program_cluster_id") or effective_program_role(item))]
+    fallback_path_candidates = [item for item in mutable_candidates if item.get("tag") == "path" and (item.get("program_cluster_id") or effective_program_role(item))]
     seen_indices: set[Any] = set()
     for source in [*line_candidates, *polyline_candidates, *path_candidates, *fallback_candidates, *fallback_polyline_candidates, *fallback_path_candidates]:
         element_index = source.get("element_index")
@@ -279,7 +426,8 @@ def build_opening_candidates(mutable_candidates: list[dict[str, Any]], topology:
             continue
         seen_indices.add(element_index)
         opening_index = len(opening_candidates) + 1
-        adjacency_options = adjacency_by_role.get(str(source.get("program_role") or ""), [])
+        source_role = effective_program_role(source)
+        adjacency_options = adjacency_by_role.get(source_role, [])
         adjacency = sorted(adjacency_options, key=lambda item: opening_candidate_priority(source, item), reverse=True)[0] if adjacency_options else None
         candidate = {
             "operation": "split_line_for_opening",
@@ -289,7 +437,9 @@ def build_opening_candidates(mutable_candidates: list[dict[str, Any]], topology:
             "bbox": source.get("bbox"),
             "center": source.get("center"),
             "program_cluster_id": source.get("program_cluster_id"),
-            "program_role": source.get("program_role"),
+            "program_role": source_role or source.get("program_role"),
+            "source_program_role": source.get("program_role"),
+            "solver_projected_role": source.get("solver_projected_role"),
             "space_region_ids": source.get("space_region_ids", []),
             "connects_to_role": adjacency.get("target_role") if adjacency else None,
             "connects_to_cluster_id": adjacency.get("target_cluster_id") if adjacency else None,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from xml.etree.ElementTree import Element
 
+from crab_archi_design.solver.patch_plan import project_intents_onto_patch_plan
 from crab_archi_design.solver.svg_edit_ops import (
     collapse_linear_element_to_zero_length,
     count_images,
@@ -601,7 +602,9 @@ def apply_same_layer_geometry_patch(
     max_openings: int = 4,
     apply_endpoint_moves: bool = False,
     max_endpoint_moves: int = 4,
+    intents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    plan = project_intents_onto_patch_plan(plan, intents)
     root.set("data-crab-candidate", "crab_archi_design_same_layer_engine_candidate")
     root.set("data-crab-engine", "same-layer-svg-engine")
     root.set("data-crab-mutation-strategy", "same_layer_geometry_patch")
@@ -676,6 +679,7 @@ def apply_same_layer_geometry_patch(
         "mutation_strategy": "same_layer_geometry_patch",
         "patch_plan_status": plan.get("status"),
         "patch_plan_candidate_count": len(plan.get("same_layer_mutable_candidates", [])),
+        "intent_projection": plan.get("intent_projection"),
         "edit_capability_summary": capability_summary,
         "edit_capability_totals": capability_totals,
         "edit_capability_review_required_count": capability_totals["review_required_count"],
