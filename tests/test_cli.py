@@ -928,6 +928,48 @@ def test_solver_same_layer_endpoint_move_updates_existing_line() -> None:
     assert wall.attrib["data-crab-action"] == "move_line_endpoint"
 
 
+def test_solver_same_layer_endpoint_move_updates_existing_polyline() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 60">
+          <polyline id="movable-wall" points="10,20 50,20 110,20" fill="none" stroke="#111" stroke-width="4"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_endpoint_move_candidates": [
+            {
+                "operation": "move_line_endpoint",
+                "operation_id": "endpoint_move_001",
+                "target_element_index": 2,
+                "tag": "polyline",
+                "endpoint": "start",
+                "dx": 6,
+                "dy": 7,
+                "endpoint_move_priority": 900,
+                "program_cluster_id": "program_cluster_002",
+                "program_role": "fitness_gx",
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_endpoint_moves=True, max_endpoint_moves=4)
+    wall = next(element for element in root.iter() if element.attrib.get("id") == "movable-wall")
+
+    assert summary["same_layer_endpoint_move_count"] == 1
+    assert summary["same_layer_geometry_mutation_count"] == 1
+    assert summary["program_cluster_mutation_count"] == 1
+    assert summary["endpoint_move_mutations"][0]["tag"] == "polyline"
+    assert summary["endpoint_move_mutations"][0]["endpoint"] == "start"
+    assert wall.attrib["points"] == "16,27 50,20 110,20"
+    assert wall.attrib["data-crab-original-points"] == "10,20 50,20 110,20"
+    assert wall.attrib["data-crab-action"] == "move_line_endpoint"
+    assert wall.attrib["data-crab-same-layer-mutation"] == "same_layer_polyline_endpoint_move"
+
+
 def test_solver_same_layer_endpoint_move_skips_locked_target() -> None:
     root = ET.fromstring(
         """

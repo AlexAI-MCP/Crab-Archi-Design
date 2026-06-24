@@ -4,6 +4,8 @@ from copy import deepcopy
 from typing import Any
 from xml.etree.ElementTree import Element
 
+from crab_archi_design.svg.transform import parse_numbers
+
 
 def local_tag(element: Element) -> str:
     return element.tag.split("}")[-1]
@@ -69,6 +71,29 @@ def line_points(element: Element) -> tuple[float, float, float, float] | None:
         svg_float(element.attrib["x2"]),
         svg_float(element.attrib["y2"]),
     )
+
+
+def polyline_points(element: Element) -> list[tuple[float, float]]:
+    if local_tag(element) != "polyline" or "points" not in element.attrib:
+        return []
+    values = parse_numbers(element.attrib.get("points", ""))
+    return list(zip(values[0::2], values[1::2]))
+
+
+def linear_endpoint_coords(element: Element) -> tuple[float, float, float, float] | None:
+    line = line_points(element)
+    if line is not None:
+        return line
+    points = polyline_points(element)
+    if len(points) < 2:
+        return None
+    start = points[0]
+    end = points[-1]
+    return (start[0], start[1], end[0], end[1])
+
+
+def format_polyline_points(points: list[tuple[float, float]]) -> str:
+    return " ".join(f"{format_svg_number(x)},{format_svg_number(y)}" for x, y in points)
 
 
 def interpolate_line_point(coords: tuple[float, float, float, float], ratio: float) -> tuple[float, float]:
@@ -315,12 +340,13 @@ def endpoint_target(coords: tuple[float, float, float, float], endpoint: str, ca
 
 
 def move_line_endpoint(element: Element, endpoint: str, candidate: dict[str, Any], operation_id: str = "endpoint_move") -> dict[str, Any]:
-    coords = line_points(element)
+    tag = local_tag(element)
+    coords = linear_endpoint_coords(element)
     if coords is None or endpoint not in {"start", "end"}:
         return {
             "action": "move_line_endpoint",
             "status": "skipped",
-            "reason": "requires line and endpoint=start|end",
+            "reason": "requires line/polyline and endpoint=start|end",
             "geometry_mutated": False,
             "same_layer_endpoint_moved": False,
         }
@@ -345,16 +371,41 @@ def move_line_endpoint(element: Element, endpoint: str, candidate: dict[str, Any
             "same_layer_endpoint_moved": False,
         }
 
-    preserve_original_attrs(element, ["x1", "y1", "x2", "y2"])
-    if endpoint == "start":
-        element.set("x1", format_svg_number(target_x))
-        element.set("y1", format_svg_number(target_y))
+    if tag == "line":
+        preserve_original_attrs(element, ["x1", "y1", "x2", "y2"])
+        if endpoint == "start":
+            element.set("x1", format_svg_number(target_x))
+            element.set("y1", format_svg_number(target_y))
+        else:
+            element.set("x2", format_svg_number(target_x))
+            element.set("y2", format_svg_number(target_y))
+    elif tag == "polyline":
+        points = polyline_points(element)
+        if len(points) < 2:
+            return {
+                "action": "move_line_endpoint",
+                "status": "skipped",
+                "reason": "requires polyline with at least two points",
+                "geometry_mutated": False,
+                "same_layer_endpoint_moved": False,
+            }
+        preserve_original_attr(element, "points")
+        if endpoint == "start":
+            points[0] = (target_x, target_y)
+        else:
+            points[-1] = (target_x, target_y)
+        element.set("points", format_polyline_points(points))
     else:
-        element.set("x2", format_svg_number(target_x))
-        element.set("y2", format_svg_number(target_y))
+        return {
+            "action": "move_line_endpoint",
+            "status": "skipped",
+            "reason": "requires line/polyline target",
+            "geometry_mutated": False,
+            "same_layer_endpoint_moved": False,
+        }
 
     element.set("data-crab-action", "move_line_endpoint")
-    element.set("data-crab-same-layer-mutation", "same_layer_line_endpoint_move")
+    element.set("data-crab-same-layer-mutation", f"same_layer_{tag}_endpoint_move")
     element.set("data-crab-endpoint-move-operation", operation_id)
     element.set("data-crab-endpoint", endpoint)
     element.set("data-crab-geometry-mutated", "true")
@@ -362,6 +413,7 @@ def move_line_endpoint(element: Element, endpoint: str, candidate: dict[str, Any
         "action": "move_line_endpoint",
         "status": "applied",
         "operation_id": operation_id,
+        "tag": tag,
         "endpoint": endpoint,
         "before": {"x": source_x, "y": source_y},
         "after": {"x": target_x, "y": target_y},

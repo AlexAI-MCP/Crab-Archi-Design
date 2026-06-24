@@ -128,6 +128,47 @@ def test_solver_patch_plan_builds_endpoint_move_candidates() -> None:
     assert moves[0]["topology_evidence"] == "OpenCrab topology prior"
 
 
+def test_solver_patch_plan_builds_polyline_endpoint_move_candidates() -> None:
+    candidates = [
+        {
+            "element_index": 22,
+            "tag": "polyline",
+            "bbox": {"x": 20, "y": 10, "width": 120, "height": 4},
+            "center": [80, 12],
+            "patch_priority": 680.0,
+            "program_cluster_id": "cluster_fitness",
+            "program_role": "fitness_gx",
+            "space_region_ids": ["space_fitness"],
+        }
+    ]
+    topology = {
+        "nodes": [
+            {"id": "cluster_fitness", "type": "program_cluster", "role": "fitness_gx", "bbox": {"x": 10, "y": 0, "width": 140, "height": 80}},
+            {"id": "cluster_hall", "type": "program_cluster", "role": "hall_lobby", "bbox": {"x": 190, "y": 0, "width": 80, "height": 80}},
+        ],
+        "edges": [
+            {
+                "id": "edge_topology_003",
+                "type": "ontology_cluster_adjacency_target",
+                "source": "cluster_fitness",
+                "target": "cluster_hall",
+                "left_role": "fitness_gx",
+                "right_role": "hall_lobby",
+                "rationale": "fitness is tied to the main hall in the precedent topology",
+                "evidence": "OpenCrab topology prior",
+            }
+        ],
+    }
+
+    moves = build_endpoint_move_candidates(candidates, topology, 4)
+
+    assert moves[0]["operation"] == "move_line_endpoint"
+    assert moves[0]["tag"] == "polyline"
+    assert moves[0]["endpoint"] == "end"
+    assert moves[0]["dx"] > 0
+    assert moves[0]["connects_to_role"] == "hall_lobby"
+
+
 def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:
     source = tmp_path / "nested.svg"
     source.write_text(
