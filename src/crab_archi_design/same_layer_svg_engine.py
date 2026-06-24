@@ -48,6 +48,11 @@ def preserve_original_attr(element: ET.Element, name: str) -> None:
         element.set(original_name, str(element.attrib[name]))
 
 
+def preserve_original_attrs(element: ET.Element, names: list[str]) -> None:
+    for name in names:
+        preserve_original_attr(element, name)
+
+
 def candidate_sort_key(candidate: dict[str, Any]) -> tuple[float, float, int]:
     bbox = candidate.get("bbox") or {}
     area = float(bbox.get("width") or 0.0) * float(bbox.get("height") or 0.0)
@@ -68,12 +73,48 @@ def select_candidates(plan: dict[str, Any], max_mutations: int) -> list[dict[str
     return selected[:max_mutations]
 
 
-def patch_existing_element(element: ET.Element, candidate: dict[str, Any], mutation_index: int) -> dict[str, Any]:
-    for attr in ["stroke", "stroke-width", "stroke-opacity", "stroke-dasharray", "opacity", "display", "style"]:
-        preserve_original_attr(element, attr)
+def collapse_line_to_zero_length(element: ET.Element) -> bool:
+    if not {"x1", "y1", "x2", "y2"} <= set(element.attrib):
+        return False
+    preserve_original_attrs(element, ["x1", "y1", "x2", "y2"])
+    element.set("x2", element.attrib["x1"])
+    element.set("y2", element.attrib["y1"])
+    return True
 
-    action = "trim_or_remove_internal_partition_candidate"
-    element.set("data-crab-same-layer-mutation", action)
+
+def remove_mutable_partition_element(element: ET.Element) -> dict[str, Any]:
+    tag = local_tag(element)
+    preserve_original_attrs(
+        element,
+        [
+            "display",
+            "visibility",
+            "opacity",
+            "stroke",
+            "stroke-width",
+            "stroke-opacity",
+            "stroke-dasharray",
+            "fill",
+            "fill-opacity",
+            "style",
+            "points",
+            "d",
+        ],
+    )
+    geometry_mutated = collapse_line_to_zero_length(element) if tag == "line" else False
+    element.set("display", "none")
+    element.set("data-crab-action", "remove_internal_partition")
+    element.set("data-crab-same-layer-removal", "true")
+    element.set("data-crab-geometry-mutated", "true" if geometry_mutated else "visibility_removed")
+    return {
+        "action": element.attrib["data-crab-action"],
+        "geometry_mutated": geometry_mutated,
+        "same_layer_removed": True,
+    }
+
+
+def patch_existing_element(element: ET.Element, candidate: dict[str, Any], mutation_index: int) -> dict[str, Any]:
+    element.set("data-crab-same-layer-mutation", "same_layer_geometry_patch")
     element.set("data-crab-mutation-index", str(mutation_index))
     element.set("data-crab-source-element-index", str(candidate.get("element_index")))
     element.set("data-crab-addressing", str(candidate.get("addressing") or "source_svg_element_index"))
@@ -85,17 +126,19 @@ def patch_existing_element(element: ET.Element, candidate: dict[str, Any], mutat
 
     tag = local_tag(element)
     if tag in {"line", "polyline", "path"}:
-        element.set("stroke", "#d04a02")
-        element.set("stroke-opacity", "0.32")
-        element.set("stroke-dasharray", "8 4")
-        element.set("data-crab-action", "candidate_partition_to_trim")
+        mutation = remove_mutable_partition_element(element)
     elif tag in {"rect", "polygon", "circle", "ellipse"}:
+        preserve_original_attrs(element, ["stroke", "stroke-opacity", "fill-opacity", "style"])
         element.set("stroke", "#d04a02")
         element.set("stroke-opacity", "0.28")
         element.set("fill-opacity", "0.08")
         element.set("data-crab-action", "candidate_envelope_to_reconcile")
+        element.set("data-crab-geometry-mutated", "false")
+        mutation = {"action": element.attrib["data-crab-action"], "geometry_mutated": False, "same_layer_removed": False}
     else:
         element.set("data-crab-action", "candidate_attribute_patch")
+        element.set("data-crab-geometry-mutated", "false")
+        mutation = {"action": element.attrib["data-crab-action"], "geometry_mutated": False, "same_layer_removed": False}
 
     return {
         "element_index": candidate.get("element_index"),
@@ -103,14 +146,16 @@ def patch_existing_element(element: ET.Element, candidate: dict[str, Any], mutat
         "id": element.attrib.get("id"),
         "program_cluster_id": candidate.get("program_cluster_id"),
         "program_role": candidate.get("program_role"),
-        "action": element.attrib.get("data-crab-action"),
+        "action": mutation["action"],
+        "geometry_mutated": mutation["geometry_mutated"],
+        "same_layer_removed": mutation["same_layer_removed"],
     }
 
 
 def apply_same_layer_patch(root: ET.Element, plan: dict[str, Any], max_mutations: int) -> dict[str, Any]:
     root.set("data-crab-candidate", "crab_archi_design_same_layer_engine_candidate")
     root.set("data-crab-engine", "same-layer-svg-engine")
-    root.set("data-crab-mutation-strategy", "same_layer_element_attribute_patch")
+    root.set("data-crab-mutation-strategy", "same_layer_geometry_patch")
     root.set("data-crab-overlay-elements-added", "0")
 
     element_map = existing_elements_by_document_index(root)
@@ -129,11 +174,13 @@ def apply_same_layer_patch(root: ET.Element, plan: dict[str, Any], max_mutations
         mutated.append(patch_existing_element(element, candidate, len(mutated) + 1))
 
     return {
-        "mutation_strategy": "same_layer_element_attribute_patch",
+        "mutation_strategy": "same_layer_geometry_patch",
         "patch_plan_status": plan.get("status"),
         "patch_plan_candidate_count": len(plan.get("same_layer_mutable_candidates", [])),
         "selected_candidate_count": len(selected),
         "same_layer_mutation_count": len(mutated),
+        "same_layer_removal_count": sum(1 for item in mutated if item.get("same_layer_removed")),
+        "same_layer_geometry_mutation_count": sum(1 for item in mutated if item.get("geometry_mutated")),
         "program_cluster_mutation_count": sum(1 for item in mutated if item.get("program_cluster_id")),
         "missing_element_indices": missing,
         "mutations": mutated,
@@ -190,9 +237,11 @@ def main() -> None:
         "patch_plan_pass": patch_plan.get("status") == "pass",
         "source_element_addresses_used": summary["selected_candidate_count"] > 0,
         "existing_elements_mutated": summary["same_layer_mutation_count"] > 0,
+        "existing_geometry_mutated": summary["same_layer_geometry_mutation_count"] > 0,
+        "same_layer_internal_partitions_removed": summary["same_layer_removal_count"] > 0,
         "program_cluster_targets_used": summary["program_cluster_mutation_count"] > 0,
         "new_overlay_elements_added": output_element_count == source_element_count,
-        "mutation_strategy_same_layer": summary["mutation_strategy"] == "same_layer_element_attribute_patch",
+        "mutation_strategy_same_layer": summary["mutation_strategy"] == "same_layer_geometry_patch",
     }
     report = {
         "schema": "crab-archi-design-same-layer-engine-report-v1",

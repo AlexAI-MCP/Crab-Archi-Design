@@ -766,20 +766,30 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     alternative_text = alternative.read_text(encoding="utf-8")
     assert "crab_archi_design_same_layer_engine_candidate" in alternative_text
     assert "data-crab-same-layer-mutation" in alternative_text
+    assert 'data-crab-action="remove_internal_partition"' in alternative_text
+    assert 'display="none"' in alternative_text
     assert "<image" not in alternative_text
     assert "crab_archi_design_layout_engine_candidate" not in alternative_text
 
     source_count = sum(1 for _ in ET.parse(source_svg).getroot().iter())
-    alternative_count = sum(1 for _ in ET.parse(alternative).getroot().iter())
+    alternative_root = ET.parse(alternative).getroot()
+    alternative_count = sum(1 for _ in alternative_root.iter())
     assert alternative_count == source_count
+    removed_lines = [element for element in alternative_root.iter() if element.attrib.get("data-crab-action") == "remove_internal_partition"]
+    assert removed_lines
+    assert any(element.attrib.get("x2") == element.attrib.get("x1") and element.attrib.get("y2") == element.attrib.get("y1") for element in removed_lines)
 
     engine_report = json.loads(Path(report["copied_artifacts"]["report"][0]).read_text(encoding="utf-8"))
     assert engine_report["schema"] == "crab-archi-design-same-layer-engine-report-v1"
-    assert engine_report["summary"]["mutation_strategy"] == "same_layer_element_attribute_patch"
+    assert engine_report["summary"]["mutation_strategy"] == "same_layer_geometry_patch"
     assert engine_report["summary"]["same_layer_mutation_count"] >= 1
+    assert engine_report["summary"]["same_layer_geometry_mutation_count"] >= 1
+    assert engine_report["summary"]["same_layer_removal_count"] >= 1
     gates = engine_report["quality"]["gates"]
     assert gates["new_overlay_elements_added"] is True
     assert gates["existing_elements_mutated"] is True
+    assert gates["existing_geometry_mutated"] is True
+    assert gates["same_layer_internal_partitions_removed"] is True
     assert gates["program_cluster_targets_used"] is True
 
 
