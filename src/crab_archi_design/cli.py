@@ -308,6 +308,25 @@ def standards_status(manifest: dict[str, Any] | None) -> str:
     return "active" if count_standard_items(manifest) > 0 else "missing"
 
 
+def scale_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
+    return project_dir(project_id, root) / "scale" / "scale_manifest.json"
+
+
+def load_scale_manifest(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> dict[str, Any] | None:
+    path = scale_manifest_path(project_id, root)
+    if not path.exists():
+        return None
+    return read_json(path)
+
+
+def scale_status(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return "missing"
+    if manifest.get("status"):
+        return str(manifest["status"])
+    return "active" if manifest.get("selected_scale", {}).get("mm_per_world") else "review_required"
+
+
 def recognition_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
     return project_dir(project_id, root) / "recognition" / "recognition_manifest.json"
 
@@ -1443,6 +1462,68 @@ def command_standards_attach(args: argparse.Namespace) -> None:
     )
 
 
+def compute_mm_per_world(args: argparse.Namespace) -> float:
+    if args.mm_per_world is not None:
+        value = float(args.mm_per_world)
+    elif args.known_mm is not None and args.known_world_length is not None:
+        value = float(args.known_mm) / float(args.known_world_length)
+    else:
+        raise SystemExit("Pass --mm-per-world or both --known-mm and --known-world-length.")
+    if value <= 0:
+        raise SystemExit("Scale must be positive.")
+    return value
+
+
+def command_scale_attach(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    mm_per_world = compute_mm_per_world(args)
+    confidence = max(0.0, min(1.0, float(args.confidence)))
+    existing = None if args.replace else load_scale_manifest(args.project_id, root)
+    scale_manifest = existing or {
+        "schema": "crab-archi-design-scale-manifest-v1",
+        "created_at": now(),
+        "project_id": args.project_id,
+        "source_svg": manifest.get("source_svg"),
+        "scale_items": [],
+    }
+    item = {
+        "id": args.scale_id or f"scale_{len(scale_manifest.get('scale_items', [])) + 1:03d}",
+        "attached_at": now(),
+        "source": args.source,
+        "method": args.method,
+        "mm_per_world": round(mm_per_world, 6),
+        "m_per_world": round(mm_per_world / 1000.0, 9),
+        "known_mm": args.known_mm,
+        "known_world_length": args.known_world_length,
+        "confidence": round(confidence, 3),
+        "evidence": args.evidence,
+        "note": args.note,
+        "metadata": parse_metadata(args.metadata or []),
+    }
+    scale_manifest.setdefault("scale_items", []).append(item)
+    selected = sorted(scale_manifest["scale_items"], key=lambda value: (float(value.get("confidence") or 0.0), str(value.get("id") or "")), reverse=True)[0]
+    scale_manifest["selected_scale"] = selected
+    scale_manifest["updated_at"] = now()
+    scale_manifest["status"] = "active" if selected.get("mm_per_world") and float(selected.get("confidence") or 0.0) >= 0.5 else "review_required"
+    scale_manifest["scale_count"] = len(scale_manifest["scale_items"])
+    scale_manifest["required_for_area_comparison"] = True
+    out = scale_manifest_path(args.project_id, root)
+    write_json(out, scale_manifest)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": scale_manifest["status"],
+                "scale_count": scale_manifest["scale_count"],
+                "selected_mm_per_world": selected.get("mm_per_world"),
+                "selected_confidence": selected.get("confidence"),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def command_recognize_svg(args: argparse.Namespace) -> None:
     root = Path(args.project_root)
     manifest = load_manifest(args.project_id, root)
@@ -2244,6 +2325,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
     topology = load_topology_manifest(project_id, root)
     constraints = load_constraint_manifest(project_id, root)
     standards = load_standards_manifest(project_id, root)
+    scale_manifest = load_scale_manifest(project_id, root)
     recognition_audit_path = latest_recognition_audit_path(project_id, root)
     recognition_audit = read_json(recognition_audit_path) if recognition_audit_path else None
     use_ir_v2 = recognition_ir_v2_status(recognition_ir) == "active"
@@ -2304,7 +2386,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
     mutable_candidates = sorted(mutable_candidates, key=lambda item: (float(item.get("patch_priority") or 0.0), bbox_area(item.get("bbox") or {})), reverse=True)
     opening_candidates = build_opening_candidates(mutable_candidates, topology, min(max_candidates, 24))
     endpoint_move_candidates = build_endpoint_move_candidates(mutable_candidates, topology, min(max_candidates, 24))
-    solver_objective = evaluate_topology_fit(topology, standards, constraints, recognition_ir)
+    solver_objective = evaluate_topology_fit(topology, standards, constraints, recognition_ir, scale_manifest)
 
     program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons)
     if not program_anchors:
@@ -3564,6 +3646,7 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
     evidence_manifest = load_evidence_manifest(project_id, root)
     constraint_manifest = load_constraint_manifest(project_id, root)
     standards_manifest = load_standards_manifest(project_id, root)
+    scale_manifest = load_scale_manifest(project_id, root)
     edit_intent_paths = sorted_json_files(base / "edit_intents", "*.json")
     latest_brief = latest_file(base / "briefs", "edit_brief_*.json")
     latest_apply = latest_file(base / "runs", "apply_edit_*/apply_edit_report.json")
@@ -3624,6 +3707,7 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
             "recognition_manifest": str(recognition_manifest_path(project_id, root)) if recognition_manifest else None,
             "topology_manifest": str(topology_manifest_path(project_id, root)) if topology_manifest else None,
             "standards_manifest": str(standards_manifest_path(project_id, root)) if standards_manifest else None,
+            "scale_manifest": str(scale_manifest_path(project_id, root)) if scale_manifest else None,
             "evidence_manifest": str(evidence_manifest_path(project_id, root)) if evidence_manifest else None,
             "constraint_manifest": str(constraint_manifest_path(project_id, root)) if constraint_manifest else None,
             "recognition_audit": str(latest_recognition_audit) if latest_recognition_audit else None,
@@ -3644,6 +3728,9 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
             "source_image_elements": source_info.get("image_elements"),
             "standard_count": count_standard_items(standards_manifest),
             "selected_standard_row_count": sum_selected_standard_rows(standards_manifest),
+            "scale_status": scale_status(scale_manifest),
+            "scale_mm_per_world": (scale_manifest or {}).get("selected_scale", {}).get("mm_per_world"),
+            "scale_confidence": (scale_manifest or {}).get("selected_scale", {}).get("confidence"),
             "evidence_count": count_evidence_items(evidence_manifest),
             "constraint_count": count_constraint_items(constraint_manifest),
             "enforced_constraint_count": count_constraint_items(constraint_manifest, enforced_only=True),
@@ -5760,6 +5847,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["constraint_manifest_active"],
         },
         {
+            "id": "scale_attach",
+            "cli_subcommand": "scale-attach",
+            "description": "Attach explicit architectural scale calibration from manual input, OCR, or a known dimension measurement.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--mm-per-world", "--known-mm", "--known-world-length", "--confidence", "--source", "--method", "--scale-id", "--evidence", "--note", "--metadata", "--replace"],
+            "outputs": ["scale/scale_manifest.json"],
+            "gates": ["scale_manifest_active_or_review_required"],
+        },
+        {
             "id": "edit_brief",
             "cli_subcommand": "edit-brief",
             "description": "Summarize natural-language and doodle edit intents before SVG mutation.",
@@ -5902,8 +5998,8 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "saas_job_runner": ["create_job", "validate_job", "run_job"],
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"],
             "revision_loop": ["revision_run", "export_package", "verify_package", "doctor", "release_audit"],
-            "manual_revision_loop": ["topology_build", "recognition_audit", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
-            "opencrab_first_manual_loop": ["opencrab_request", "opencrab_sync", "constraint_attach", "topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
+            "manual_revision_loop": ["topology_build", "recognition_audit", "scale_attach", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
+            "opencrab_first_manual_loop": ["opencrab_request", "opencrab_sync", "constraint_attach", "topology_build", "recognition_audit", "scale_attach", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
             "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
         "security": {
@@ -6191,6 +6287,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_standards.add_argument("--metadata", action="append", default=[])
     p_standards.add_argument("--replace", action="store_true")
     p_standards.set_defaults(func=command_standards_attach)
+
+    p_scale = sub.add_parser("scale-attach", help="Attach an explicit architectural scale calibration to a project.")
+    p_scale.add_argument("--project-id", required=True)
+    p_scale.add_argument("--mm-per-world", type=float, help="Direct architectural scale: millimeters per SVG world unit.")
+    p_scale.add_argument("--known-mm", type=float, help="Known real-world length in millimeters.")
+    p_scale.add_argument("--known-world-length", type=float, help="Measured source SVG world-coordinate length for --known-mm.")
+    p_scale.add_argument("--confidence", type=float, default=0.95)
+    p_scale.add_argument("--source", default="manual")
+    p_scale.add_argument("--method", default="manual_known_dimension")
+    p_scale.add_argument("--scale-id")
+    p_scale.add_argument("--evidence")
+    p_scale.add_argument("--note")
+    p_scale.add_argument("--metadata", action="append", default=[])
+    p_scale.add_argument("--replace", action="store_true")
+    p_scale.set_defaults(func=command_scale_attach)
 
     p_evidence = sub.add_parser("evidence-attach", help="Attach OpenCrab/LocalCrab evidence to a project.")
     p_evidence.add_argument("--project-id", required=True)

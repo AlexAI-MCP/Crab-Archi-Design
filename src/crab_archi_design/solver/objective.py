@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from crab_archi_design.solver.feasible import build_feasible_report
-from crab_archi_design.solver.scale import infer_architectural_scale
+from crab_archi_design.solver.scale import resolve_architectural_scale
 from crab_archi_design.solver.sizing import extract_program_targets
 
 
@@ -103,11 +103,12 @@ def evaluate_topology_fit(
     standards: dict[str, Any] | None,
     constraints: dict[str, Any] | None,
     recognition_ir: dict[str, Any] | None = None,
+    scale_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     targets = extract_program_targets(standards)
     target_by_role = {str(target["role"]): target for target in targets}
     cluster_by_role = program_cluster_summary(topology)
-    scale_report = infer_architectural_scale(recognition_ir)
+    scale_report = resolve_architectural_scale(recognition_ir, scale_manifest)
     roles = sorted(set(target_by_role) | set(cluster_by_role))
     role_evaluations: list[dict[str, Any]] = []
     for role in roles:

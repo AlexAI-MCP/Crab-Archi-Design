@@ -11,6 +11,7 @@ from crab_archi_design.solver import (
     evaluate_topology_fit,
     extract_program_targets,
     infer_architectural_scale,
+    resolve_architectural_scale,
 )
 from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening, split_polyline_for_opening
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
@@ -543,6 +544,32 @@ def test_solver_scale_calibration_enables_area_comparison(tmp_path) -> None:
     assert lounge["area_comparison_status"] == "calibrated_comparison"
     assert lounge["recognized_area_m2"] == 7.056
     assert lounge["area_delta_m2"] == 0.0
+
+
+def test_solver_scale_manifest_overrides_sparse_dimension_inference() -> None:
+    recognition_ir = {
+        "nodes": [
+            {"id": "text_dim_1", "tag": "text", "text": {"content": "8400", "anchor": [50.0, -18.0]}, "centroid": [50.0, -18.0]},
+            {"id": "line_dim_1", "tag": "line", "is_closed": False, "bbox": {"x": 0.0, "y": 0.0, "w": 100.0, "h": 0.0}},
+        ]
+    }
+    scale_manifest = {
+        "selected_scale": {
+            "id": "scale_manual",
+            "method": "manual_known_dimension",
+            "mm_per_world": 84.0,
+            "confidence": 0.9,
+            "evidence": "User-confirmed 8400mm grid over 100 world units.",
+        }
+    }
+
+    automatic = infer_architectural_scale(recognition_ir)
+    resolved = resolve_architectural_scale(recognition_ir, scale_manifest)
+
+    assert automatic["status"] == "review_required"
+    assert resolved["status"] == "active"
+    assert resolved["source"] == "scale_manifest.selected_scale"
+    assert resolved["mm_per_world"] == 84.0
 
 
 def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:

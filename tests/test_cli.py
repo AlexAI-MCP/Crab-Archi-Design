@@ -30,7 +30,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_request", "opencrab_sync", "topology_build", "recognize_svg_v2", "recognition_audit", "svg_patch_plan", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
+    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_request", "opencrab_sync", "topology_build", "recognize_svg_v2", "recognition_audit", "svg_patch_plan", "prompt_edit", "sketch_intent", "scale_attach", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
     create_job_tool = next(tool for tool in manifest["tools"] if tool["id"] == "create_job")
@@ -39,7 +39,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["recommended_sequences"]["saas_job_runner"] == ["create_job", "validate_job", "run_job"]
     assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"]
     assert manifest["recommended_sequences"]["opencrab_first_manual_loop"][0] == "opencrab_request"
-    assert manifest["recommended_sequences"]["manual_revision_loop"][:3] == ["topology_build", "recognition_audit", "svg_patch_plan"]
+    assert manifest["recommended_sequences"]["manual_revision_loop"][:4] == ["topology_build", "recognition_audit", "scale_attach", "svg_patch_plan"]
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
 
@@ -327,6 +327,25 @@ def test_prompt_and_sketch_intents(tmp_path: Path) -> None:
     assert standards_manifest["status"] == "active"
     assert standards_manifest["standard_count"] == 1
     assert standards_manifest["standard_items"][0]["payload"]["matched_household_row_count"] == 2
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "scale-attach",
+        "--project-id",
+        "demo",
+        "--known-mm",
+        "8400",
+        "--known-world-length",
+        "100",
+        "--evidence",
+        "User-confirmed grid dimension.",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    scale_manifest = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert scale_manifest["status"] == "active"
+    assert scale_manifest["selected_scale"]["mm_per_world"] == 84.0
 
     result = run_cli("--project-root", str(tmp_path / "projects"), "topology-build", "--project-id", "demo", cwd=ROOT)
     assert result.returncode == 0, result.stderr

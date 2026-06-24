@@ -54,6 +54,8 @@ recognize-svg
   -> opencrab/opencrab_sync_###.json
   -> standards-attach
   -> standards/standards_manifest.json
+  -> scale-attach
+  -> scale/scale_manifest.json
   -> constraint-attach
   -> constraints/constraint_manifest.json
   -> topology-build
@@ -90,7 +92,7 @@ recognize-svg
 
 `svg-patch-plan` is the first same-layer mutation artifact. It does not draw an alternative. When Recognition IR v2 is active, it uses IR v2 geometry and source document indexes as the production candidate source, identifies existing source SVG elements inside confirmed mutable zones, records their element index/tag/bbox addressing, separates locked candidates in protected zones, anchors changes to recognized program labels, and sets the mutation strategy to `same_layer_element_patch`. `<use>`-expanded primitives can inform recognition, but non-editable instances are filtered out before same-layer mutation. When wall-bounded `space_region` and `program_cluster` nodes exist, patch candidates that intersect those clusters are prioritized before broad mutable-zone elements. Same-layer opening and endpoint-move candidates are planned in `crab_archi_design.solver.patch_plan`, where OpenCrab `ontology_cluster_adjacency_target` edges score which existing wall lines should become openings or bounded endpoint grip edits, then attach the connected role, cluster id, rationale, and evidence to the mutation. A production engine should edit these existing elements rather than adding a new zoning overlay layer.
 
-The same patch plan now carries a solver objective report. `solver.sizing` parses both simple standards tables and merged-header/grid-like community standards CSVs into role-level target areas for the household count; `solver.feasible` summarizes community shell, mutable, and protected/no-go regions; `solver.scale` looks for consistent dimension-text-to-segment pairs to infer architectural mm-per-world-unit calibration; `solver.objective` compares target program roles with recognized topology clusters and records whether area comparison is calibrated or still requires review. This makes the Python split operational: standards, feasibility, scale, topology fit, and SVG mutation are separate deterministic engines rather than one opaque drawing script.
+The same patch plan now carries a solver objective report. `solver.sizing` parses both simple standards tables and merged-header/grid-like community standards CSVs into role-level target areas for the household count; `solver.feasible` summarizes community shell, mutable, and protected/no-go regions; `solver.scale` first honors explicit scale manifests and otherwise looks for consistent dimension-text-to-segment pairs to infer architectural mm-per-world-unit calibration; `solver.objective` compares target program roles with recognized topology clusters and records whether area comparison is calibrated or still requires review. This makes the Python split operational: standards, feasibility, scale, topology fit, and SVG mutation are separate deterministic engines rather than one opaque drawing script.
 
 ## Python Module Boundaries
 
@@ -102,7 +104,7 @@ The Python engine should be split before the production parser and solver are ex
 - `crab_archi_design.solver`: deterministic feasible-area, sizing, placement, local-search, patch-plan, and same-layer SVG mutation contracts. The `solver.patch_plan` module chooses evidence-backed source SVG mutation candidates from topology, while `solver.svg_mutation` is the CAD-like primitive layer for element-index addressing, reversible original-attribute preservation, internal partition removal, same-layer line splitting for door openings, and future trim/move operations.
 - `crab_archi_design.solver.sizing`: standards parsing and role-level target area extraction, including grid CSVs where the household count is a column instead of a row.
 - `crab_archi_design.solver.feasible`: shell/mutable/protected constraint summaries and available-area estimates before placement or mutation.
-- `crab_archi_design.solver.scale`: architectural scale calibration from recognized numeric dimension text and matching axis-aligned SVG line segments, with conservative review-required behavior when evidence is sparse.
+- `crab_archi_design.solver.scale`: architectural scale calibration from user/OCR-confirmed scale manifests or recognized numeric dimension text and matching axis-aligned SVG line segments, with conservative review-required behavior when evidence is sparse.
 - `crab_archi_design.solver.objective`: deterministic topology-fit reports that compare standards targets, recognized program clusters, feasible regions, and OpenCrab adjacency edges.
 - `crab_archi_design.qa`: hard/soft gate helpers shared by recognition, topology, solver, and export checks.
 
@@ -128,6 +130,8 @@ The split is intentionally closer to multiple small engines than one large Pytho
 `constraint-attach` converts doodle strokes into enforceable project constraints such as community shell, no-go zones, lock boundaries, mutable zones, and projectable zones.
 
 `standards-attach` converts area/program standards into a project manifest. CSV files are parsed into selected household-count rows; Excel, PDF, and JSON files are attached as verified source references for the engine adapter.
+
+`scale-attach` is optional but important when dimension text is vectorized, OCR-derived, or manually measured from a known grid/module. It stores explicit architectural `mm_per_world` evidence in `scale/scale_manifest.json`; objective reports use it before automatic scale inference, so standards area comparison can become calibrated without pretending paper units are architectural area.
 
 `edit-brief` writes JSON and Markdown review artifacts before SVG mutation. It is intentionally lightweight: it verifies source recognition, topology, OpenCrab evidence, standards and constraint manifests, checks source SVG parsing, summarizes operations, and flags doodle strokes that fall outside the source SVG viewBox.
 

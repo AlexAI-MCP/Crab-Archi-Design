@@ -215,3 +215,49 @@ def infer_architectural_scale(ir: dict[str, Any] | None) -> dict[str, Any]:
         "cluster_pairs": cluster[:20],
         "warnings": [] if status == "active" else ["insufficient_consistent_dimension_text_to_segment_pairs"],
     }
+
+
+def selected_manifest_scale(manifest: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not manifest:
+        return None
+    selected = manifest.get("selected_scale")
+    if isinstance(selected, dict) and selected.get("mm_per_world"):
+        return selected
+    candidates = []
+    for item in manifest.get("scale_items", []):
+        if item.get("mm_per_world"):
+            candidates.append(item)
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: (float(item.get("confidence") or 0.0), str(item.get("id") or "")), reverse=True)[0]
+
+
+def scale_report_from_manifest(manifest: dict[str, Any] | None) -> dict[str, Any] | None:
+    selected = selected_manifest_scale(manifest)
+    if not selected:
+        return None
+    mm_per_world = svg_float(selected.get("mm_per_world"))
+    if mm_per_world <= 0:
+        return None
+    confidence = max(0.0, min(1.0, svg_float(selected.get("confidence"), 0.95)))
+    status = "active" if confidence >= 0.5 else "review_required"
+    return {
+        "schema": "crab-archi-design-scale-calibration-v1",
+        "status": status,
+        "source": "scale_manifest.selected_scale",
+        "unit": "mm_per_world",
+        "mm_per_world": round(mm_per_world, 6),
+        "m_per_world": round(mm_per_world / 1000.0, 9),
+        "confidence": round(confidence, 3),
+        "selected_scale_id": selected.get("id"),
+        "method": selected.get("method"),
+        "evidence": selected.get("evidence"),
+        "warnings": [] if status == "active" else ["scale_manifest_confidence_below_active_threshold"],
+    }
+
+
+def resolve_architectural_scale(ir: dict[str, Any] | None, scale_manifest: dict[str, Any] | None = None) -> dict[str, Any]:
+    manifest_report = scale_report_from_manifest(scale_manifest)
+    if manifest_report:
+        return manifest_report
+    return infer_architectural_scale(ir)
