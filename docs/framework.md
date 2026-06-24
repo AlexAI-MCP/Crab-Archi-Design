@@ -88,6 +88,18 @@ recognize-svg
 
 `svg-patch-plan` is the first same-layer mutation artifact. It does not draw an alternative. It identifies existing source SVG elements inside confirmed mutable zones, records their element index/tag/bbox addressing, separates locked candidates in protected zones, anchors changes to recognized program labels, and sets the mutation strategy to `same_layer_element_patch`. A production engine should edit these existing elements rather than adding a new zoning overlay layer.
 
+## Python Module Boundaries
+
+The Python engine should be split before the production parser and solver are expanded. The current CLI remains the compatibility wrapper, but new implementation work should land behind these package boundaries:
+
+- `crab_archi_design.svg`: safe SVG parsing, transforms, units, path flattening, style inheritance, and world-coordinate geometry.
+- `crab_archi_design.recognition`: Recognition IR v2 schema, stable node ids, and role classification.
+- `crab_archi_design.intents`: DesignIntent/EditIntent schemas and validation. LLMs produce intent JSON, not final coordinates.
+- `crab_archi_design.solver`: deterministic feasible-area, sizing, placement, local-search, and same-layer SVG mutation contracts.
+- `crab_archi_design.qa`: hard/soft gate helpers shared by recognition, topology, solver, and export checks.
+
+This split keeps the production path from becoming another overlay engine. SVG parsing creates IR, intent stays declarative, the solver mutates recognized elements, and QA decides whether the result is releasable.
+
 `create-job` is the product-facing first-run entry point. It turns uploaded source SVG, standards, OpenCrab MCP evidence, doodle constraints, prompt text, engine policy, and export settings into a `crab-archi-design-job-spec-v1` file that can be validated and executed by workers without hand-written JSON. With `--brief`, it also writes a Markdown review brief summarizing the job, referenced files, validation checks, and next commands.
 
 `workflow-run` orchestrates the same manual commands in a single run. It initializes the project when needed, executes the gates in order, writes all normal artifacts, and records the step-by-step result in a workflow report.
