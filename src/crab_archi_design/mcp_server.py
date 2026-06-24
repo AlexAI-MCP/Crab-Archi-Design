@@ -15,6 +15,7 @@ PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "crab-archi-design-mcp"
 DEFAULT_TIMEOUT_SECONDS = 300
 GLOBAL_FIELDS = {"project_root", "cwd", "timeout_seconds", "raw_args"}
+DANGEROUS_RAW_FLAGS = {"--allow-custom-engine"}
 BOOLEAN_FIELDS = {
     "allow_missing_source",
     "replace",
@@ -162,6 +163,22 @@ def validate_argument_keys(tool: dict[str, Any], arguments: dict[str, Any]) -> N
     missing = [flag_to_key(flag) for flag in tool.get("required_args", []) if flag_to_key(flag) not in arguments]
     if missing:
         raise ValueError(f"Missing required argument(s): {', '.join(missing)}")
+    validate_raw_args(tool, arguments.get("raw_args", []) or [])
+
+
+def validate_raw_args(tool: dict[str, Any], raw_args: Any) -> None:
+    if not isinstance(raw_args, list):
+        raise ValueError("raw_args must be an array.")
+    allowed_flags = set(unique_flags(tool))
+    for value in raw_args:
+        text = str(value)
+        if not text.startswith("--"):
+            continue
+        flag = text.split("=", 1)[0]
+        if flag in DANGEROUS_RAW_FLAGS:
+            raise ValueError(f"raw_args may not include {flag}.")
+        if flag not in allowed_flags:
+            raise ValueError(f"raw_args flag is not allowlisted for {tool['id']}: {flag}")
 
 
 def append_cli_argument(command: list[str], key: str, value: Any) -> None:

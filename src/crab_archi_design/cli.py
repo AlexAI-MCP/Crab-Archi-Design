@@ -26,6 +26,19 @@ OPENCRAB_HOMEPAGE = "https://opencrab.sh"
 PROJECT_NAME = "crab-archi-design"
 PROJECT_VERSION = "0.1.0"
 SVG_NUMBER_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+BUILTIN_ENGINE_ADAPTERS = {
+    "reference-svg-engine": "reference_svg_engine.py",
+    "builtin-reference": "reference_svg_engine.py",
+    "crab-reference-engine": "reference_svg_engine.py",
+    "layout-svg-engine": "layout_svg_engine.py",
+    "builtin-layout": "layout_svg_engine.py",
+    "crab-layout-engine": "layout_svg_engine.py",
+    "room-envelope-engine": "layout_svg_engine.py",
+    "same-layer-svg-engine": "same_layer_svg_engine.py",
+    "builtin-same-layer": "same_layer_svg_engine.py",
+    "crab-same-layer-engine": "same_layer_svg_engine.py",
+    "native-svg-patch-engine": "same_layer_svg_engine.py",
+}
 SRC_ROOT = Path(__file__).resolve().parents[1]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -42,6 +55,46 @@ def now() -> str:
 def slugify(value: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-")
     return slug or "project"
+
+
+def is_builtin_engine_adapter(adapter: str | None) -> bool:
+    return bool(adapter and adapter in BUILTIN_ENGINE_ADAPTERS)
+
+
+def engine_adapter_policy(adapter: str | None, allow_custom: bool = False) -> dict[str, Any]:
+    if not adapter:
+        return {
+            "adapter": adapter,
+            "allowed": False,
+            "adapter_type": "missing",
+            "reason": "missing_engine_adapter",
+        }
+    if is_builtin_engine_adapter(adapter):
+        return {
+            "adapter": adapter,
+            "allowed": True,
+            "adapter_type": "builtin",
+            "script": BUILTIN_ENGINE_ADAPTERS[adapter],
+            "reason": "builtin_adapter_allowlisted",
+        }
+    return {
+        "adapter": adapter,
+        "allowed": bool(allow_custom),
+        "adapter_type": "custom",
+        "script": None,
+        "reason": "custom_adapter_explicitly_allowed" if allow_custom else "custom_adapter_requires_explicit_allow_custom_engine",
+    }
+
+
+def require_engine_adapter_allowed(adapter: str, allow_custom: bool = False) -> dict[str, Any]:
+    policy = engine_adapter_policy(adapter, allow_custom)
+    if not policy["allowed"]:
+        allowed = ", ".join(sorted(BUILTIN_ENGINE_ADAPTERS))
+        raise SystemExit(
+            f"Engine adapter is not allowlisted: {adapter}. "
+            f"Use a built-in adapter ({allowed}) or pass --allow-custom-engine for a trusted local adapter."
+        )
+    return policy
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -85,6 +138,7 @@ def command_init(args: argparse.Namespace) -> None:
         "standards_files": [str(Path(item).expanduser()) for item in args.standards],
         "ontology_pack": args.ontology_pack,
         "engine_adapter": args.engine_adapter,
+        "allow_custom_engine_adapter": bool(getattr(args, "allow_custom_engine", False)),
         "opencrab_mcp": {
             "required": True,
             "homepage": args.opencrab_homepage,
@@ -2559,15 +2613,10 @@ def infer_engine_cwd(adapter: Path, fallback: Path) -> Path:
     return fallback
 
 
-def build_engine_command(adapter: str, extra_args: list[str]) -> tuple[list[str], Path | None]:
-    if adapter in {"reference-svg-engine", "builtin-reference", "crab-reference-engine"}:
-        adapter_path = Path(__file__).resolve().parent / "reference_svg_engine.py"
-        return [sys.executable, str(adapter_path), *extra_args], adapter_path
-    if adapter in {"layout-svg-engine", "builtin-layout", "crab-layout-engine", "room-envelope-engine"}:
-        adapter_path = Path(__file__).resolve().parent / "layout_svg_engine.py"
-        return [sys.executable, str(adapter_path), *extra_args], adapter_path
-    if adapter in {"same-layer-svg-engine", "builtin-same-layer", "crab-same-layer-engine", "native-svg-patch-engine"}:
-        adapter_path = Path(__file__).resolve().parent / "same_layer_svg_engine.py"
+def build_engine_command(adapter: str, extra_args: list[str], allow_custom: bool = False) -> tuple[list[str], Path | None]:
+    policy = require_engine_adapter_allowed(adapter, allow_custom)
+    if policy["adapter_type"] == "builtin":
+        adapter_path = Path(__file__).resolve().parent / str(policy["script"])
         return [sys.executable, str(adapter_path), *extra_args], adapter_path
     adapter_path = Path(adapter).expanduser()
     if adapter_path.exists():
@@ -3495,7 +3544,9 @@ def command_apply_edit(args: argparse.Namespace) -> None:
     extra_args = list(args.engine_arg or [])
     if args.skip_preview and "--skip-preview" not in extra_args:
         extra_args.append("--skip-preview")
-    command, adapter_path = build_engine_command(adapter, extra_args)
+    allow_custom_engine = bool(args.allow_custom_engine or manifest.get("allow_custom_engine_adapter"))
+    engine_policy = engine_adapter_policy(adapter, allow_custom_engine)
+    command, adapter_path = build_engine_command(adapter, extra_args, allow_custom=allow_custom_engine)
     engine_cwd = Path(args.engine_cwd).expanduser() if args.engine_cwd else infer_engine_cwd(adapter_path or Path(adapter), Path.cwd())
     env = os.environ.copy()
     env.update(
@@ -3571,6 +3622,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "run_dir": str(run_dir),
         "solver_input": str(solver_input_path),
         "intent_paths": [str(path) for path in intent_paths],
+        "engine_policy": engine_policy,
         "engine": engine_result,
         "discovered_outputs": {key: [str(path) for path in paths] for key, paths in discovered.items()},
         "copied_artifacts": copied,
@@ -4137,6 +4189,7 @@ def command_workflow_run(args: argparse.Namespace) -> None:
                 standards=args.standards or [],
                 ontology_pack=args.ontology_pack,
                 engine_adapter=args.engine_adapter or "layout-svg-engine",
+                allow_custom_engine=args.allow_custom_engine,
                 opencrab_mcp_server=args.opencrab_mcp_server,
                 opencrab_homepage=args.opencrab_homepage,
                 allow_missing_source=False,
@@ -4309,6 +4362,7 @@ def command_workflow_run(args: argparse.Namespace) -> None:
                 engine_adapter=engine_adapter,
                 engine_cwd=None,
                 engine_arg=args.engine_arg or [],
+                allow_custom_engine=args.allow_custom_engine,
                 candidate_svg=None,
                 candidate_report=None,
                 preview=None,
@@ -4479,6 +4533,7 @@ def command_revision_run(args: argparse.Namespace) -> None:
                 engine_adapter=engine_adapter,
                 engine_cwd=None,
                 engine_arg=args.engine_arg or [],
+                allow_custom_engine=args.allow_custom_engine,
                 candidate_svg=None,
                 candidate_report=None,
                 preview=None,
@@ -4574,6 +4629,7 @@ def workflow_namespace_from_job(job: dict[str, Any], project_root: Path, path_ba
         ontology_pack=job.get("ontology_pack"),
         engine_adapter=job.get("engine_adapter") or "layout-svg-engine",
         engine_arg=job_value_list(job, "engine_arg"),
+        allow_custom_engine=job_bool(job, "allow_custom_engine"),
         opencrab_mcp_server=job.get("opencrab_mcp_server") or "opencrab",
         opencrab_homepage=job.get("opencrab_homepage") or OPENCRAB_HOMEPAGE,
         opencrab_result_file=job_path_list(job, "opencrab_result_file", path_base),
@@ -4615,6 +4671,7 @@ JOB_SPEC_ALLOWED_KEYS = {
     "ontology_pack",
     "engine_adapter",
     "engine_arg",
+    "allow_custom_engine",
     "opencrab_mcp_server",
     "opencrab_homepage",
     "opencrab_result_file",
@@ -4701,6 +4758,7 @@ def build_job_validation_report(job_path: Path, job: dict[str, Any], default_pro
     unknown_keys = sorted(set(job) - JOB_SPEC_ALLOWED_KEYS)
     files = job_file_entries(job, path_base)
     missing_files = [item for item in files if item["required"] and not item["exists"]] if check_files else []
+    engine_policy = engine_adapter_policy(str(job.get("engine_adapter") or ""), job_bool(job, "allow_custom_engine"))
     checks = {
         "job_file_exists": job_path.exists(),
         "schema_supported": job.get("schema") in {None, "crab-archi-design-job-spec-v1"},
@@ -4711,6 +4769,7 @@ def build_job_validation_report(job_path: Path, job: dict[str, Any], default_pro
         "constraint_sketch_present_or_existing_manifest": bool(job.get("constraint_sketch") or existing_constraints),
         "ontology_pack_present": bool(job.get("ontology_pack") or existing_manifest),
         "engine_adapter_present": bool(job.get("engine_adapter") or existing_manifest),
+        "engine_adapter_allowed": bool(existing_manifest or engine_policy["allowed"]),
         "required_files_exist": not missing_files,
     }
     warnings = []
@@ -4718,6 +4777,14 @@ def build_job_validation_report(job_path: Path, job: dict[str, Any], default_pro
         warnings.append({"type": "unknown_keys", "keys": unknown_keys})
     if not job.get("prompt"):
         warnings.append({"type": "missing_prompt", "message": "workflow-run will create a default prompt if none exists."})
+    if job.get("engine_adapter") and not engine_policy["allowed"]:
+        warnings.append(
+            {
+                "type": "engine_adapter_not_allowlisted",
+                "adapter": job.get("engine_adapter"),
+                "message": "Use a built-in engine adapter or set allow_custom_engine=true only for a trusted local worker.",
+            }
+        )
     status = "pass" if all(checks.values()) else "review_required"
     return {
         "schema": "crab-archi-design-job-validation-v1",
@@ -4730,6 +4797,7 @@ def build_job_validation_report(job_path: Path, job: dict[str, Any], default_pro
         "check_files": check_files,
         "checks": checks,
         "warnings": warnings,
+        "engine_policy": engine_policy,
         "files": files,
         "missing_files": missing_files,
         "unknown_keys": unknown_keys,
@@ -4872,6 +4940,7 @@ def command_create_job(args: argparse.Namespace) -> None:
         "project_id": args.project_id,
         "source_svg": args.source_svg,
         "engine_adapter": args.engine_adapter,
+        "allow_custom_engine": args.allow_custom_engine,
         "opencrab_mcp_server": args.opencrab_mcp_server,
         "opencrab_homepage": args.opencrab_homepage,
         "opencrab_source_tool": args.opencrab_source_tool,
@@ -5022,6 +5091,12 @@ def command_run_job(args: argparse.Namespace) -> None:
         raise SystemExit("Job spec requires project_id.")
     if job.get("schema") not in {None, "crab-archi-design-job-spec-v1"}:
         raise SystemExit(f"Unsupported job schema: {job.get('schema')}")
+    engine_policy = engine_adapter_policy(str(job.get("engine_adapter") or "layout-svg-engine"), job_bool(job, "allow_custom_engine"))
+    if not engine_policy["allowed"]:
+        raise SystemExit(
+            f"run-job refused non-allowlisted engine adapter {job.get('engine_adapter')!r}. "
+            "Use a built-in adapter or set allow_custom_engine=true only for a trusted local worker."
+        )
 
     path_base = Path(job.get("path_base") or ".").expanduser()
     if not path_base.is_absolute():
@@ -6006,6 +6081,8 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "source_svg_in_package": "opt-in via export-package --include-source-svg",
             "native_svg_only_gate": "latest_alternative_native_svg",
             "no_raster_overlay_gate": "native_svg_no_images",
+            "engine_adapter_allowlist": sorted(BUILTIN_ENGINE_ADAPTERS),
+            "custom_engine_policy": "Custom engine adapters are refused by default. Direct local CLI users may pass --allow-custom-engine for trusted adapters; MCP raw_args cannot use this escape hatch.",
             "secrets_policy": "do not put OAuth tokens, API keys, or private credentials in project manifests, evidence payloads, or export packages",
         },
     }
@@ -6238,6 +6315,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--standards", action="append", default=[])
     p_init.add_argument("--ontology-pack")
     p_init.add_argument("--engine-adapter")
+    p_init.add_argument("--allow-custom-engine", action="store_true", help="Allow a trusted non-built-in engine adapter for this local project.")
     p_init.add_argument("--opencrab-mcp-server", default="opencrab")
     p_init.add_argument("--opencrab-homepage", default=OPENCRAB_HOMEPAGE)
     p_init.add_argument("--allow-missing-source", action="store_true")
@@ -6362,6 +6440,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("--engine-adapter", help="Override the manifest engine adapter.")
     p_apply.add_argument("--engine-cwd", help="Working directory for the engine adapter.")
     p_apply.add_argument("--engine-arg", action="append", default=[], help="Additional argument passed to the engine adapter. Repeatable.")
+    p_apply.add_argument("--allow-custom-engine", action="store_true", help="Allow a trusted non-built-in engine adapter for this local run.")
     p_apply.add_argument("--candidate-svg", help="Explicit SVG candidate path if the engine does not print/report it.")
     p_apply.add_argument("--candidate-report", help="Explicit report path to copy into the run directory.")
     p_apply.add_argument("--preview", help="Explicit preview image path to copy into the run directory.")
@@ -6401,6 +6480,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_workflow.add_argument("--ontology-pack")
     p_workflow.add_argument("--engine-adapter")
     p_workflow.add_argument("--engine-arg", action="append", default=[])
+    p_workflow.add_argument("--allow-custom-engine", action="store_true", help="Allow a trusted non-built-in engine adapter for this local workflow.")
     p_workflow.add_argument("--opencrab-mcp-server", default="opencrab")
     p_workflow.add_argument("--opencrab-homepage", default=OPENCRAB_HOMEPAGE)
     p_workflow.add_argument("--opencrab-result-file", action="append", default=[])
@@ -6439,6 +6519,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_revision.add_argument("--task", help="Optional design handoff task.")
     p_revision.add_argument("--engine-adapter")
     p_revision.add_argument("--engine-arg", action="append", default=[])
+    p_revision.add_argument("--allow-custom-engine", action="store_true", help="Allow a trusted non-built-in engine adapter for this local revision.")
     p_revision.add_argument("--refresh-recognition", action="store_true")
     p_revision.add_argument("--max-labels", type=int, default=500)
     p_revision.add_argument("--timeout", type=int, default=300)
@@ -6460,6 +6541,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_create_job.add_argument("--ontology-pack")
     p_create_job.add_argument("--engine-adapter", default="layout-svg-engine")
     p_create_job.add_argument("--engine-arg", action="append", default=[])
+    p_create_job.add_argument("--allow-custom-engine", action="store_true", help="Store allow_custom_engine=true for a trusted local worker. Do not use for untrusted OAuth/MCP uploads.")
     p_create_job.add_argument("--opencrab-mcp-server", default="opencrab")
     p_create_job.add_argument("--opencrab-homepage", default=OPENCRAB_HOMEPAGE)
     p_create_job.add_argument("--opencrab-result-file", action="append", default=[])

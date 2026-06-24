@@ -42,6 +42,8 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["recommended_sequences"]["manual_revision_loop"][:4] == ["topology_build", "recognition_audit", "scale_attach", "svg_patch_plan"]
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
+    assert "same-layer-svg-engine" in manifest["security"]["engine_adapter_allowlist"]
+    assert "MCP raw_args cannot use" in manifest["security"]["custom_engine_policy"]
 
     out = tmp_path / "mcp_manifest.json"
     result = run_cli("mcp-manifest", "--output", str(out), cwd=ROOT)
@@ -178,6 +180,19 @@ def test_mcp_stdio_server_lists_and_calls_tools(tmp_path: Path) -> None:
         assert result["structuredContent"]["returncode"] == 0
         assert "doctor_report" in result["structuredContent"]["stdout"]
         assert (tmp_path / "diagnostics").exists()
+
+        write_json_line(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "doctor", "arguments": {"cwd": str(tmp_path), "raw_args": ["--allow-custom-engine"]}},
+            },
+        )
+        raw_arg_response = read_json_line(process)
+        assert raw_arg_response["error"]["code"] == -32602
+        assert "raw_args may not include --allow-custom-engine" in raw_arg_response["error"]["message"]
     finally:
         if process.stdin is not None:
             process.stdin.close()
@@ -2493,6 +2508,29 @@ def test_validate_job_spec_checks_inputs(tmp_path: Path) -> None:
     assert report["checks"]["required_files_exist"] is False
     assert {item["key"] for item in report["missing_files"]} >= {"source_svg", "standards", "opencrab_result_file", "constraint_sketch"}
 
+    custom_engine_job = tmp_path / "custom_engine_job.json"
+    custom_engine_job.write_text(
+        json.dumps(
+            {
+                "schema": "crab-archi-design-job-spec-v1",
+                "project_id": "custom-engine-demo",
+                "source_svg": str(ROOT / "examples" / "original_sample.svg"),
+                "standards": [str(ROOT / "examples" / "area_standard_sample.csv")],
+                "ontology_pack": "community_svg_topology_ontology_v2",
+                "opencrab_result_file": [str(ROOT / "examples" / "opencrab_mcp_result_sample.json")],
+                "constraint_sketch": str(ROOT / "examples" / "constraint_sketch_sample.json"),
+                "engine_adapter": str(tmp_path / "custom_engine.py"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = run_cli("validate-job", "--job", str(custom_engine_job), "--output-dir", str(tmp_path / "diagnostics"), cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert report["status"] == "review_required"
+    assert report["checks"]["engine_adapter_allowed"] is False
+    assert report["engine_policy"]["reason"] == "custom_adapter_requires_explicit_allow_custom_engine"
+
 
 def test_create_job_writes_validatable_spec(tmp_path: Path) -> None:
     job_path = tmp_path / "job_specs" / "generated_job.json"
@@ -2664,6 +2702,7 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
         "community_svg_topology_ontology_v2",
         "--engine-adapter",
         str(engine),
+        "--allow-custom-engine",
         cwd=ROOT,
     )
     assert result.returncode == 0, result.stderr
@@ -2813,6 +2852,52 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert status_json["latest_artifacts"]["alternative_svg"].endswith("alternative_001.svg")
     assert status_json["latest_artifacts"]["review_panel"].endswith(".html")
     assert status_json["metrics"]["latest_apply_status"] == "review_required"
+
+
+def test_apply_edit_rejects_untrusted_custom_engine_by_default(tmp_path: Path) -> None:
+    source_svg = tmp_path / "original.svg"
+    source_svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><text x='2' y='2'>fitness</text></svg>", encoding="utf-8")
+    engine = tmp_path / "fake_engine.py"
+    engine.write_text("print('should not run')", encoding="utf-8")
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "init",
+        "--project-id",
+        "blocked-engine",
+        "--source-svg",
+        str(source_svg),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        "--engine-adapter",
+        str(engine),
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "prompt-edit",
+        "--project-id",
+        "blocked-engine",
+        "--text",
+        "Test custom engine rejection.",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "apply-edit",
+        "--project-id",
+        "blocked-engine",
+        cwd=ROOT,
+    )
+    assert result.returncode != 0
+    assert "not allowlisted" in result.stderr
 
 
 def test_doodle_editor_command_prints_local_editor() -> None:
