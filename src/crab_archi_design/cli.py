@@ -615,11 +615,22 @@ def recognition_ir_v2_geometry_candidates(ir: dict[str, Any] | None, max_items: 
             {
                 "id": node.get("id"),
                 "source_id": node.get("source_id"),
+                "index": node.get("source_document_index") if node.get("editable_source") else None,
+                "source_document_index": node.get("source_document_index"),
+                "instance_document_index": node.get("instance_document_index"),
+                "instance_source_id": node.get("instance_source_id"),
+                "from_use_instance": bool(node.get("from_use_instance")),
+                "editable": bool(node.get("editable_source")),
+                "addressing": "source_svg_element_index",
                 "tag": node.get("tag"),
                 "bbox": normalize_bbox_dict(node.get("bbox")),
                 "role_hint": f"{node.get('role_hint')}_candidate",
                 "role_confidence": node.get("role_confidence"),
                 "polygon": node.get("polygon", [])[:64],
+                "class": (node.get("style") or {}).get("class"),
+                "stroke_width": (node.get("style") or {}).get("stroke_width"),
+                "fill": (node.get("style") or {}).get("fill"),
+                "stroke": (node.get("style") or {}).get("stroke"),
                 "source": "recognition_ir_v2.nodes",
             }
         )
@@ -2157,8 +2168,11 @@ def candidate_patch_record(item: dict[str, Any], classification: str, reason: st
     box = item.get("bbox") or {}
     record = {
         "element_index": item.get("index"),
+        "source_document_index": item.get("source_document_index", item.get("index")),
+        "recognition_node_id": item.get("id") if item.get("source") == "recognition_ir_v2.nodes" else None,
+        "recognition_source": item.get("source"),
         "tag": item.get("tag"),
-        "id": item.get("id"),
+        "id": item.get("source_id") or item.get("id"),
         "class": item.get("class"),
         "role_hint": item.get("role_hint"),
         "bbox": box,
@@ -2236,11 +2250,14 @@ def program_anchors_from_topology(topology: dict[str, Any] | None, mutable_polyg
 def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240) -> dict[str, Any]:
     project = load_manifest(project_id, root)
     recognition = load_recognition_manifest(project_id, root)
+    recognition_ir = load_recognition_ir_v2(project_id, root)
     topology = load_topology_manifest(project_id, root)
     constraints = load_constraint_manifest(project_id, root)
     recognition_audit_path = latest_recognition_audit_path(project_id, root)
     recognition_audit = read_json(recognition_audit_path) if recognition_audit_path else None
-    geometry = (recognition or {}).get("geometry_candidates", {})
+    use_ir_v2 = recognition_ir_v2_status(recognition_ir) == "active"
+    geometry = recognition_ir_v2_geometry_candidates(recognition_ir, max(max_candidates * 5, 1200)) if use_ir_v2 else (recognition or {}).get("geometry_candidates", {})
+    geometry_source = "recognition_ir_v2" if use_ir_v2 else "recognition_manifest"
     mutable_polygons = constraint_polygons(constraints, {"mutable", "projectable"})
     shell_polygons = constraint_polygons(constraints, {"community_shell"})
     protected_polygons = constraint_polygons(constraints, {"no_go", "lock", "protect"})
@@ -2255,6 +2272,8 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
     ]
     seen: set[tuple[Any, Any]] = set()
     for item in geometry_items:
+        if item.get("editable") is False or item.get("index") is None:
+            continue
         key = (item.get("index"), item.get("tag"))
         if key in seen:
             continue
@@ -2315,7 +2334,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
                 )
 
     gates = {
-        "recognition_manifest_active": recognition_status(recognition) == "active",
+        "recognition_manifest_active": recognition_status(recognition) == "active" or use_ir_v2,
         "topology_manifest_active": topology_status(topology) == "active",
         "recognition_audit_pass": recognition_audit is not None and recognition_audit.get("status") == "pass",
         "mutable_zone_found": bool(mutable_polygons),
@@ -2329,6 +2348,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
         "created_at": now(),
         "project_id": project_id,
         "source_svg": project.get("source_svg"),
+        "recognition_source": geometry_source,
         "status": "pass" if all(gates.values()) else "review_required",
         "mutation_strategy": "same_layer_element_patch",
         "non_goal": "Do not create a new zoning overlay layer or mask the existing plan as the final design.",
@@ -2386,6 +2406,8 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             "locked_candidate_count": len(locked_candidates),
             "program_anchor_count": len(program_anchors),
             "source_geometry_candidate_count": len(geometry_items),
+            "editable_source_geometry_candidate_count": sum(1 for item in geometry_items if item.get("editable") is not False and item.get("index") is not None),
+            "noneditable_source_geometry_candidate_count": sum(1 for item in geometry_items if item.get("editable") is False or item.get("index") is None),
         },
         "program_clusters": program_clusters[:max_candidates],
     }

@@ -691,6 +691,7 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     plan = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
     assert plan["schema"] == "crab-archi-design-svg-patch-plan-v1"
     assert plan["status"] == "pass"
+    assert plan["recognition_source"] == "recognition_ir_v2"
     assert plan["mutation_strategy"] == "same_layer_element_patch"
     assert plan["gates"]["overlay_generation_disallowed"] is True
     assert plan["metrics"]["mutable_candidate_count"] >= 1
@@ -699,9 +700,13 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["metrics"]["program_anchor_count"] >= 3
     assert plan["metrics"]["program_cluster_count"] >= 1
     assert plan["metrics"]["program_cluster_candidate_count"] >= 1
+    assert plan["metrics"]["editable_source_geometry_candidate_count"] >= 1
     assert plan["program_clusters"]
     assert plan["program_anchors"][0]["position_source"] == "topology.label_inside_space_region"
     assert plan["same_layer_mutable_candidates"][0]["addressing"] == "source_svg_element_index"
+    assert plan["same_layer_mutable_candidates"][0]["recognition_source"] == "recognition_ir_v2.nodes"
+    assert plan["same_layer_mutable_candidates"][0]["source_document_index"] == plan["same_layer_mutable_candidates"][0]["element_index"]
+    assert plan["same_layer_mutable_candidates"][0]["recognition_node_id"]
     assert plan["same_layer_mutable_candidates"][0]["mutation_policy"] == "modify_or_remove_existing_element_only"
     assert "program_cluster_id" in plan["same_layer_mutable_candidates"][0]
     assert plan["same_layer_opening_candidates"][0]["operation"] == "split_line_for_opening"

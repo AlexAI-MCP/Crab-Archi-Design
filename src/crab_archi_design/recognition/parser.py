@@ -40,7 +40,8 @@ def build_recognition_ir_v2(path: Path) -> dict[str, Any]:
     raster_nodes: list[dict[str, Any]] = []
     id_index = collect_id_index(root)
     css_rules = collect_css_rules(root)
-    walk_svg(root, identity_matrix(), [], {}, nodes, raster_nodes, ir["warnings"], id_index, css_rules)
+    document_indices = {id(element): index for index, element in enumerate(root.iter(), start=1)}
+    walk_svg(root, identity_matrix(), [], {}, nodes, raster_nodes, ir["warnings"], id_index, css_rules, document_indices)
     drawing_area = max(1.0, viewbox.width * viewbox.height)
     for node in nodes:
         role_hint, confidence = classify_node(node, drawing_area)
@@ -62,7 +63,10 @@ def walk_svg(
     warnings: list[dict[str, Any]],
     id_index: dict[str, Element],
     css_rules: list[dict[str, Any]],
+    document_indices: dict[int, int],
     use_stack: tuple[str, ...] = (),
+    use_instance_index: int | None = None,
+    use_instance_id: str | None = None,
 ) -> None:
     tag = local_name(element.tag)
     style = inherited_style(parent_style, element, css_rules)
@@ -85,12 +89,35 @@ def walk_svg(
             return
         use_matrix = multiply_matrix(matrix, use_instance_matrix(element, referenced))
         use_group_path = [*group_path, use_id]
-        walk_svg(referenced, use_matrix, use_group_path, style, nodes, raster_nodes, warnings, id_index, css_rules, (*use_stack, reference_id or ""))
+        walk_svg(
+            referenced,
+            use_matrix,
+            use_group_path,
+            style,
+            nodes,
+            raster_nodes,
+            warnings,
+            id_index,
+            css_rules,
+            document_indices,
+            (*use_stack, reference_id or ""),
+            document_indices.get(id(element)),
+            use_id,
+        )
         return
     if tag == "image":
         raster_nodes.append({"source_id": element.attrib.get("id"), "group_path": group_path})
     elif tag in SHAPE_TAGS:
-        node = build_shape_node(len(nodes) + 1, element, matrix, group_path, style)
+        node = build_shape_node(
+            len(nodes) + 1,
+            element,
+            matrix,
+            group_path,
+            style,
+            source_document_index=document_indices.get(id(element)),
+            instance_document_index=use_instance_index,
+            instance_source_id=use_instance_id,
+        )
         if node:
             analytic = node.get("analytic")
             if isinstance(analytic, dict):
@@ -99,7 +126,7 @@ def walk_svg(
             node["transform_chain"] = [[round(item, 6) for item in matrix]]
             nodes.append(node)
     for child in list(element):
-        walk_svg(child, matrix, next_group_path, style, nodes, raster_nodes, warnings, id_index, css_rules, use_stack)
+        walk_svg(child, matrix, next_group_path, style, nodes, raster_nodes, warnings, id_index, css_rules, document_indices, use_stack, use_instance_index, use_instance_id)
 
 
 def summarize_nodes(nodes: list[dict[str, Any]], raster_nodes: list[dict[str, Any]]) -> dict[str, int]:

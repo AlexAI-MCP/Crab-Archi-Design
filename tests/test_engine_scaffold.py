@@ -425,6 +425,9 @@ def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:
     rect = next(node for node in ir["nodes"] if node["source_id"] == "r1")
     text = next(node for node in ir["nodes"] if node["source_id"] == "t1")
     assert rect["group_path"] == ["outer", "inner"]
+    assert rect["source_document_index"] == 4
+    assert rect["editable_source"] is True
+    assert rect["from_use_instance"] is False
     assert rect["bbox"] == {"x": 12.0, "y": 9.0, "w": 6.0, "h": 8.0}
     assert text["text"]["anchor"] == [20.0, 17.0]
     assert text["text"]["content"] == "라운지"
@@ -516,8 +519,16 @@ def test_recognition_ir_v2_expands_defs_symbol_use_instances(tmp_path) -> None:
     assert ir["summary"]["primitive_count"] == 2
     assert len(columns) == 2
     assert columns[0]["group_path"] == ["column-a", "column-symbol"]
+    assert columns[0]["source_document_index"] == 4
+    assert columns[0]["instance_document_index"] == 5
+    assert columns[0]["instance_source_id"] == "column-a"
+    assert columns[0]["from_use_instance"] is True
+    assert columns[0]["editable_source"] is False
     assert columns[0]["bbox"] == {"x": 22.0, "y": 32.0, "w": 16.0, "h": 16.0}
     assert columns[1]["group_path"] == ["column-b", "column-symbol"]
+    assert columns[1]["source_document_index"] == 4
+    assert columns[1]["instance_document_index"] == 6
+    assert columns[1]["instance_source_id"] == "column-b"
     assert columns[1]["bbox"] == {"x": 66.0, "y": 31.0, "w": 8.0, "h": 8.0}
     assert all(node["role_hint"] == "column" for node in columns)
     assert ir["summary"]["column_candidate_count"] == 2

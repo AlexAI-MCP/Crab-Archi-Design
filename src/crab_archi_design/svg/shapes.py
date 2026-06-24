@@ -74,10 +74,27 @@ def element_text(element: Element) -> str:
     return " ".join(part.strip() for part in element.itertext() if part and part.strip())
 
 
-def build_shape_node(index: int, element: Element, matrix: Matrix, group_path: list[str], style: dict[str, str]) -> dict[str, Any] | None:
+def build_shape_node(
+    index: int,
+    element: Element,
+    matrix: Matrix,
+    group_path: list[str],
+    style: dict[str, str],
+    source_document_index: int | None = None,
+    instance_document_index: int | None = None,
+    instance_source_id: str | None = None,
+) -> dict[str, Any] | None:
     from crab_archi_design.recognition.ir import stable_node_id
 
     tag = local_name(element.tag)
+    provenance = {
+        "source_document_index": source_document_index,
+        "instance_document_index": instance_document_index,
+        "instance_source_id": instance_source_id,
+        "from_use_instance": instance_document_index is not None,
+        "editable_source": source_document_index is not None and instance_document_index is None,
+        "addressing": "source_svg_element_index",
+    }
     if tag == "text":
         anchor = text_anchor(element, matrix)
         content = element_text(element)
@@ -86,6 +103,7 @@ def build_shape_node(index: int, element: Element, matrix: Matrix, group_path: l
         return {
             "id": stable_node_id(index),
             "source_id": element.attrib.get("id"),
+            **provenance,
             "tag": tag,
             "group_path": group_path,
             "analytic": None,
@@ -114,6 +132,7 @@ def build_shape_node(index: int, element: Element, matrix: Matrix, group_path: l
     return {
         "id": stable_node_id(index),
         "source_id": element.attrib.get("id"),
+        **provenance,
         "tag": tag,
         "group_path": group_path,
         "analytic": analytic,
