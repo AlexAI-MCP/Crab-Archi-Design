@@ -224,6 +224,25 @@ def split_polyline_points_for_opening(
     }
 
 
+def inverse_points(matrix: Matrix, points: list[tuple[float, float]]) -> list[tuple[float, float]] | None:
+    inverted: list[tuple[float, float]] = []
+    for point in points:
+        local_point = apply_inverse_matrix(matrix, point)
+        if local_point is None:
+            return None
+        inverted.append(local_point)
+    return inverted
+
+
+def opening_dict_from_points(start: tuple[float, float], end: tuple[float, float]) -> dict[str, float]:
+    return {
+        "x1": start[0],
+        "y1": start[1],
+        "x2": end[0],
+        "y2": end[1],
+    }
+
+
 def interpolate_line_point(coords: tuple[float, float, float, float], ratio: float) -> tuple[float, float]:
     x1, y1, x2, y2 = coords
     return (x1 + (x2 - x1) * ratio, y1 + (y2 - y1) * ratio)
@@ -454,11 +473,14 @@ def split_path_for_opening(
     opening_start_ratio: float,
     opening_end_ratio: float,
     operation_id: str = "door_opening",
+    transform_matrix: Matrix | None = None,
 ) -> dict[str, Any]:
-    points = editable_path_points(element)
+    local_points = editable_path_points(element)
     children = list(parent)
-    split = split_polyline_points_for_opening(points, opening_start_ratio, opening_end_ratio)
-    if not points or element not in children or split is None:
+    matrix = transform_matrix or identity_matrix()
+    split_points = [apply_matrix(matrix, point) for point in local_points] if not matrix_is_identity(matrix) else local_points
+    split = split_polyline_points_for_opening(split_points, opening_start_ratio, opening_end_ratio)
+    if not local_points or element not in children or split is None:
         return {
             "action": "split_path_for_opening",
             "status": "skipped",
@@ -466,6 +488,25 @@ def split_path_for_opening(
             "geometry_mutated": False,
             "same_layer_segment_added": False,
         }
+    world_opening = split["opening"] if not matrix_is_identity(matrix) else None
+    if not matrix_is_identity(matrix):
+        before_points = inverse_points(matrix, split["before_points"])
+        after_points = inverse_points(matrix, split["after_points"])
+        opening_start = apply_inverse_matrix(matrix, (split["opening"]["x1"], split["opening"]["y1"]))
+        opening_end = apply_inverse_matrix(matrix, (split["opening"]["x2"], split["opening"]["y2"]))
+        if before_points is None or after_points is None or opening_start is None or opening_end is None:
+            return {
+                "action": "split_path_for_opening",
+                "status": "skipped",
+                "reason": "requires invertible transform for path opening split",
+                "geometry_mutated": False,
+                "same_layer_segment_added": False,
+            }
+        local_opening = opening_dict_from_points(opening_start, opening_end)
+    else:
+        before_points = split["before_points"]
+        after_points = split["after_points"]
+        local_opening = split["opening"]
 
     preserve_original_attr(element, "d")
     after_segment = deepcopy(element)
@@ -474,9 +515,8 @@ def split_path_for_opening(
         after_segment.set("id", f"{source_id}__crab_{operation_id}_after")
         after_segment.set("data-crab-derived-from", source_id)
 
-    before_d = format_path_points(split["before_points"])
-    after_d = format_path_points(split["after_points"])
-    opening = split["opening"]
+    before_d = format_path_points(before_points)
+    after_d = format_path_points(after_points)
 
     element.set("d", before_d)
     element.set("data-crab-action", "split_path_for_opening")
@@ -486,6 +526,8 @@ def split_path_for_opening(
     element.set("data-crab-opening-start-ratio", format_svg_number(opening_start_ratio))
     element.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
     element.set("data-crab-geometry-mutated", "true")
+    if not matrix_is_identity(matrix):
+        element.set("data-crab-transform-aware", "true")
 
     after_segment.set("d", after_d)
     after_segment.set("data-crab-action", "split_path_for_opening")
@@ -496,19 +538,25 @@ def split_path_for_opening(
     after_segment.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
     after_segment.set("data-crab-generated-same-layer-segment", "true")
     after_segment.set("data-crab-geometry-mutated", "true")
+    if not matrix_is_identity(matrix):
+        after_segment.set("data-crab-transform-aware", "true")
 
     parent.insert(children.index(element) + 1, after_segment)
-    return {
+    result = {
         "action": "split_path_for_opening",
         "status": "applied",
         "operation_id": operation_id,
         "source_id": source_id,
         "before_segment": {"d": before_d},
-        "opening": opening,
+        "opening": local_opening,
         "after_segment": {"d": after_d},
+        "transform_aware": not matrix_is_identity(matrix),
         "geometry_mutated": True,
         "same_layer_segment_added": True,
     }
+    if world_opening is not None:
+        result["world_opening"] = world_opening
+    return result
 
 
 def opening_sort_key(candidate: dict[str, Any]) -> tuple[float, int]:
@@ -721,10 +769,19 @@ def apply_endpoint_move_candidates(
     }
 
 
-def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: int, locked_indices: set[int] | None = None) -> dict[str, Any]:
+def apply_opening_candidates(
+    root: Element,
+    plan: dict[str, Any],
+    max_openings: int,
+    locked_indices: set[int] | None = None,
+    element_map: dict[int, Element] | None = None,
+    parent_map: dict[int, Element | None] | None = None,
+    transform_map: dict[int, Matrix] | None = None,
+) -> dict[str, Any]:
     locked_indices = locked_indices or set()
-    element_map = existing_elements_by_document_index(root)
-    parent_map = parents_by_document_index(root)
+    element_map = element_map or existing_elements_by_document_index(root)
+    parent_map = parent_map or parents_by_document_index(root)
+    transform_map = transform_map or element_matrices_by_document_index(root)
     candidates = sorted(plan.get("same_layer_opening_candidates", []), key=opening_sort_key, reverse=True)
     applied: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -744,14 +801,23 @@ def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: 
         if element_index is None or element is None or parent is None:
             skipped.append({"target_element_index": element_index, "reason": "target element or parent not found"})
             continue
-        split_function = split_path_for_opening if local_tag(element) == "path" else split_line_for_opening
-        result = split_function(
-            parent,
-            element,
-            svg_float(candidate.get("opening_start_ratio", 0.42)),
-            svg_float(candidate.get("opening_end_ratio", 0.58)),
-            operation_id=str(candidate.get("operation_id") or f"opening_{len(applied) + 1:03d}"),
-        )
+        if local_tag(element) == "path":
+            result = split_path_for_opening(
+                parent,
+                element,
+                svg_float(candidate.get("opening_start_ratio", 0.42)),
+                svg_float(candidate.get("opening_end_ratio", 0.58)),
+                operation_id=str(candidate.get("operation_id") or f"opening_{len(applied) + 1:03d}"),
+                transform_matrix=transform_map.get(element_index),
+            )
+        else:
+            result = split_line_for_opening(
+                parent,
+                element,
+                svg_float(candidate.get("opening_start_ratio", 0.42)),
+                svg_float(candidate.get("opening_end_ratio", 0.58)),
+                operation_id=str(candidate.get("operation_id") or f"opening_{len(applied) + 1:03d}"),
+            )
         result["target_element_index"] = element_index
         result["program_cluster_id"] = candidate.get("program_cluster_id")
         result["program_role"] = candidate.get("program_role")
@@ -862,10 +928,19 @@ def apply_same_layer_geometry_patch(
     root.set("data-crab-overlay-elements-added", "0")
 
     element_map = existing_elements_by_document_index(root)
+    parent_map = parents_by_document_index(root)
     transform_map = element_matrices_by_document_index(root)
     locked_indices = locked_candidate_indices(plan)
     locked_before = capture_locked_element_states(root, plan)
-    opening_summary = apply_opening_candidates(root, plan, max_openings, locked_indices=locked_indices) if apply_openings else {
+    opening_summary = apply_opening_candidates(
+        root,
+        plan,
+        max_openings,
+        locked_indices=locked_indices,
+        element_map=element_map,
+        parent_map=parent_map,
+        transform_map=transform_map,
+    ) if apply_openings else {
         "opening_candidate_count": len(plan.get("same_layer_opening_candidates", [])),
         "same_layer_opening_split_count": 0,
         "same_layer_segment_added_count": 0,

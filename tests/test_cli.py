@@ -890,6 +890,50 @@ def test_solver_same_layer_opening_splits_existing_path() -> None:
     assert summary["opening_mutations"][0]["opening"] == {"x1": 50.0, "y1": 20.0, "x2": 70.0, "y2": 20.0}
 
 
+def test_solver_same_layer_opening_splits_transformed_path_by_world_length() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 140">
+          <g id="scaled" transform="scale(2 1)">
+            <path id="wall-path" d="M 0 0 L 100 0 L 100 100" fill="none" stroke="#111" stroke-width="4"/>
+          </g>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_opening_candidates": [
+            {
+                "operation": "split_line_for_opening",
+                "operation_id": "opening_001",
+                "target_element_index": 3,
+                "tag": "path",
+                "mutation_policy": "split_existing_path_in_same_parent",
+                "opening_start_ratio": 0.5,
+                "opening_end_ratio": 0.75,
+                "program_cluster_id": "program_cluster_path",
+                "program_role": "golf_screen",
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_openings=True, max_openings=4)
+    paths = [element for element in root.iter() if element.tag.endswith("path")]
+    before, after = paths
+    mutation = summary["opening_mutations"][0]
+
+    assert summary["same_layer_opening_split_count"] == 1
+    assert before.attrib["d"] == "M 0,0 L 75,0"
+    assert after.attrib["d"] == "M 100,25 L 100,100"
+    assert before.attrib["data-crab-transform-aware"] == "true"
+    assert after.attrib["data-crab-transform-aware"] == "true"
+    assert mutation["transform_aware"] is True
+    assert mutation["opening"] == {"x1": 75.0, "y1": 0.0, "x2": 100.0, "y2": 25.0}
+    assert mutation["world_opening"] == {"x1": 150.0, "y1": 0.0, "x2": 200.0, "y2": 25.0}
+
+
 def test_solver_same_layer_opening_skips_curved_path() -> None:
     root = ET.fromstring(
         """
