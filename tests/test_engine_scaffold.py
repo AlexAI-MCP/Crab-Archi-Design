@@ -501,6 +501,37 @@ def test_recognition_ir_v2_expands_defs_symbol_use_instances(tmp_path) -> None:
     assert ir["summary"]["column_candidate_count"] == 2
 
 
+def test_recognition_ir_v2_applies_stylesheet_rules_for_role_classification(tmp_path) -> None:
+    source = tmp_path / "stylesheet.svg"
+    source.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600">
+          <style>
+            line.wall, path.wall { stroke: #111; stroke-width: 7; fill: none; }
+            .room-boundary { fill: none; stroke: #111; stroke-width: 5; }
+            #column-a { fill: #111; stroke: none; }
+          </style>
+          <rect class="room-boundary" id="room" x="50" y="50" width="700" height="420"/>
+          <rect id="column-a" x="100" y="100" width="22" height="22"/>
+          <line class="wall" id="wall-a" x1="90" y1="260" x2="690" y2="260"/>
+        </svg>
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    ir = build_recognition_ir_v2(source)
+    nodes = {node["source_id"]: node for node in ir["nodes"]}
+
+    assert nodes["room"]["style"]["stroke_width"] == 5.0
+    assert nodes["room"]["role_hint"] == "room_envelope"
+    assert nodes["column-a"]["style"]["fill"] == "#111"
+    assert nodes["column-a"]["role_hint"] == "column"
+    assert nodes["wall-a"]["style"]["stroke_width"] == 7.0
+    assert nodes["wall-a"]["role_hint"] == "wall"
+    assert ir["summary"]["column_candidate_count"] == 1
+    assert ir["summary"]["wall_candidate_count"] == 1
+
+
 def test_recognition_ir_v2_classifies_basic_drawing_roles(tmp_path) -> None:
     source = tmp_path / "roles.svg"
     source.write_text(

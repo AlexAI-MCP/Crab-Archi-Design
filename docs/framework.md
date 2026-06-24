@@ -82,7 +82,7 @@ recognize-svg
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, raster image detection, text label candidates, and program role hints.
 
-`recognize-svg-v2` converts the original SVG into the development-grade Recognition IR v2. It uses the split parser engines in `crab_archi_design.svg`: safe XML loading, namespace normalization, `<defs>/<symbol>/<use>` reference expansion, inherited presentation style, unit/viewBox normalization, affine transform accumulation, primitive shape extraction, path flattening, and geometry metrics. `crab_archi_design.recognition` then assigns stable node ids and role hints. This is the path that should feed future topology and same-layer SVG mutation work.
+`recognize-svg-v2` converts the original SVG into the development-grade Recognition IR v2. It uses the split parser engines in `crab_archi_design.svg`: safe XML loading, namespace normalization, `<defs>/<symbol>/<use>` reference expansion, deterministic tag/class/id stylesheet cascade, inherited presentation style, unit/viewBox normalization, affine transform accumulation, primitive shape extraction, path flattening, and geometry metrics. `crab_archi_design.recognition` then assigns stable node ids and role hints. This is the path that should feed future topology and same-layer SVG mutation work.
 
 `topology-build` converts recognition, standards, OpenCrab evidence, and drawing constraints into a target topology manifest. It creates nodes for program labels, room envelopes, wall-bounded space regions, structural columns, wall candidates, standards roles, and constraints, then links them with edges such as label-inside-envelope, label-inside-space-region, column-inside-envelope, standard-applies-to-program, protected-geometry, and OpenCrab adjacency targets. When Recognition IR v2 is active, topology prefers it over the lightweight recognition manifest and carries through v2 labels, path-normalized walls, column candidates, constraint polygons, and wall-ray `space_region` evidence.
 
@@ -94,7 +94,7 @@ recognize-svg
 
 The Python engine should be split before the production parser and solver are expanded. The current CLI remains the compatibility wrapper, but new implementation work should land behind these package boundaries:
 
-- `crab_archi_design.svg`: safe SVG parsing, transforms, units, path flattening, style inheritance, and world-coordinate geometry.
+- `crab_archi_design.svg`: safe SVG parsing, transforms, units, path flattening, stylesheet/style inheritance, and world-coordinate geometry.
 - `crab_archi_design.recognition`: Recognition IR v2 schema, stable node ids, and role classification.
 - `crab_archi_design.intents`: DesignIntent/EditIntent schemas and validation. LLMs produce intent JSON, not final coordinates.
 - `crab_archi_design.solver`: deterministic feasible-area, sizing, placement, local-search, patch-plan, and same-layer SVG mutation contracts. The `solver.patch_plan` module chooses evidence-backed source SVG mutation candidates from topology, while `solver.svg_mutation` is the CAD-like primitive layer for element-index addressing, reversible original-attribute preservation, internal partition removal, same-layer line splitting for door openings, and future trim/move operations.
