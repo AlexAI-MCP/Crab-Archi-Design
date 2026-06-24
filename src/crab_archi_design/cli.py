@@ -47,6 +47,7 @@ from crab_archi_design.qa import build_candidate_quality_report
 from crab_archi_design.solver.objective import evaluate_topology_fit
 from crab_archi_design.solver.patch_plan import annotate_candidates_with_solver_plan, build_endpoint_move_candidates, build_opening_candidates, patch_role_priority
 from crab_archi_design.solver.sizing import standard_role_rows_from_manifest
+from crab_archi_design.workflow_contract import audit_workflow_state, build_engine_workflow_contract
 
 
 def now() -> str:
@@ -5740,6 +5741,20 @@ def command_doodle_editor(args: argparse.Namespace) -> None:
         webbrowser.open(editor.as_uri())
 
 
+def command_workflow_contract(args: argparse.Namespace) -> None:
+    contract = build_engine_workflow_contract(opencrab_homepage=args.opencrab_homepage, production_engine=args.production_engine)
+    if args.state:
+        state = read_json(Path(args.state).expanduser())
+        contract["state_audit"] = audit_workflow_state(state, contract)
+    if args.output:
+        out = Path(args.output).expanduser()
+        write_json(out, contract)
+        print(out)
+        print(json.dumps({"status": "pass", "stage_count": len(contract["stages"]), "has_state_audit": "state_audit" in contract}, ensure_ascii=False))
+        return
+    print(json.dumps(contract, ensure_ascii=False, indent=2))
+
+
 def build_mcp_tool_manifest() -> dict[str, Any]:
     tool_defaults = {
         "project_root_arg": "--project-root",
@@ -6027,6 +6042,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "optional_args": ["--zip", "--manifest", "--output-dir", "--check-local-files", "--strict"],
             "outputs": ["audits/release_audit_###.json"],
             "gates": ["candidate_ready", "native_svg_no_images", "package_verify_pass", "doctor_pass"],
+        },
+        {
+            "id": "workflow_contract",
+            "cli_subcommand": "workflow-contract",
+            "description": "Print the authoritative recognition/OpenCrab/intent/solver/native-SVG/QA stage contract and optionally audit a workflow state JSON.",
+            "required_args": [],
+            "optional_args": ["--output", "--state", "--production-engine", "--opencrab-homepage"],
+            "outputs": ["workflow contract JSON on stdout or output path"],
+            "gates": ["engine_workflow_contract_available"],
         },
         {
             "id": "mcp_manifest",
@@ -6647,6 +6671,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_release.add_argument("--check-local-files", action="store_true", help="Also verify local source paths when checking the export ZIP.")
     p_release.add_argument("--strict", action="store_true", help="Exit non-zero unless the release audit passes.")
     p_release.set_defaults(func=command_release_audit)
+
+    p_workflow_contract = sub.add_parser("workflow-contract", help="Print the engine workflow contract and optional state audit.")
+    p_workflow_contract.add_argument("--output", help="Optional path for workflow contract JSON. Defaults to stdout.")
+    p_workflow_contract.add_argument("--state", help="Optional workflow state JSON containing artifacts/gates to audit.")
+    p_workflow_contract.add_argument("--production-engine", default="same-layer-svg-engine")
+    p_workflow_contract.add_argument("--opencrab-homepage", default=OPENCRAB_HOMEPAGE)
+    p_workflow_contract.set_defaults(func=command_workflow_contract)
 
     p_mcp_manifest = sub.add_parser("mcp-manifest", help="Print or write the MCP/OAuth exec tool manifest.")
     p_mcp_manifest.add_argument("--output", help="Optional path for the tool manifest JSON. Defaults to stdout.")

@@ -130,7 +130,7 @@ def mcp_tools() -> list[dict[str, Any]]:
                 "description": tool["description"],
                 "inputSchema": tool_input_schema(tool),
                 "annotations": {
-                    "readOnlyHint": tool["id"] in {"project_status", "verify_package", "doctor", "release_audit", "mcp_manifest", "mcp_config", "doodle_editor"},
+                    "readOnlyHint": tool["id"] in {"project_status", "verify_package", "doctor", "release_audit", "workflow_contract", "mcp_manifest", "mcp_config", "doodle_editor"},
                     "destructiveHint": False,
                     "openWorldHint": tool["id"] in {"run_job", "workflow_run", "revision_run", "opencrab_sync", "apply_edit"},
                 },

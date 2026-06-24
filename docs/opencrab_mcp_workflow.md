@@ -26,19 +26,22 @@ The full flow can be run manually step by step, through `workflow-run`, or throu
 14. Compile an `edit-brief` from natural-language and doodle intents before geometry mutation.
 15. Run `project-status` to confirm recognition, topology, standards, OpenCrab evidence, constraints, and edit intents are ready.
 16. Build a `design-handoff` package for Codex, an LLM wrapper, an MCP tool, or the deterministic solver.
-17. Generate native SVG geometry through a deterministic solver.
-18. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
-19. Run `project-status` again to confirm the latest candidate and review panel are complete.
-20. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
-21. Run `verify-package` to validate the exported ZIP before handoff or upload.
-22. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
-23. Use `run-job` when a SaaS, OAuth, or MCP worker needs to execute the whole sequence from a single JSON job spec.
-24. Run `mcp-manifest`, `mcp-config`, and `mcp-smoke` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog, runtime configuration, and connection smoke test.
-25. Accept natural-language or doodle revisions through `revision-run`, then export and verify the package again.
+17. Run `workflow-contract` when an agent, OAuth worker, or MCP wrapper needs the authoritative stage boundary: recognition, topology, OpenCrab projection, intent compilation, patch planning, native SVG mutation, and QA release.
+18. Generate native SVG geometry through a deterministic solver.
+19. Run QA for no-go intrusion, lock-zone intrusion, area compliance, topology preservation, and native-SVG-only output.
+20. Run `project-status` again to confirm the latest candidate and review panel are complete.
+21. Run `export-package` to bundle the evidence-backed candidate and review artifacts.
+22. Run `verify-package` to validate the exported ZIP before handoff or upload.
+23. Run `doctor` to diagnose local CLI readiness, OpenCrab configuration, project gates, candidate readiness, and optional package verification.
+24. Use `run-job` when a SaaS, OAuth, or MCP worker needs to execute the whole sequence from a single JSON job spec.
+25. Run `mcp-manifest`, `mcp-config`, and `mcp-smoke` when a Codex exec runner, MCP wrapper, OAuth worker, or SaaS ingestion layer needs a machine-readable tool catalog, runtime configuration, and connection smoke test.
+26. Accept natural-language or doodle revisions through `revision-run`, then export and verify the package again.
 
 ## Design Rule
 
 The agent may explain options before querying OpenCrab MCP, but it must not produce a final layout alternative until OpenCrab ontology evidence has been attached to the project manifest and design intent.
+
+`workflow-contract` makes that rule machine-readable. Its contract states that LLM/Codex output is limited to evidence synthesis, DesignIntent/EditIntent JSON, and repair recommendations; final candidate SVG geometry must be produced by the deterministic same-layer SVG mutation path and pass QA gates.
 
 ## Evidence Gate
 

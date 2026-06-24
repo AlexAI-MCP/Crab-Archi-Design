@@ -309,6 +309,8 @@ Engine adapter execution is allowlisted by default. Built-in aliases for `refere
 
 `release-audit` writes `projects/<project>/audits/release_audit_###.json`. It is the final handoff gate: it checks project candidate readiness, OpenCrab evidence, topology/standards/constraints, native SVG output, package verification, and doctor diagnostics in one report.
 
+`workflow-contract` prints the authoritative engine-stage contract for the framework. It fixes the Claude-style split into `recognition_engine`, `topology_engine`, `opencrab_engine`, `intent_engine`, `solver_engine`, `svg_mutation_engine`, and `qa_engine`, while keeping the production rule explicit: OpenCrab evidence is required, LLMs may author intent JSON but not final SVG coordinates, and final candidates must mutate existing SVG geometry in place instead of adding raster or zoning-overlay replacements. With `--state <json>`, it audits artifact/gate readiness and reports the first blocked stage.
+
 `mcp-manifest` writes or prints a machine-readable tool catalog for Codex exec, MCP wrappers, OAuth upload workers, and SaaS ingestion services. It describes each CLI tool id, subcommand, required arguments, outputs, gates, OpenCrab MCP requirement, recommended command sequences, and security boundaries.
 
 `mcp-config` writes or prints runtime configuration for MCP clients and OAuth workers, including the `crab-archi-design-mcp --stdio` command, default `CRAB_ARCHI_PROJECT_ROOT`, Codex-style `mcpServers` JSON, smoke-test messages, and worker preflight commands.

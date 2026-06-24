@@ -20,6 +20,7 @@ from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
 from crab_archi_design.svg.geometry import polygon_area, polyline_length, quantize_point, scaled_polyline_length
 from crab_archi_design.svg.transform import parse_transform
+from crab_archi_design.workflow_contract import ENGINE_WORKFLOW_CONTRACT_SCHEMA, audit_workflow_state, build_engine_workflow_contract, workflow_stage_ids
 
 
 def test_engine_module_scaffold_exports_stable_contracts() -> None:
@@ -33,6 +34,62 @@ def test_engine_module_scaffold_exports_stable_contracts() -> None:
     assert ir["schema"] == RECOGNITION_IR_SCHEMA
     assert ir["document"]["coordinate_space"] == "world"
     assert ir["nodes"] == []
+
+
+def test_engine_workflow_contract_keeps_opencrab_and_same_layer_boundaries() -> None:
+    contract = build_engine_workflow_contract()
+
+    assert contract["schema"] == ENGINE_WORKFLOW_CONTRACT_SCHEMA
+    assert contract["opencrab"]["required"] is True
+    assert contract["opencrab"]["homepage"] == "https://opencrab.sh"
+    assert contract["production_engine"] == "same-layer-svg-engine"
+    assert workflow_stage_ids() == [
+        "recognition_ir",
+        "topology_constraints",
+        "opencrab_projection",
+        "intent_compilation",
+        "patch_planning",
+        "native_svg_mutation",
+        "qa_release",
+    ]
+    assert "raster overlays" in contract["cad_like_svg_policy"]["disallowed"]
+    assert "unverified final SVG coordinates" in contract["llm_boundary"]["disallowed_outputs"]
+
+    mutation_stage = next(stage for stage in contract["stages"] if stage["id"] == "native_svg_mutation")
+    assert mutation_stage["engine_boundary"] == "svg_mutation_engine"
+    assert "mutation_strategy_same_layer" in mutation_stage["hard_gates"]
+    assert "no_raster_overlay_added" in mutation_stage["hard_gates"]
+
+
+def test_workflow_state_audit_blocks_before_opencrab_projection_when_evidence_is_missing() -> None:
+    audit = audit_workflow_state(
+        {
+            "artifacts": {
+                "source_svg": True,
+                "recognition_ir_v2": True,
+                "constraint_manifest": True,
+                "topology_manifest": True,
+                "standards_manifest": True,
+                "ontology_pack": True,
+            },
+            "gates": {
+                "safe_svg_parse": True,
+                "world_coordinate_ir": True,
+                "source_document_indexes_present": True,
+                "community_shell_confirmed": True,
+                "mutable_zone_confirmed": True,
+                "protected_zone_confirmed": True,
+                "topology_manifest_active": True,
+                "ontology_pack_present": True,
+            },
+        }
+    )
+
+    assert audit["status"] == "review_required"
+    assert audit["blocked_at_stage"] == "opencrab_projection"
+    opencrab_stage = next(stage for stage in audit["stage_results"] if stage["id"] == "opencrab_projection")
+    assert opencrab_stage["failing_hard_gates"] == ["opencrab_evidence_verified", "evidence_backed_topology_prior"]
+    assert "repair hard gate" in opencrab_stage["next_action"]
 
 
 def test_svg_geometry_and_transform_helpers_are_deterministic() -> None:

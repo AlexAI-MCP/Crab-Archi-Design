@@ -30,7 +30,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_request", "opencrab_sync", "topology_build", "recognize_svg_v2", "recognition_audit", "svg_patch_plan", "prompt_edit", "sketch_intent", "scale_attach", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
+    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_request", "opencrab_sync", "topology_build", "recognize_svg_v2", "recognition_audit", "svg_patch_plan", "prompt_edit", "sketch_intent", "scale_attach", "apply_edit", "export_package", "verify_package", "doctor", "release_audit", "workflow_contract"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
     create_job_tool = next(tool for tool in manifest["tools"] if tool["id"] == "create_job")
@@ -51,6 +51,34 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     written = json.loads(out.read_text(encoding="utf-8"))
     assert written["schema"] == "crab-archi-design-mcp-tool-manifest-v1"
     assert '"tool_count"' in result.stdout
+
+
+def test_workflow_contract_cli_outputs_stage_contract_and_state_audit(tmp_path: Path) -> None:
+    result = run_cli("workflow-contract", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    contract = json.loads(result.stdout)
+    assert contract["schema"] == "crab-archi-design-engine-workflow-contract-v1"
+    assert contract["opencrab"]["required"] is True
+    assert contract["production_engine"] == "same-layer-svg-engine"
+    assert contract["stage_order"][-2:] == ["native_svg_mutation", "qa_release"]
+
+    state = tmp_path / "workflow_state.json"
+    state.write_text(
+        json.dumps(
+            {
+                "artifacts": {"source_svg": True},
+                "gates": {"safe_svg_parse": True, "world_coordinate_ir": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "contract.json"
+    result = run_cli("workflow-contract", "--state", str(state), "--output", str(out), cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["state_audit"]["status"] == "review_required"
+    assert written["state_audit"]["blocked_at_stage"] == "recognition_ir"
+    assert "source_document_indexes_present" in written["state_audit"]["stage_results"][0]["failing_hard_gates"]
 
 
 def test_mcp_config_writes_runtime_config(tmp_path: Path) -> None:
