@@ -635,6 +635,55 @@ def build_intent_role_coverage(plan: dict[str, Any], mutated: list[dict[str, Any
     }
 
 
+def candidates_for_role(candidates: list[dict[str, Any]], role: str) -> list[dict[str, Any]]:
+    return [candidate for candidate in candidates if effective_program_role(candidate) == role or candidate.get("connects_to_role") == role]
+
+
+def summarize_candidate_pool_for_role(plan: dict[str, Any], role: str) -> dict[str, Any]:
+    mutable = candidates_for_role(plan.get("same_layer_mutable_candidates", []), role)
+    openings = candidates_for_role(plan.get("same_layer_opening_candidates", []), role)
+    endpoints = candidates_for_role(plan.get("same_layer_endpoint_move_candidates", []), role)
+    return {
+        "mutable_candidate_count": len(mutable),
+        "opening_candidate_count": len(openings),
+        "endpoint_move_candidate_count": len(endpoints),
+        "top_mutable_element_indices": [selected_candidate_index(item) for item in mutable[:5]],
+        "top_opening_element_indices": [selected_candidate_index(item) for item in openings[:5]],
+        "top_endpoint_element_indices": [selected_candidate_index(item) for item in endpoints[:5]],
+    }
+
+
+def repair_action_for_pool(pool: dict[str, Any]) -> str:
+    if pool["opening_candidate_count"] > 0:
+        return "target_opening_candidates_for_missing_role"
+    if pool["endpoint_move_candidate_count"] > 0:
+        return "target_endpoint_moves_for_missing_role"
+    if pool["mutable_candidate_count"] > 0:
+        return "target_partition_rework_for_missing_role"
+    return "improve_recognition_constraints_or_projected_role_for_missing_role"
+
+
+def build_intent_repair_recommendations(plan: dict[str, Any], coverage: dict[str, Any]) -> list[dict[str, Any]]:
+    recommendations: list[dict[str, Any]] = []
+    for role in coverage.get("missing_primary_target_roles") or coverage.get("missing_target_roles") or []:
+        pool = summarize_candidate_pool_for_role(plan, str(role))
+        action = repair_action_for_pool(pool)
+        recommendations.append(
+            {
+                "role": role,
+                "action": action,
+                "candidate_pool": pool,
+                "suggested_edit_intent": {
+                    "target": role,
+                    "action": "repair_missing_intent_role_coverage",
+                    "method": action,
+                },
+                "reason": "The role was requested by intent but was not touched by same-layer CAD edits in this run.",
+            }
+        )
+    return recommendations
+
+
 def apply_same_layer_geometry_patch(
     root: Element,
     plan: dict[str, Any],
@@ -717,12 +766,14 @@ def apply_same_layer_geometry_patch(
     opening_program_cluster_count = sum(1 for item in opening_summary["opening_mutations"] if item.get("program_cluster_id"))
     endpoint_program_cluster_count = sum(1 for item in endpoint_summary["endpoint_move_mutations"] if item.get("program_cluster_id"))
     intent_role_coverage = build_intent_role_coverage(plan, mutated, opening_summary["opening_mutations"], endpoint_summary["endpoint_move_mutations"])
+    intent_repair_recommendations = build_intent_repair_recommendations(plan, intent_role_coverage)
     return {
         "mutation_strategy": "same_layer_geometry_patch",
         "patch_plan_status": plan.get("status"),
         "patch_plan_candidate_count": len(plan.get("same_layer_mutable_candidates", [])),
         "intent_projection": plan.get("intent_projection"),
         "intent_role_coverage": intent_role_coverage,
+        "intent_repair_recommendations": intent_repair_recommendations,
         "edit_capability_summary": capability_summary,
         "edit_capability_totals": capability_totals,
         "edit_capability_review_required_count": capability_totals["review_required_count"],

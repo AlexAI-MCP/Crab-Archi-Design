@@ -110,6 +110,7 @@ def main() -> None:
         "same_layer_openings_applied_or_not_requested": (not args.apply_openings) or summary["same_layer_opening_split_count"] > 0,
         "same_layer_endpoint_moves_applied_or_not_requested": (not args.apply_endpoint_moves) or summary["same_layer_endpoint_move_count"] > 0,
         "intent_target_role_coverage_reported": bool(intent_coverage),
+        "intent_repair_recommendations_reported": "intent_repair_recommendations" in summary,
         "program_cluster_targets_used": summary["program_cluster_mutation_count"] > 0,
         "locked_geometry_unchanged": summary["locked_preservation"]["locked_geometry_unchanged"],
         "locked_targets_not_selected": summary["locked_targets_not_selected"],

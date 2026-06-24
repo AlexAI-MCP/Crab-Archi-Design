@@ -135,6 +135,8 @@ The same-layer engine projects natural-language and doodle intents onto the late
 
 The same report records `intent_role_coverage`: target roles requested by natural language or doodle input, roles actually touched by same-layer wall removals/openings/endpoint moves, covered roles, missing roles, and a coverage ratio. This is not a hard release gate by itself; it is the architect-facing repair signal for the next revision.
 
+When roles are missing, `intent_repair_recommendations` counts remaining mutable/opening/endpoint candidates for each missing role and emits a solver-ready suggested edit intent. This turns a failed or partial design pass into the next bounded revision rather than a vague instruction to try again.
+
 `opencrab-sync` is the MCP bridge. It normalizes `opencrab_query`, `opencrab_search_documents`, or similar OpenCrab MCP JSON results into a project sync artifact and appends the extracted evidence to the evidence manifest.
 
 `constraint-attach` converts doodle strokes into enforceable project constraints such as community shell, no-go zones, lock boundaries, mutable zones, and projectable zones.
