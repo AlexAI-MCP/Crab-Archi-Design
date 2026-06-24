@@ -109,6 +109,84 @@ def opening_candidate_priority(source: dict[str, Any], adjacency: dict[str, Any]
     )
 
 
+def bbox_center(box: dict[str, Any]) -> tuple[float, float]:
+    normalized = normalize_bbox_dict(box)
+    return (normalized["x"] + normalized["width"] * 0.5, normalized["y"] + normalized["height"] * 0.5)
+
+
+def endpoint_move_vector(source: dict[str, Any], adjacency: dict[str, Any] | None) -> tuple[str, float, float]:
+    source_box = normalize_bbox_dict(source.get("bbox"))
+    target_box = normalize_bbox_dict(adjacency.get("target_cluster_bbox") if adjacency else None)
+    source_x, source_y = bbox_center(source_box)
+    target_x, target_y = bbox_center(target_box) if target_box.get("width") or target_box.get("height") else (source_x + source_box["width"], source_y)
+    delta_x = target_x - source_x
+    delta_y = target_y - source_y
+    horizontal = source_box["width"] >= source_box["height"]
+    span = max(source_box["width"] if horizontal else source_box["height"], 1.0)
+    step = round(min(24.0, max(6.0, span * 0.08)), 3)
+    if horizontal:
+        direction = 1.0 if delta_x >= 0 else -1.0
+        return ("end" if direction >= 0 else "start", round(step * direction, 3), 0.0)
+    direction = 1.0 if delta_y >= 0 else -1.0
+    return ("end" if direction >= 0 else "start", 0.0, round(step * direction, 3))
+
+
+def endpoint_move_candidate_priority(source: dict[str, Any], adjacency: dict[str, Any] | None) -> float:
+    source_box = normalize_bbox_dict(source.get("bbox"))
+    line_span = max(source_box["width"], source_box["height"])
+    base = float(source.get("patch_priority") or 0.0) + min(300.0, line_span)
+    if not adjacency:
+        return round(base, 3)
+    return round(base + adjacency_role_weight(source.get("program_role"), adjacency.get("target_role")), 3)
+
+
+def build_endpoint_move_candidates(mutable_candidates: list[dict[str, Any]], topology: dict[str, Any] | None, max_candidates: int) -> list[dict[str, Any]]:
+    endpoint_candidates: list[dict[str, Any]] = []
+    adjacency_by_role = topology_adjacency_targets(topology)
+    line_candidates = [
+        item
+        for item in mutable_candidates
+        if item.get("tag") == "line" and item.get("program_cluster_id") and max(normalize_bbox_dict(item.get("bbox"))["width"], normalize_bbox_dict(item.get("bbox"))["height"]) >= 12.0
+    ]
+    seen_indices: set[Any] = set()
+    for source in line_candidates:
+        element_index = source.get("element_index")
+        if element_index in seen_indices:
+            continue
+        seen_indices.add(element_index)
+        adjacency_options = adjacency_by_role.get(str(source.get("program_role") or ""), [])
+        adjacency = sorted(adjacency_options, key=lambda item: endpoint_move_candidate_priority(source, item), reverse=True)[0] if adjacency_options else None
+        endpoint, dx, dy = endpoint_move_vector(source, adjacency)
+        move_index = len(endpoint_candidates) + 1
+        candidate = {
+            "operation": "move_line_endpoint",
+            "operation_id": f"endpoint_move_{move_index:03d}",
+            "target_element_index": element_index,
+            "tag": source.get("tag"),
+            "bbox": source.get("bbox"),
+            "center": source.get("center"),
+            "program_cluster_id": source.get("program_cluster_id"),
+            "program_role": source.get("program_role"),
+            "space_region_ids": source.get("space_region_ids", []),
+            "connects_to_role": adjacency.get("target_role") if adjacency else None,
+            "connects_to_cluster_id": adjacency.get("target_cluster_id") if adjacency else None,
+            "adjacency_edge_id": adjacency.get("edge_id") if adjacency else None,
+            "adjacency_rationale": adjacency.get("rationale") if adjacency else None,
+            "topology_evidence": adjacency.get("evidence") if adjacency else None,
+            "addressing": "source_svg_element_index",
+            "mutation_policy": "move_existing_line_endpoint_in_same_parent",
+            "endpoint": endpoint,
+            "dx": dx,
+            "dy": dy,
+            "endpoint_move_priority": endpoint_move_candidate_priority(source, adjacency),
+            "reason": "Create a bounded same-layer endpoint move candidate on a recognized mutable program boundary.",
+        }
+        endpoint_candidates.append(candidate)
+        if len(endpoint_candidates) >= max_candidates:
+            break
+    return sorted(endpoint_candidates, key=lambda item: (float(item.get("endpoint_move_priority") or 0.0), int(item.get("target_element_index") or 0)), reverse=True)
+
+
 def build_opening_candidates(mutable_candidates: list[dict[str, Any]], topology: dict[str, Any] | None, max_candidates: int) -> list[dict[str, Any]]:
     opening_candidates: list[dict[str, Any]] = []
     adjacency_by_role = topology_adjacency_targets(topology)

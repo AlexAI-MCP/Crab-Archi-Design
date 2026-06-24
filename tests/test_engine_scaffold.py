@@ -2,7 +2,7 @@ from crab_archi_design.intents import DESIGN_INTENT_SCHEMA, EDIT_INTENT_SCHEMA, 
 from crab_archi_design.qa import gate_status
 from crab_archi_design.recognition import PARSER_VERSION, RECOGNITION_IR_SCHEMA, build_recognition_ir_v2, stable_node_id
 from crab_archi_design.recognition.ir import empty_recognition_ir
-from crab_archi_design.solver import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA, build_opening_candidates
+from crab_archi_design.solver import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA, build_endpoint_move_candidates, build_opening_candidates
 from crab_archi_design.svg import BBox, apply_matrix, bbox_center, identity_matrix, multiply_matrix, point_in_polygon
 from crab_archi_design.svg.geometry import polygon_area, quantize_point
 from crab_archi_design.svg.transform import parse_transform
@@ -84,6 +84,48 @@ def test_solver_patch_plan_uses_topology_adjacency_for_openings() -> None:
     assert openings[0]["adjacency_edge_id"] == "edge_topology_001"
     assert openings[0]["topology_evidence"] == "OpenCrab topology prior"
     assert openings[0]["opening_priority"] > candidates[0]["patch_priority"]
+
+
+def test_solver_patch_plan_builds_endpoint_move_candidates() -> None:
+    candidates = [
+        {
+            "element_index": 12,
+            "tag": "line",
+            "bbox": {"x": 10, "y": 10, "width": 100, "height": 2},
+            "center": [60, 11],
+            "patch_priority": 700.0,
+            "program_cluster_id": "cluster_lounge",
+            "program_role": "greenery_lounge",
+            "space_region_ids": ["space_lounge"],
+        }
+    ]
+    topology = {
+        "nodes": [
+            {"id": "cluster_lounge", "type": "program_cluster", "role": "greenery_lounge", "bbox": {"x": 0, "y": 0, "width": 120, "height": 80}},
+            {"id": "cluster_hall", "type": "program_cluster", "role": "hall_lobby", "bbox": {"x": 160, "y": 0, "width": 80, "height": 80}},
+        ],
+        "edges": [
+            {
+                "id": "edge_topology_002",
+                "type": "ontology_cluster_adjacency_target",
+                "source": "cluster_lounge",
+                "target": "cluster_hall",
+                "left_role": "greenery_lounge",
+                "right_role": "hall_lobby",
+                "rationale": "main hall anchors greenery lounge",
+                "evidence": "OpenCrab topology prior",
+            }
+        ],
+    }
+
+    moves = build_endpoint_move_candidates(candidates, topology, 4)
+
+    assert moves[0]["operation"] == "move_line_endpoint"
+    assert moves[0]["endpoint"] == "end"
+    assert moves[0]["dx"] > 0
+    assert moves[0]["dy"] == 0
+    assert moves[0]["connects_to_role"] == "hall_lobby"
+    assert moves[0]["topology_evidence"] == "OpenCrab topology prior"
 
 
 def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:

@@ -30,7 +30,7 @@ SRC_ROOT = Path(__file__).resolve().parents[1]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from crab_archi_design.solver.patch_plan import build_opening_candidates, patch_role_priority
+from crab_archi_design.solver.patch_plan import build_endpoint_move_candidates, build_opening_candidates, patch_role_priority
 
 
 def now() -> str:
@@ -2293,6 +2293,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
 
     mutable_candidates = sorted(mutable_candidates, key=lambda item: (float(item.get("patch_priority") or 0.0), bbox_area(item.get("bbox") or {})), reverse=True)
     opening_candidates = build_opening_candidates(mutable_candidates, topology, min(max_candidates, 24))
+    endpoint_move_candidates = build_endpoint_move_candidates(mutable_candidates, topology, min(max_candidates, 24))
 
     program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons)
     if not program_anchors:
@@ -2347,7 +2348,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
         "program_anchors": program_anchors[:max_candidates],
         "same_layer_mutable_candidates": mutable_candidates[:max_candidates],
         "same_layer_opening_candidates": opening_candidates[:max_candidates],
-        "same_layer_endpoint_move_candidates": [],
+        "same_layer_endpoint_move_candidates": endpoint_move_candidates[:max_candidates],
         "locked_candidates": locked_candidates[:max_candidates],
         "operation_templates": [
             {
@@ -2379,6 +2380,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
         "metrics": {
             "mutable_candidate_count": len(mutable_candidates),
             "opening_candidate_count": len(opening_candidates),
+            "endpoint_move_candidate_count": len(endpoint_move_candidates),
             "program_cluster_candidate_count": sum(1 for item in mutable_candidates if item.get("program_cluster_id")),
             "program_cluster_count": len(program_clusters),
             "locked_candidate_count": len(locked_candidates),

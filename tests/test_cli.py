@@ -695,6 +695,7 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["gates"]["overlay_generation_disallowed"] is True
     assert plan["metrics"]["mutable_candidate_count"] >= 1
     assert plan["metrics"]["opening_candidate_count"] >= 1
+    assert plan["metrics"]["endpoint_move_candidate_count"] >= 1
     assert plan["metrics"]["program_anchor_count"] >= 3
     assert plan["metrics"]["program_cluster_count"] >= 1
     assert plan["metrics"]["program_cluster_candidate_count"] >= 1
@@ -710,7 +711,11 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["same_layer_opening_candidates"][0]["topology_evidence"] == "OpenCrab topology prior"
     assert plan["same_layer_opening_candidates"][0]["adjacency_edge_id"]
     assert plan["same_layer_opening_candidates"][0]["opening_priority"] > 0
-    assert plan["same_layer_endpoint_move_candidates"] == []
+    assert plan["same_layer_endpoint_move_candidates"]
+    assert plan["same_layer_endpoint_move_candidates"][0]["operation"] == "move_line_endpoint"
+    assert plan["same_layer_endpoint_move_candidates"][0]["mutation_policy"] == "move_existing_line_endpoint_in_same_parent"
+    assert plan["same_layer_endpoint_move_candidates"][0]["endpoint"] in {"start", "end"}
+    assert plan["same_layer_endpoint_move_candidates"][0]["dx"] or plan["same_layer_endpoint_move_candidates"][0]["dy"]
     endpoint_template = next(item for item in plan["operation_templates"] if item["operation"] == "move_or_extend_existing_wall_segment")
     assert endpoint_template["target"] == "same_layer_endpoint_move_candidates"
 
