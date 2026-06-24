@@ -133,6 +133,8 @@ The split is intentionally closer to multiple small engines than one large Pytho
 
 The same-layer engine projects natural-language and doodle intents onto the latest patch plan at execution time. This keeps the workflow robust when `svg-patch-plan` was created before a later `prompt-edit` or revision intent: candidate wall removals, openings, and endpoint moves are re-ranked by intent target roles such as greenery lounge, hall/lobby, fitness/GX, golf, or sauna before native SVG geometry is touched.
 
+The same report records `intent_role_coverage`: target roles requested by natural language or doodle input, roles actually touched by same-layer wall removals/openings/endpoint moves, covered roles, missing roles, and a coverage ratio. This is not a hard release gate by itself; it is the architect-facing repair signal for the next revision.
+
 `opencrab-sync` is the MCP bridge. It normalizes `opencrab_query`, `opencrab_search_documents`, or similar OpenCrab MCP JSON results into a project sync artifact and appends the extracted evidence to the evidence manifest.
 
 `constraint-attach` converts doodle strokes into enforceable project constraints such as community shell, no-go zones, lock boundaries, mutable zones, and projectable zones.

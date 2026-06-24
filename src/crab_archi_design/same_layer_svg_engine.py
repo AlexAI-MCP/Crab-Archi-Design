@@ -91,6 +91,7 @@ def main() -> None:
     output_element_count = sum(1 for _ in output_root.iter())
     capability_summary = summary.get("edit_capability_summary", {})
     capability_totals = summary.get("edit_capability_totals", {})
+    intent_coverage = summary.get("intent_role_coverage") or {}
     gates = {
         "native_svg_only": output_image_count == 0,
         "no_raster_overlay_added": output_image_count == source_image_count,
@@ -108,6 +109,7 @@ def main() -> None:
         "same_layer_internal_partitions_removed": summary["same_layer_removal_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
         "same_layer_openings_applied_or_not_requested": (not args.apply_openings) or summary["same_layer_opening_split_count"] > 0,
         "same_layer_endpoint_moves_applied_or_not_requested": (not args.apply_endpoint_moves) or summary["same_layer_endpoint_move_count"] > 0,
+        "intent_target_role_coverage_reported": bool(intent_coverage),
         "program_cluster_targets_used": summary["program_cluster_mutation_count"] > 0,
         "locked_geometry_unchanged": summary["locked_preservation"]["locked_geometry_unchanged"],
         "locked_targets_not_selected": summary["locked_targets_not_selected"],

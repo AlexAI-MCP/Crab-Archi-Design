@@ -869,6 +869,9 @@ def test_solver_same_layer_geometry_patch_uses_intent_projection_for_selection()
 
     assert summary["intent_projection"]["status"] == "active"
     assert summary["intent_projection"]["boosted_candidate_count"] == 1
+    assert summary["intent_role_coverage"]["covered_target_roles"] == ["greenery_lounge"]
+    assert summary["intent_role_coverage"]["missing_target_roles"] == ["hall_lobby"]
+    assert summary["intent_role_coverage"]["coverage_ratio"] == 0.5
     assert summary["mutations"][0]["element_index"] == 3
     assert "display" not in fitness.attrib
     assert lounge.attrib["display"] == "none"
@@ -1701,6 +1704,8 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     assert report["candidate_quality"]["gate_groups"]["engine_hard"]["crab-archi-design-same-layer-engine-report-v1.locked_geometry_unchanged"] is True
     assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["locked_targets_not_selected"] is True
     assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["same_layer_endpoint_moves_applied_or_not_requested"] is True
+    assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["intent_target_role_coverage_reported"] is True
+    assert report["candidate_quality"]["gate_groups"]["engine_soft"]["crab-archi-design-same-layer-engine-report-v1.intent_target_role_coverage_reported"] is True
     alternative = Path(report["copied_artifacts"]["svg"][0])
     alternative_text = alternative.read_text(encoding="utf-8")
     assert "crab_archi_design_same_layer_engine_candidate" in alternative_text
@@ -1724,6 +1729,9 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     assert engine_report["summary"]["same_layer_mutation_count"] >= 1
     assert engine_report["summary"]["same_layer_geometry_mutation_count"] >= 1
     assert engine_report["summary"]["same_layer_removal_count"] >= 1
+    assert engine_report["summary"]["intent_role_coverage"]["status"] == "active"
+    assert "covered_target_roles" in engine_report["summary"]["intent_role_coverage"]
+    assert "missing_target_roles" in engine_report["summary"]["intent_role_coverage"]
     gates = engine_report["quality"]["gates"]
     assert gates["new_overlay_elements_added"] is True
     assert gates["edit_capability_summary_present"] is True
@@ -1732,6 +1740,7 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     assert gates["existing_geometry_mutated"] is True
     assert gates["same_layer_internal_partitions_removed"] is True
     assert gates["program_cluster_targets_used"] is True
+    assert gates["intent_target_role_coverage_reported"] is True
 
     result = run_cli(
         "--project-root",

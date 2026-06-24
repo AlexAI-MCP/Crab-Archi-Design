@@ -146,6 +146,33 @@ def intent_target_roles(intents: list[dict[str, Any]] | None) -> set[str]:
     return roles
 
 
+def role_from_intent_fragment(fragment: Any) -> str | None:
+    role_aliases = {
+        "greenery_lounge": "greenery_lounge",
+        "fitness_gx": "fitness_gx",
+        "golf_screen": "golf_screen",
+        "sauna_locker_shower": "sauna_locker_shower",
+        "hall_lobby": "hall_lobby",
+        "management_support": "management_support",
+        "main_hall": "hall_lobby",
+        "hall": "hall_lobby",
+        "lobby": "hall_lobby",
+    }
+    text = str(fragment or "")
+    return role_aliases.get(text) or classify_program_role(text)
+
+
+def intent_primary_target_roles(intents: list[dict[str, Any]] | None) -> set[str]:
+    roles: set[str] = set()
+    for intent in intents or []:
+        for operation in intent.get("operations", []):
+            for key in ["target", "target_hint"]:
+                role = role_from_intent_fragment(operation.get(key))
+                if role:
+                    roles.add(role)
+    return roles or intent_target_roles(intents)
+
+
 def intent_requests_opening(intents: list[dict[str, Any]] | None) -> bool:
     text = " ".join(intent_text_fragments(intents)).lower()
     return any(term in text for term in ["open", "opening", "connect", "connection", "개방", "열", "연결", "출입", "동선"])
@@ -239,6 +266,7 @@ def project_intents_onto_patch_plan(plan: dict[str, Any], intents: list[dict[str
     plan["intent_projection"] = {
         "status": "active" if target_roles else "no_target_roles",
         "target_roles": target_roles,
+        "primary_target_roles": sorted(intent_primary_target_roles(intents)),
         "opening_requested": intent_requests_opening(intents),
         "partition_rework_requested": intent_requests_partition_rework(intents),
         "boosted_candidate_count": boosted_count,

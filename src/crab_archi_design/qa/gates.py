@@ -52,6 +52,7 @@ SOFT_ENGINE_GATES = {
     "same_layer_endpoint_moves_applied_or_not_requested",
     "edit_capability_summary_present",
     "edit_capability_review_counts_reported",
+    "intent_target_role_coverage_reported",
     "layout_layer_added",
     "plan_detail_layer_added",
     "standards_available",

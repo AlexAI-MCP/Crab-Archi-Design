@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from xml.etree.ElementTree import Element
 
-from crab_archi_design.solver.patch_plan import project_intents_onto_patch_plan
+from crab_archi_design.solver.patch_plan import effective_program_role, project_intents_onto_patch_plan
 from crab_archi_design.solver.svg_edit_ops import (
     collapse_linear_element_to_zero_length,
     count_images,
@@ -556,6 +556,7 @@ def remove_mutable_partition_element(element: Element) -> dict[str, Any]:
 
 
 def patch_existing_element(element: Element, candidate: dict[str, Any], mutation_index: int) -> dict[str, Any]:
+    role = effective_program_role(candidate)
     element.set("data-crab-same-layer-mutation", "same_layer_geometry_patch")
     element.set("data-crab-mutation-index", str(mutation_index))
     element.set("data-crab-source-element-index", str(candidate.get("element_index")))
@@ -563,8 +564,10 @@ def patch_existing_element(element: Element, candidate: dict[str, Any], mutation
     element.set("data-crab-mutation-policy", str(candidate.get("mutation_policy") or "modify_or_remove_existing_element_only"))
     if candidate.get("program_cluster_id"):
         element.set("data-crab-program-cluster", str(candidate["program_cluster_id"]))
-    if candidate.get("program_role"):
-        element.set("data-crab-program-role", str(candidate["program_role"]))
+    if role:
+        element.set("data-crab-program-role", role)
+    if candidate.get("solver_projected_role"):
+        element.set("data-crab-solver-projected-role", str(candidate["solver_projected_role"]))
 
     tag = local_tag(element)
     if tag in {"line", "polyline", "path"}:
@@ -587,10 +590,48 @@ def patch_existing_element(element: Element, candidate: dict[str, Any], mutation
         "tag": tag,
         "id": element.attrib.get("id"),
         "program_cluster_id": candidate.get("program_cluster_id"),
-        "program_role": candidate.get("program_role"),
+        "program_role": role or candidate.get("program_role"),
+        "source_program_role": candidate.get("program_role"),
+        "solver_projected_role": candidate.get("solver_projected_role"),
         "action": mutation["action"],
         "geometry_mutated": mutation["geometry_mutated"],
         "same_layer_removed": mutation["same_layer_removed"],
+    }
+
+
+def role_set(items: list[dict[str, Any]], keys: list[str]) -> set[str]:
+    roles: set[str] = set()
+    for item in items:
+        for key in keys:
+            role = str(item.get(key) or "")
+            if role:
+                roles.add(role)
+    return roles
+
+
+def build_intent_role_coverage(plan: dict[str, Any], mutated: list[dict[str, Any]], opening_mutations: list[dict[str, Any]], endpoint_mutations: list[dict[str, Any]]) -> dict[str, Any]:
+    projection = plan.get("intent_projection") or {}
+    target_roles = set(projection.get("target_roles") or [])
+    primary_target_roles = set(projection.get("primary_target_roles") or target_roles)
+    primary_touched = role_set(mutated, ["program_role", "solver_projected_role"]) | role_set(opening_mutations, ["program_role", "solver_projected_role"]) | role_set(endpoint_mutations, ["program_role", "solver_projected_role"])
+    connected_touched = role_set(opening_mutations, ["connects_to_role"]) | role_set(endpoint_mutations, ["connects_to_role"])
+    touched = primary_touched | connected_touched
+    covered = target_roles & touched
+    primary_covered = primary_target_roles & touched
+    status = "active" if projection.get("status") == "active" and target_roles else "no_intent_targets"
+    coverage_ratio = round(len(covered) / len(target_roles), 3) if target_roles else None
+    return {
+        "status": status,
+        "target_roles": sorted(target_roles),
+        "primary_target_roles": sorted(primary_target_roles),
+        "touched_roles": sorted(touched),
+        "primary_touched_roles": sorted(primary_touched),
+        "connected_touched_roles": sorted(connected_touched),
+        "covered_target_roles": sorted(covered),
+        "missing_target_roles": sorted(target_roles - covered),
+        "covered_primary_target_roles": sorted(primary_covered),
+        "missing_primary_target_roles": sorted(primary_target_roles - primary_covered),
+        "coverage_ratio": coverage_ratio,
     }
 
 
@@ -675,11 +716,13 @@ def apply_same_layer_geometry_patch(
     removal_geometry_mutation_count = sum(1 for item in mutated if item.get("geometry_mutated"))
     opening_program_cluster_count = sum(1 for item in opening_summary["opening_mutations"] if item.get("program_cluster_id"))
     endpoint_program_cluster_count = sum(1 for item in endpoint_summary["endpoint_move_mutations"] if item.get("program_cluster_id"))
+    intent_role_coverage = build_intent_role_coverage(plan, mutated, opening_summary["opening_mutations"], endpoint_summary["endpoint_move_mutations"])
     return {
         "mutation_strategy": "same_layer_geometry_patch",
         "patch_plan_status": plan.get("status"),
         "patch_plan_candidate_count": len(plan.get("same_layer_mutable_candidates", [])),
         "intent_projection": plan.get("intent_projection"),
+        "intent_role_coverage": intent_role_coverage,
         "edit_capability_summary": capability_summary,
         "edit_capability_totals": capability_totals,
         "edit_capability_review_required_count": capability_totals["review_required_count"],

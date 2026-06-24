@@ -529,6 +529,7 @@ def test_solver_patch_plan_projects_edit_intent_into_candidate_priority() -> Non
 
     assert projected["intent_projection"]["status"] == "active"
     assert projected["intent_projection"]["target_roles"] == ["greenery_lounge", "hall_lobby"]
+    assert projected["intent_projection"]["primary_target_roles"] == ["greenery_lounge"]
     assert projected["same_layer_mutable_candidates"][0]["program_role"] == "greenery_lounge"
     assert projected["same_layer_mutable_candidates"][0]["intent_priority_boost"] > 0
     greenery_opening = next(item for item in projected["same_layer_opening_candidates"] if item["program_role"] == "greenery_lounge")
