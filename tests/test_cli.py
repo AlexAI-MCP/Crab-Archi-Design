@@ -763,7 +763,7 @@ def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
     assert partition.attrib["data-crab-program-role"] == "greenery_lounge"
 
 
-def test_solver_same_layer_geometry_patch_reports_locked_mutation_violation() -> None:
+def test_solver_same_layer_geometry_patch_skips_locked_mutation_target() -> None:
     root = ET.fromstring(
         """
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 80">
@@ -795,10 +795,14 @@ def test_solver_same_layer_geometry_patch_reports_locked_mutation_violation() ->
 
     summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4)
 
-    assert summary["same_layer_removal_count"] == 1
-    assert summary["locked_preservation"]["locked_geometry_unchanged"] is False
-    assert summary["locked_preservation"]["locked_mutated_count"] == 1
-    assert summary["locked_preservation"]["locked_mutations"][0]["element_index"] == 2
+    protected_wall = next(element for element in root.iter() if element.attrib.get("id") == "protected-wall")
+    assert summary["same_layer_removal_count"] == 0
+    assert summary["locked_preservation"]["locked_geometry_unchanged"] is True
+    assert summary["locked_target_skip_count"] == 1
+    assert summary["locked_targets_not_selected"] is False
+    assert summary["locked_target_skips"][0]["element_index"] == 2
+    assert protected_wall.attrib["x2"] == "80"
+    assert "display" not in protected_wall.attrib
 
 
 def test_solver_split_line_for_opening_creates_same_layer_segments() -> None:
@@ -828,6 +832,50 @@ def test_solver_split_line_for_opening_creates_same_layer_segments() -> None:
     assert after.attrib["data-crab-derived-from"] == "wall"
     assert after.attrib["data-crab-opening-segment"] == "after"
     assert all(element.attrib["data-crab-action"] == "split_line_for_opening" for element in lines)
+
+
+def test_solver_same_layer_opening_skips_locked_target() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40">
+          <line id="protected-wall" x1="10" y1="20" x2="110" y2="20" stroke="#111" stroke-width="4"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_opening_candidates": [
+            {
+                "operation": "split_line_for_opening",
+                "operation_id": "opening_001",
+                "target_element_index": 2,
+                "tag": "line",
+                "mutation_policy": "split_existing_line_in_same_parent",
+                "opening_start_ratio": 0.4,
+                "opening_end_ratio": 0.6,
+            }
+        ],
+        "locked_candidates": [
+            {
+                "element_index": 2,
+                "tag": "line",
+                "role_hint": "wall_candidate",
+                "reason": "inside protected no-go/lock/protect polygon",
+            }
+        ],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_openings=True, max_openings=4)
+    lines = [element for element in root.iter() if element.tag.endswith("line")]
+
+    assert len(lines) == 1
+    assert lines[0].attrib["x2"] == "110"
+    assert summary["same_layer_opening_split_count"] == 0
+    assert summary["locked_target_skip_count"] == 1
+    assert summary["locked_targets_not_selected"] is False
+    assert summary["opening_skips"][0]["operation"] == "split_line_for_opening"
+    assert summary["locked_preservation"]["locked_geometry_unchanged"] is True
 
 
 def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -> None:
@@ -893,6 +941,7 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     assert report["checks"]["engine_report_status_pass"] is True
     assert report["checks"]["engine_quality_gates_pass"] is True
     assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["locked_geometry_unchanged"] is True
+    assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["locked_targets_not_selected"] is True
     alternative = Path(report["copied_artifacts"]["svg"][0])
     alternative_text = alternative.read_text(encoding="utf-8")
     assert "crab_archi_design_same_layer_engine_candidate" in alternative_text

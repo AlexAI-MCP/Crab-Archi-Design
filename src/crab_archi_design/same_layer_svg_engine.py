@@ -90,6 +90,7 @@ def main() -> None:
         "same_layer_openings_applied_or_not_requested": (not args.apply_openings) or summary["same_layer_opening_split_count"] > 0,
         "program_cluster_targets_used": summary["program_cluster_mutation_count"] > 0,
         "locked_geometry_unchanged": summary["locked_preservation"]["locked_geometry_unchanged"],
+        "locked_targets_not_selected": summary["locked_targets_not_selected"],
         "new_overlay_elements_added": output_element_count == source_element_count + summary["same_layer_segment_added_count"],
         "mutation_strategy_same_layer": summary["mutation_strategy"] == "same_layer_geometry_patch",
     }

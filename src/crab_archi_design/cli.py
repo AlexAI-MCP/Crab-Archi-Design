@@ -5761,7 +5761,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "required_args": ["--project-id"],
             "optional_args": ["--intent", "--engine-adapter", "--engine-cwd", "--engine-arg", "--candidate-svg", "--candidate-report", "--preview", "--skip-preview", "--timeout"],
             "outputs": ["runs/apply_edit_###/apply_edit_report.json", "alternatives/alternative_###.svg"],
-            "gates": ["native_svg_no_images", "latest_apply_pass", "latest_alternative_native_svg", "locked_geometry_unchanged"],
+            "gates": ["native_svg_no_images", "latest_apply_pass", "latest_alternative_native_svg", "locked_geometry_unchanged", "locked_targets_not_selected"],
         },
         {
             "id": "review_panel",

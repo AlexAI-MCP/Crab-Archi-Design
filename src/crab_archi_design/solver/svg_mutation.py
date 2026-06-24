@@ -82,7 +82,30 @@ def candidate_sort_key(candidate: dict[str, Any]) -> tuple[float, float, int]:
     return (float(candidate.get("patch_priority") or 0.0), area, int(candidate.get("element_index") or 0))
 
 
-def select_candidates(plan: dict[str, Any], max_mutations: int) -> list[dict[str, Any]]:
+def locked_candidate_indices(plan: dict[str, Any]) -> set[int]:
+    indices: set[int] = set()
+    for candidate in plan.get("locked_candidates", []):
+        element_index = selected_candidate_index(candidate)
+        if element_index is not None:
+            indices.add(element_index)
+    return indices
+
+
+def locked_target_skip(candidate: dict[str, Any], element_index: int | None, operation: str) -> dict[str, Any]:
+    return {
+        "operation": operation,
+        "element_index": element_index,
+        "target_element_index": element_index,
+        "tag": candidate.get("tag"),
+        "role_hint": candidate.get("role_hint"),
+        "program_cluster_id": candidate.get("program_cluster_id"),
+        "program_role": candidate.get("program_role"),
+        "reason": "target element is locked/protected by patch plan",
+    }
+
+
+def select_candidates(plan: dict[str, Any], max_mutations: int, locked_indices: set[int] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    locked_indices = locked_indices or set()
     candidates = [
         candidate
         for candidate in plan.get("same_layer_mutable_candidates", [])
@@ -92,8 +115,18 @@ def select_candidates(plan: dict[str, Any], max_mutations: int) -> list[dict[str
 
     wall_candidates = [candidate for candidate in candidates if candidate.get("role_hint") == "wall_candidate"]
     clustered = [candidate for candidate in wall_candidates if candidate.get("program_cluster_id")]
-    selected = clustered or wall_candidates or candidates
-    return selected[:max_mutations]
+    selected_pool = clustered or wall_candidates or candidates
+    selected: list[dict[str, Any]] = []
+    locked_skips: list[dict[str, Any]] = []
+    for candidate in selected_pool:
+        element_index = selected_candidate_index(candidate)
+        if element_index in locked_indices:
+            locked_skips.append(locked_target_skip(candidate, element_index, "remove_or_patch_existing_element"))
+            continue
+        selected.append(candidate)
+        if len(selected) >= max_mutations:
+            break
+    return selected, locked_skips
 
 
 def selected_candidate_index(candidate: dict[str, Any]) -> int | None:
@@ -266,15 +299,24 @@ def opening_sort_key(candidate: dict[str, Any]) -> tuple[float, int]:
     return (float(candidate.get("opening_priority", candidate.get("patch_priority") or 0.0)), int(candidate.get("target_element_index") or 0))
 
 
-def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: int) -> dict[str, Any]:
+def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: int, locked_indices: set[int] | None = None) -> dict[str, Any]:
+    locked_indices = locked_indices or set()
     element_map = existing_elements_by_document_index(root)
     parent_map = parents_by_document_index(root)
-    candidates = sorted(plan.get("same_layer_opening_candidates", []), key=opening_sort_key, reverse=True)[:max_openings]
+    candidates = sorted(plan.get("same_layer_opening_candidates", []), key=opening_sort_key, reverse=True)
     applied: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    locked_skips: list[dict[str, Any]] = []
     opened_indices: set[int] = set()
     for candidate in candidates:
+        if len(applied) >= max_openings:
+            break
         element_index = selected_candidate_index(candidate)
+        if element_index in locked_indices:
+            skip = locked_target_skip(candidate, element_index, "split_line_for_opening")
+            skipped.append(skip)
+            locked_skips.append(skip)
+            continue
         element = element_map.get(element_index or -1)
         parent = parent_map.get(element_index or -1)
         if element_index is None or element is None or parent is None:
@@ -308,6 +350,7 @@ def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: 
         "opened_element_indices": sorted(opened_indices),
         "opening_mutations": applied,
         "opening_skips": skipped,
+        "locked_target_skips": locked_skips,
     }
 
 
@@ -388,17 +431,20 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
     root.set("data-crab-overlay-elements-added", "0")
 
     element_map = existing_elements_by_document_index(root)
+    locked_indices = locked_candidate_indices(plan)
     locked_before = capture_locked_element_states(root, plan)
-    opening_summary = apply_opening_candidates(root, plan, max_openings) if apply_openings else {
+    opening_summary = apply_opening_candidates(root, plan, max_openings, locked_indices=locked_indices) if apply_openings else {
         "opening_candidate_count": len(plan.get("same_layer_opening_candidates", [])),
         "same_layer_opening_split_count": 0,
         "same_layer_segment_added_count": 0,
         "opened_element_indices": [],
         "opening_mutations": [],
         "opening_skips": [],
+        "locked_target_skips": [],
     }
     opened_indices = set(opening_summary["opened_element_indices"])
-    selected = [candidate for candidate in select_candidates(plan, max_mutations) if selected_candidate_index(candidate) not in opened_indices]
+    selected, mutable_locked_skips = select_candidates(plan, max_mutations, locked_indices=locked_indices)
+    selected = [candidate for candidate in selected if selected_candidate_index(candidate) not in opened_indices]
     mutated: list[dict[str, Any]] = []
     missing: list[int] = []
     for candidate in selected:
@@ -410,6 +456,7 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
         mutated.append(patch_existing_element(element, candidate, len(mutated) + 1))
 
     locked_report = locked_preservation_report(locked_before)
+    locked_target_skips = [*opening_summary["locked_target_skips"], *mutable_locked_skips]
     removal_geometry_mutation_count = sum(1 for item in mutated if item.get("geometry_mutated"))
     opening_program_cluster_count = sum(1 for item in opening_summary["opening_mutations"] if item.get("program_cluster_id"))
     return {
@@ -428,4 +475,7 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
         "opening_mutations": opening_summary["opening_mutations"],
         "opening_skips": opening_summary["opening_skips"],
         "locked_preservation": locked_report,
+        "locked_target_skip_count": len(locked_target_skips),
+        "locked_target_skips": locked_target_skips,
+        "locked_targets_not_selected": not locked_target_skips,
     }
