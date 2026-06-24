@@ -848,6 +848,9 @@ def test_solver_same_layer_geometry_patch_skips_curved_path_partition_remove() -
     assert summary["same_layer_removal_count"] == 0
     assert summary["same_layer_geometry_mutation_count"] == 0
     assert summary["edit_capability_summary"]["partition_remove"]["review_required_count"] == 1
+    assert summary["edit_capability_totals"]["review_required_count"] == 1
+    assert summary["edit_capability_review_required_count"] == 1
+    assert summary["edit_capability_manual_review_count"] == 1
     assert skip["review_required"] is True
     assert skip["reason"] == "unsupported path commands for CAD-like edit: C"
     assert path.attrib["d"] == "M 10 40 C 30 20 60 60 90 40"
@@ -1145,6 +1148,9 @@ def test_solver_same_layer_opening_skips_curved_path() -> None:
     capability = summary["edit_capability_summary"]["opening_split"]
     assert capability["supported_count"] == 0
     assert capability["review_required_count"] == 1
+    assert summary["edit_capability_totals"]["review_required_count"] == 1
+    assert summary["edit_capability_review_required_count"] == 1
+    assert summary["edit_capability_manual_review_count"] == 1
     assert "C" in capability["review_required_examples"][0]["reason"]
     assert "data-crab-action" not in paths[0].attrib
 
@@ -1350,6 +1356,8 @@ def test_solver_same_layer_endpoint_move_skips_curved_path() -> None:
     assert summary["same_layer_endpoint_move_count"] == 0
     assert summary["endpoint_move_skips"][0]["review_required"] is True
     assert summary["endpoint_move_skips"][0]["reason"] == "unsupported path commands for CAD-like edit: C"
+    assert summary["edit_capability_totals"]["review_required_count"] == 1
+    assert summary["edit_capability_review_required_count"] == 1
     assert wall.attrib["d"] == "M 10 20 C 40 10 80 30 110 20"
     assert "data-crab-action" not in wall.attrib
 
@@ -1433,6 +1441,9 @@ def test_solver_endpoint_move_skips_noninvertible_transform_before_mutation() ->
 
     assert summary["same_layer_endpoint_move_count"] == 0
     assert summary["edit_capability_summary"]["endpoint_move"]["review_required_count"] == 1
+    assert summary["edit_capability_totals"]["review_required_count"] == 1
+    assert summary["edit_capability_review_required_count"] == 1
+    assert summary["edit_capability_manual_review_count"] == 1
     assert skip["review_required"] is True
     assert skip["reason"] == "requires invertible accumulated transform"
     assert wall.attrib["x2"] == "50"
@@ -1608,6 +1619,8 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     assert engine_report["summary"]["same_layer_removal_count"] >= 1
     gates = engine_report["quality"]["gates"]
     assert gates["new_overlay_elements_added"] is True
+    assert gates["edit_capability_summary_present"] is True
+    assert gates["edit_capability_review_counts_reported"] is True
     assert gates["existing_elements_mutated"] is True
     assert gates["existing_geometry_mutated"] is True
     assert gates["same_layer_internal_partitions_removed"] is True

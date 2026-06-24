@@ -319,6 +319,26 @@ def edit_capability_summary(
     }
 
 
+def edit_capability_totals(capability_summary: dict[str, Any]) -> dict[str, int]:
+    totals = {
+        "operation_count": 0,
+        "candidate_count": 0,
+        "supported_count": 0,
+        "review_required_count": 0,
+        "locked_count": 0,
+        "missing_count": 0,
+        "manual_review_count": 0,
+    }
+    for item in capability_summary.values():
+        if not isinstance(item, dict):
+            continue
+        totals["operation_count"] += 1
+        for key in ["candidate_count", "supported_count", "review_required_count", "locked_count", "missing_count"]:
+            totals[key] += int(item.get(key) or 0)
+    totals["manual_review_count"] = totals["review_required_count"] + totals["locked_count"] + totals["missing_count"]
+    return totals
+
+
 def review_required_skip(
     candidate: dict[str, Any],
     element_index: int | None,
@@ -593,6 +613,7 @@ def apply_same_layer_geometry_patch(
     locked_indices = locked_candidate_indices(plan)
     locked_before = capture_locked_element_states(root, plan)
     capability_summary = edit_capability_summary(plan, element_map, parent_map, transform_map, locked_indices)
+    capability_totals = edit_capability_totals(capability_summary)
     opening_summary = apply_opening_candidates(
         root,
         plan,
@@ -656,6 +677,9 @@ def apply_same_layer_geometry_patch(
         "patch_plan_status": plan.get("status"),
         "patch_plan_candidate_count": len(plan.get("same_layer_mutable_candidates", [])),
         "edit_capability_summary": capability_summary,
+        "edit_capability_totals": capability_totals,
+        "edit_capability_review_required_count": capability_totals["review_required_count"],
+        "edit_capability_manual_review_count": capability_totals["manual_review_count"],
         "selected_candidate_count": len(selected),
         "same_layer_mutation_count": len(mutated),
         "same_layer_removal_count": sum(1 for item in mutated if item.get("same_layer_removed")),

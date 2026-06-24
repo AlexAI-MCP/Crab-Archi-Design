@@ -88,11 +88,19 @@ def main() -> None:
     output_root = ET.parse(output_svg).getroot()
     output_image_count = count_images(output_root)
     output_element_count = sum(1 for _ in output_root.iter())
+    capability_summary = summary.get("edit_capability_summary", {})
+    capability_totals = summary.get("edit_capability_totals", {})
     gates = {
         "native_svg_only": output_image_count == 0,
         "no_raster_overlay_added": output_image_count == source_image_count,
         "same_layer_patch_plan_available": True,
         "patch_plan_pass": patch_plan.get("status") == "pass",
+        "edit_capability_summary_present": bool(capability_summary),
+        "edit_capability_review_counts_reported": (
+            isinstance(capability_totals, dict)
+            and "review_required_count" in capability_totals
+            and summary.get("edit_capability_review_required_count") == capability_totals.get("review_required_count")
+        ),
         "source_element_addresses_used": summary["selected_candidate_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
         "existing_elements_mutated": summary["same_layer_mutation_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
         "existing_geometry_mutated": summary["same_layer_geometry_mutation_count"] > 0,
