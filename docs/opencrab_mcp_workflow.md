@@ -10,7 +10,7 @@ OpenCrab MCP is the required knowledge path for Crab Archi Design.
 
 The full flow can be run manually step by step, through `workflow-run`, or through `run-job` once the source SVG, standards, OpenCrab MCP result JSON, constraints, and prompt are available.
 
-1. Load the original SVG and build recognition IR.
+1. Load the original SVG and build Recognition IR v2 with source document indexes for every recognized primitive.
 2. Attach a source recognition manifest with primitive counts, labels, and program role hints.
 3. Classify protected geometry: parking, parking count, columns, cores, ramps, stairs, egress, wet cores, machine rooms, and outer shell.
 4. Classify mutable community zones: rooms, partitions, openings, program labels, secondary circulation, and finish intent.
@@ -65,7 +65,7 @@ Then it appends normalized `opencrab_query` or `opencrab_search_documents` evide
 
 `workflow-run` can call `opencrab-sync` as part of the full sequence when `--opencrab-result-file` or `--opencrab-result-json` is supplied. The workflow report records whether each required gate passed, failed, or was skipped.
 
-`topology-build` runs after recognition, standards, evidence, and constraints are available. It writes:
+`topology-build` runs after recognition, standards, evidence, and constraints are available. Recognition should include IR v2 source document indexes so later same-layer mutation candidates can point back to original SVG element addresses. It writes:
 
 ```text
 projects/<project>/topology/topology_manifest.json

@@ -2162,6 +2162,7 @@ def recognition_audit_blocking_issues(gates: dict[str, bool]) -> list[str]:
     messages = {
         "source_svg_parse_ok": "Source SVG must parse before architectural recognition.",
         "recognition_manifest_active": "Run recognize-svg and verify that the recognition manifest is active.",
+        "source_document_indexes_present": "Run recognize-svg-v2 and verify source SVG element document indexes are present for CAD-like same-layer mutation.",
         "program_labels_detected": "No community program labels were detected.",
         "program_labels_positioned": "Program labels need usable SVG coordinates, including transform-derived coordinates.",
         "wall_candidates_detected": "Wall candidates were not detected strongly enough for plan topology.",
@@ -2185,6 +2186,8 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
     constraints = load_constraint_manifest(project_id, root)
     use_ir_v2 = recognition_ir_v2_status(recognition_ir) == "active"
     geometry_summary = (recognition_ir or {}).get("summary", {}) if use_ir_v2 else (recognition or {}).get("geometry_summary", {})
+    source_document_index_missing_count = int((recognition_ir or {}).get("summary", {}).get("source_document_index_missing_count", 0) or 0)
+    source_document_indexed_count = int((recognition_ir or {}).get("summary", {}).get("source_document_indexed_count", 0) or 0)
     program_labels = recognition_ir_v2_program_labels(recognition_ir) if use_ir_v2 else (recognition or {}).get("program_label_candidates", [])
     positioned_program_labels = [label for label in program_labels if label_point(label) is not None]
     roles = constraint_roles(constraints)
@@ -2195,6 +2198,7 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
     gates = {
         "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
         "recognition_manifest_active": recognition_input_active,
+        "source_document_indexes_present": use_ir_v2 and source_document_indexed_count > 0 and source_document_index_missing_count == 0,
         "program_labels_detected": len(program_labels) > 0,
         "program_labels_positioned": len(program_labels) > 0 and len(positioned_program_labels) == len(program_labels),
         "wall_candidates_detected": int(geometry_summary.get("wall_candidate_count", 0) or 0) > 0,
@@ -2210,6 +2214,7 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
     hard_gates = gates
     next_actions = [
         "Fix SVG recognition before running layout generation." if not gates["recognition_manifest_active"] else None,
+        "Run recognize-svg-v2 so same-layer mutation can address original SVG elements by document index." if not gates["source_document_indexes_present"] else None,
         "Add or correct a community shell constraint from actual community outer walls." if not gates["community_shell_confirmed"] else None,
         "Add a tight mutable zone only inside the existing community boundary." if not gates["mutable_zone_confirmed"] else None,
         "Add no-go/lock constraints for parking, cores, ramps, and structural zones." if not gates["protected_zone_confirmed"] else None,
@@ -2235,6 +2240,10 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
             "room_envelope_candidate_count": int(geometry_summary.get("room_envelope_candidate_count", 0) or 0),
             "recognition_source": "recognition_ir_v2" if use_ir_v2 else "recognition_manifest",
             "recognition_ir_v2_active": use_ir_v2,
+            "source_document_indexed_count": source_document_indexed_count,
+            "source_document_index_missing_count": source_document_index_missing_count,
+            "editable_source_count": int((recognition_ir or {}).get("summary", {}).get("editable_source_count", 0) or 0),
+            "use_instance_count": int((recognition_ir or {}).get("summary", {}).get("use_instance_count", 0) or 0),
             "constraint_roles": sorted(roles),
             "topology_node_count": (topology or {}).get("node_count", 0),
             "topology_edge_count": (topology or {}).get("edge_count", 0),
@@ -4238,7 +4247,12 @@ def command_workflow_run(args: argparse.Namespace) -> None:
             "recognize-svg",
             command_recognize_svg,
             argparse.Namespace(project_root=str(root), project_id=project_id, source_svg=None, max_labels=args.max_labels),
-        )
+        ),
+        (
+            "recognize-svg-v2",
+            command_recognize_svg_v2,
+            argparse.Namespace(project_root=str(root), project_id=project_id, source_svg=None),
+        ),
     ]
     for name, func, namespace in required_sequence:
         if not add_step(name, func, namespace):
@@ -4470,8 +4484,21 @@ def command_revision_run(args: argparse.Namespace) -> None:
             command_recognize_svg,
             argparse.Namespace(project_root=str(root), project_id=project_id, source_svg=None, max_labels=args.max_labels),
         )
+        add_step(
+            "recognize-svg-v2",
+            command_recognize_svg_v2,
+            argparse.Namespace(project_root=str(root), project_id=project_id, source_svg=None),
+        )
     else:
         add_skipped("recognize-svg", "Existing active recognition manifest found.")
+        if recognition_ir_v2_status(load_recognition_ir_v2(project_id, root)) == "active":
+            add_skipped("recognize-svg-v2", "Existing active Recognition IR v2 found.")
+        else:
+            add_step(
+                "recognize-svg-v2",
+                command_recognize_svg_v2,
+                argparse.Namespace(project_root=str(root), project_id=project_id, source_svg=None),
+            )
 
     if args.constraint_sketch:
         add_step(
@@ -6115,8 +6142,8 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "saas_job_runner": ["create_job", "validate_job", "run_job"],
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"],
             "revision_loop": ["revision_run", "export_package", "verify_package", "doctor", "release_audit"],
-            "manual_revision_loop": ["topology_build", "recognition_audit", "scale_attach", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
-            "opencrab_first_manual_loop": ["opencrab_request", "opencrab_sync", "constraint_attach", "topology_build", "recognition_audit", "scale_attach", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
+            "manual_revision_loop": ["recognize_svg_v2", "topology_build", "recognition_audit", "scale_attach", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
+            "opencrab_first_manual_loop": ["recognize_svg_v2", "opencrab_request", "opencrab_sync", "constraint_attach", "topology_build", "recognition_audit", "scale_attach", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
             "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
         "security": {

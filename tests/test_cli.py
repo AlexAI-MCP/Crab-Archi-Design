@@ -38,8 +38,8 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert any("job.md" in output or "_job.md" in output for output in create_job_tool["outputs"])
     assert manifest["recommended_sequences"]["saas_job_runner"] == ["create_job", "validate_job", "run_job"]
     assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"]
-    assert manifest["recommended_sequences"]["opencrab_first_manual_loop"][0] == "opencrab_request"
-    assert manifest["recommended_sequences"]["manual_revision_loop"][:4] == ["topology_build", "recognition_audit", "scale_attach", "svg_patch_plan"]
+    assert manifest["recommended_sequences"]["opencrab_first_manual_loop"][0] == "recognize_svg_v2"
+    assert manifest["recommended_sequences"]["manual_revision_loop"][:4] == ["recognize_svg_v2", "topology_build", "recognition_audit", "scale_attach"]
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
     assert "same-layer-svg-engine" in manifest["security"]["engine_adapter_allowlist"]
@@ -697,6 +697,7 @@ def test_recognition_audit_gates_svg_mutation_readiness(tmp_path: Path) -> None:
     for args in [
         ("init", "--project-id", "audit-demo", "--source-svg", str(source_svg), "--ontology-pack", "community_svg_topology_ontology_v2"),
         ("recognize-svg", "--project-id", "audit-demo"),
+        ("recognize-svg-v2", "--project-id", "audit-demo"),
         ("constraint-attach", "--project-id", "audit-demo", "--sketch", str(constraint)),
         ("topology-build", "--project-id", "audit-demo"),
     ]:
@@ -711,6 +712,9 @@ def test_recognition_audit_gates_svg_mutation_readiness(tmp_path: Path) -> None:
     assert all(audit["gates"].values())
     assert audit["metrics"]["positioned_program_label_count"] == 3
     assert audit["metrics"]["column_candidate_count"] >= 1
+    assert audit["gates"]["source_document_indexes_present"] is True
+    assert audit["metrics"]["recognition_ir_v2_active"] is True
+    assert audit["metrics"]["source_document_index_missing_count"] == 0
 
 
 def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> None:
@@ -2371,6 +2375,7 @@ def test_workflow_run_executes_full_reference_pipeline(tmp_path: Path) -> None:
     step_status = {step["name"]: step["status"] for step in workflow["steps"]}
     assert step_status["init"] == "pass"
     assert step_status["recognize-svg"] == "pass"
+    assert step_status["recognize-svg-v2"] == "pass"
     assert step_status["standards-attach"] == "pass"
     assert step_status["opencrab-sync"] == "pass"
     assert step_status["constraint-attach"] == "pass"
@@ -2562,6 +2567,7 @@ def test_revision_run_executes_existing_project_loop(tmp_path: Path) -> None:
     assert revision["final_project_status"]["overall_status"] == "complete_candidate_ready"
     step_status = {step["name"]: step["status"] for step in revision["steps"]}
     assert step_status["recognize-svg"] == "skipped"
+    assert step_status["recognize-svg-v2"] == "skipped"
     assert step_status["topology-build"] == "pass"
     assert step_status["prompt-edit"] == "pass"
     assert step_status["edit-brief"] == "pass"

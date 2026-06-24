@@ -28,5 +28,10 @@ def empty_recognition_ir(source_path: str) -> dict[str, Any]:
             "room_envelope_candidate_count": 0,
             "label_count": 0,
             "protected_candidate_count": 0,
+            "source_document_indexed_count": 0,
+            "source_document_index_missing_count": 0,
+            "editable_source_count": 0,
+            "use_instance_count": 0,
+            "source_document_indexes_present": False,
         },
     }

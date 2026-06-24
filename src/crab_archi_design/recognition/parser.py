@@ -133,8 +133,10 @@ def walk_svg(
         walk_svg(child, matrix, next_group_path, style, nodes, raster_nodes, warnings, id_index, css_rules, document_indices, use_stack, use_instance_index, use_instance_id)
 
 
-def summarize_nodes(nodes: list[dict[str, Any]], raster_nodes: list[dict[str, Any]]) -> dict[str, int]:
+def summarize_nodes(nodes: list[dict[str, Any]], raster_nodes: list[dict[str, Any]]) -> dict[str, Any]:
     label_count = sum(1 for node in nodes if node.get("tag") == "text")
+    source_document_indexed_count = sum(1 for node in nodes if isinstance(node.get("source_document_index"), int))
+    source_document_index_missing_count = len(nodes) - source_document_indexed_count
     return {
         "primitive_count": len(nodes),
         "column_candidate_count": sum(1 for node in nodes if node.get("role_hint") == "column"),
@@ -144,6 +146,11 @@ def summarize_nodes(nodes: list[dict[str, Any]], raster_nodes: list[dict[str, An
         "protected_candidate_count": sum(1 for node in nodes if node.get("role_hint") == "column"),
         "raster_count": len(raster_nodes),
         "physical_metric_node_count": sum(1 for node in nodes if node.get("physical_metrics_source")),
+        "source_document_indexed_count": source_document_indexed_count,
+        "source_document_index_missing_count": source_document_index_missing_count,
+        "editable_source_count": sum(1 for node in nodes if node.get("editable_source")),
+        "use_instance_count": sum(1 for node in nodes if node.get("from_use_instance")),
+        "source_document_indexes_present": bool(nodes) and source_document_index_missing_count == 0,
     }
 
 

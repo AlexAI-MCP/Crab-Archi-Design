@@ -940,6 +940,11 @@ def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:
     assert ir["document"]["unit_scale_source"] == "width_height"
     assert ir["document"]["physical_width_mm"] == 100.0
     assert ir["document"]["physical_height_mm"] == 50.0
+    assert ir["summary"]["source_document_indexes_present"] is True
+    assert ir["summary"]["source_document_indexed_count"] == 2
+    assert ir["summary"]["source_document_index_missing_count"] == 0
+    assert ir["summary"]["editable_source_count"] == 2
+    assert ir["summary"]["use_instance_count"] == 0
     rect = next(node for node in ir["nodes"] if node["source_id"] == "r1")
     text = next(node for node in ir["nodes"] if node["source_id"] == "t1")
     assert rect["group_path"] == ["outer", "inner"]
@@ -1072,6 +1077,11 @@ def test_recognition_ir_v2_expands_defs_symbol_use_instances(tmp_path) -> None:
 
     assert ir["status"] == "active"
     assert ir["summary"]["primitive_count"] == 2
+    assert ir["summary"]["source_document_indexes_present"] is True
+    assert ir["summary"]["source_document_indexed_count"] == 2
+    assert ir["summary"]["source_document_index_missing_count"] == 0
+    assert ir["summary"]["editable_source_count"] == 0
+    assert ir["summary"]["use_instance_count"] == 2
     assert len(columns) == 2
     assert columns[0]["group_path"] == ["column-a", "column-symbol"]
     assert columns[0]["source_document_index"] == 4
