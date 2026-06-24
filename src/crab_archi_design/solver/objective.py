@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from crab_archi_design.solver.feasible import build_feasible_report
+from crab_archi_design.solver.placement import build_initial_placement_report
 from crab_archi_design.solver.scale import resolve_architectural_scale
 from crab_archi_design.solver.sizing import extract_program_targets
 
@@ -134,6 +135,7 @@ def evaluate_topology_fit(
             }
         )
     feasible = build_feasible_report(constraints)
+    placement = build_initial_placement_report(standards, constraints, topology)
     target_roles = {str(target["role"]) for target in targets}
     recognized_roles = set(cluster_by_role)
     covered_roles = sorted(target_roles & recognized_roles)
@@ -153,6 +155,7 @@ def evaluate_topology_fit(
             for key, value in feasible.items()
             if key not in {"shell_polygons", "mutable_polygons", "protected_polygons"}
         },
+        "initial_placement": placement,
         "adjacency_summary": adjacency_summary(topology),
         "notes": [
             "Area comparison remains advisory until drawing scale is calibrated from architectural dimensions or OCR.",

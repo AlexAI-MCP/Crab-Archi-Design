@@ -11,6 +11,7 @@ from crab_archi_design.solver import (
     evaluate_topology_fit,
     extract_program_targets,
     infer_architectural_scale,
+    build_initial_placement_report,
     resolve_architectural_scale,
 )
 from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening, split_polyline_for_opening
@@ -539,6 +540,40 @@ def test_solver_feasible_and_objective_report_constraints_and_targets(tmp_path) 
     assert report["covered_target_role_count"] == 2
     assert report["adjacency_summary"]["ontology_cluster_adjacency_target_count"] == 1
     assert {item["role"] for item in report["role_evaluations"]} == {"greenery_lounge", "fitness_gx"}
+    assert report["initial_placement"]["status"] == "active"
+    assert report["initial_placement"]["program_order"] == ["greenery_lounge", "fitness_gx"]
+    assert report["initial_placement"]["program_count"] == 2
+
+
+def test_solver_initial_placement_slices_mutable_bbox_by_target_area(tmp_path) -> None:
+    standards_csv = tmp_path / "standards.csv"
+    standards_csv.write_text(
+        "\n".join(
+            [
+                "세대수,,,,,900",
+                "문화,필수,그리너리 카페 (카페 + 작은도서관),,면적(m2),80",
+                "운동,필수,피트니스클럽,,면적(m2),40",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    standards = {"household_count": 900, "standard_items": [{"source_file": str(standards_csv), "payload": {"selected_rows": []}}]}
+    constraints = {
+        "constraint_items": [
+            {"id": "shell", "role": "community_shell", "points": [[0, 0], [300, 0], [300, 100], [0, 100]]},
+            {"id": "mutable", "role": "mutable", "points": [[0, 0], [300, 0], [300, 100], [0, 100]]},
+        ]
+    }
+
+    report = build_initial_placement_report(standards, constraints, {"edges": []})
+    lounge, fitness = report["placements"]
+
+    assert report["schema"] == "crab-archi-design-initial-placement-report-v1"
+    assert report["status"] == "active"
+    assert report["program_order"] == ["greenery_lounge", "fitness_gx"]
+    assert lounge["planned_box"] == {"x": 0.0, "y": 0.0, "width": 200.0, "height": 100.0}
+    assert fitness["planned_box"] == {"x": 200.0, "y": 0.0, "width": 100.0, "height": 100.0}
+    assert report["planned_drawing_area"] == report["placement_bbox_area"]
 
 
 def test_solver_scale_calibration_enables_area_comparison(tmp_path) -> None:

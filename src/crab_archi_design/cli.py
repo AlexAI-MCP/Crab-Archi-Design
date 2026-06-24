@@ -2541,6 +2541,8 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             "target_program_count": solver_objective.get("target_program_count", 0),
             "covered_target_role_count": solver_objective.get("covered_target_role_count", 0),
             "feasible_available_area_estimate": solver_objective.get("feasible_report", {}).get("available_area_estimate"),
+            "initial_placement_status": solver_objective.get("initial_placement", {}).get("status"),
+            "initial_placement_program_count": solver_objective.get("initial_placement", {}).get("program_count"),
             "scale_calibration_status": solver_objective.get("scale_calibration", {}).get("status"),
             "scale_calibration_confidence": solver_objective.get("scale_calibration", {}).get("confidence"),
         },
