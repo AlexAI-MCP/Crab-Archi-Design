@@ -17,6 +17,22 @@ def existing_elements_by_document_index(root: Element) -> dict[int, Element]:
     return {index: element for index, element in enumerate(root.iter(), start=1)}
 
 
+def parents_by_document_index(root: Element) -> dict[int, Element | None]:
+    parents: dict[int, Element | None] = {}
+    index = 1
+
+    def walk(element: Element, parent: Element | None) -> None:
+        nonlocal index
+        current_index = index
+        index += 1
+        parents[current_index] = parent
+        for child in list(element):
+            walk(child, element)
+
+    walk(root, None)
+    return parents
+
+
 def original_attr_name(name: str) -> str:
     return f"data-crab-original-{name}"
 
@@ -78,6 +94,15 @@ def select_candidates(plan: dict[str, Any], max_mutations: int) -> list[dict[str
     clustered = [candidate for candidate in wall_candidates if candidate.get("program_cluster_id")]
     selected = clustered or wall_candidates or candidates
     return selected[:max_mutations]
+
+
+def selected_candidate_index(candidate: dict[str, Any]) -> int | None:
+    raw_index = candidate.get("element_index", candidate.get("target_element_index"))
+    try:
+        index = int(raw_index or 0)
+    except (TypeError, ValueError):
+        return None
+    return index if index > 0 else None
 
 
 def collapse_line_to_zero_length(element: Element) -> bool:
@@ -154,6 +179,49 @@ def split_line_for_opening(
     }
 
 
+def opening_sort_key(candidate: dict[str, Any]) -> tuple[float, int]:
+    return (float(candidate.get("patch_priority") or 0.0), int(candidate.get("target_element_index") or 0))
+
+
+def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: int) -> dict[str, Any]:
+    element_map = existing_elements_by_document_index(root)
+    parent_map = parents_by_document_index(root)
+    candidates = sorted(plan.get("same_layer_opening_candidates", []), key=opening_sort_key, reverse=True)[:max_openings]
+    applied: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    opened_indices: set[int] = set()
+    for candidate in candidates:
+        element_index = selected_candidate_index(candidate)
+        element = element_map.get(element_index or -1)
+        parent = parent_map.get(element_index or -1)
+        if element_index is None or element is None or parent is None:
+            skipped.append({"target_element_index": element_index, "reason": "target element or parent not found"})
+            continue
+        result = split_line_for_opening(
+            parent,
+            element,
+            svg_float(candidate.get("opening_start_ratio", 0.42)),
+            svg_float(candidate.get("opening_end_ratio", 0.58)),
+            operation_id=str(candidate.get("operation_id") or f"opening_{len(applied) + 1:03d}"),
+        )
+        result["target_element_index"] = element_index
+        result["program_cluster_id"] = candidate.get("program_cluster_id")
+        result["program_role"] = candidate.get("program_role")
+        if result.get("status") == "applied":
+            applied.append(result)
+            opened_indices.add(element_index)
+        else:
+            skipped.append(result)
+    return {
+        "opening_candidate_count": len(candidates),
+        "same_layer_opening_split_count": len(applied),
+        "same_layer_segment_added_count": sum(1 for item in applied if item.get("same_layer_segment_added")),
+        "opened_element_indices": sorted(opened_indices),
+        "opening_mutations": applied,
+        "opening_skips": skipped,
+    }
+
+
 def remove_mutable_partition_element(element: Element) -> dict[str, Any]:
     tag = local_tag(element)
     preserve_original_attrs(
@@ -224,27 +292,35 @@ def patch_existing_element(element: Element, candidate: dict[str, Any], mutation
     }
 
 
-def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mutations: int) -> dict[str, Any]:
+def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mutations: int, apply_openings: bool = False, max_openings: int = 4) -> dict[str, Any]:
     root.set("data-crab-candidate", "crab_archi_design_same_layer_engine_candidate")
     root.set("data-crab-engine", "same-layer-svg-engine")
     root.set("data-crab-mutation-strategy", "same_layer_geometry_patch")
     root.set("data-crab-overlay-elements-added", "0")
 
     element_map = existing_elements_by_document_index(root)
-    selected = select_candidates(plan, max_mutations)
+    opening_summary = apply_opening_candidates(root, plan, max_openings) if apply_openings else {
+        "opening_candidate_count": len(plan.get("same_layer_opening_candidates", [])),
+        "same_layer_opening_split_count": 0,
+        "same_layer_segment_added_count": 0,
+        "opened_element_indices": [],
+        "opening_mutations": [],
+        "opening_skips": [],
+    }
+    opened_indices = set(opening_summary["opened_element_indices"])
+    selected = [candidate for candidate in select_candidates(plan, max_mutations) if selected_candidate_index(candidate) not in opened_indices]
     mutated: list[dict[str, Any]] = []
     missing: list[int] = []
     for candidate in selected:
-        try:
-            element_index = int(candidate.get("element_index") or 0)
-        except (TypeError, ValueError):
-            element_index = 0
+        element_index = selected_candidate_index(candidate) or 0
         element = element_map.get(element_index)
         if element is None:
             missing.append(element_index)
             continue
         mutated.append(patch_existing_element(element, candidate, len(mutated) + 1))
 
+    removal_geometry_mutation_count = sum(1 for item in mutated if item.get("geometry_mutated"))
+    opening_program_cluster_count = sum(1 for item in opening_summary["opening_mutations"] if item.get("program_cluster_id"))
     return {
         "mutation_strategy": "same_layer_geometry_patch",
         "patch_plan_status": plan.get("status"),
@@ -252,8 +328,12 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
         "selected_candidate_count": len(selected),
         "same_layer_mutation_count": len(mutated),
         "same_layer_removal_count": sum(1 for item in mutated if item.get("same_layer_removed")),
-        "same_layer_geometry_mutation_count": sum(1 for item in mutated if item.get("geometry_mutated")),
-        "program_cluster_mutation_count": sum(1 for item in mutated if item.get("program_cluster_id")),
+        "same_layer_geometry_mutation_count": removal_geometry_mutation_count + opening_summary["same_layer_opening_split_count"],
+        "same_layer_opening_split_count": opening_summary["same_layer_opening_split_count"],
+        "same_layer_segment_added_count": opening_summary["same_layer_segment_added_count"],
+        "program_cluster_mutation_count": sum(1 for item in mutated if item.get("program_cluster_id")) + opening_program_cluster_count,
         "missing_element_indices": missing,
         "mutations": mutated,
+        "opening_mutations": opening_summary["opening_mutations"],
+        "opening_skips": opening_summary["opening_skips"],
     }

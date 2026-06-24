@@ -692,6 +692,7 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["mutation_strategy"] == "same_layer_element_patch"
     assert plan["gates"]["overlay_generation_disallowed"] is True
     assert plan["metrics"]["mutable_candidate_count"] >= 1
+    assert plan["metrics"]["opening_candidate_count"] >= 1
     assert plan["metrics"]["program_anchor_count"] == 2
     assert plan["metrics"]["program_cluster_count"] >= 1
     assert plan["metrics"]["program_cluster_candidate_count"] >= 1
@@ -700,6 +701,8 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["same_layer_mutable_candidates"][0]["addressing"] == "source_svg_element_index"
     assert plan["same_layer_mutable_candidates"][0]["mutation_policy"] == "modify_or_remove_existing_element_only"
     assert "program_cluster_id" in plan["same_layer_mutable_candidates"][0]
+    assert plan["same_layer_opening_candidates"][0]["operation"] == "split_line_for_opening"
+    assert plan["same_layer_opening_candidates"][0]["mutation_policy"] == "split_existing_line_in_same_parent"
 
 
 def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
@@ -859,6 +862,29 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     assert gates["existing_geometry_mutated"] is True
     assert gates["same_layer_internal_partitions_removed"] is True
     assert gates["program_cluster_targets_used"] is True
+
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "apply-edit",
+        "--project-id",
+        "same-layer-demo",
+        "--skip-preview",
+        "--engine-arg=--apply-openings",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    opening_report = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert opening_report["status"] == "pass"
+    opening_alternative = Path(opening_report["copied_artifacts"]["svg"][0])
+    opening_root = ET.parse(opening_alternative).getroot()
+    opening_count = sum(1 for _ in opening_root.iter())
+    opening_engine_report = json.loads(Path(opening_report["copied_artifacts"]["report"][0]).read_text(encoding="utf-8"))
+    assert opening_engine_report["summary"]["same_layer_opening_split_count"] >= 1
+    assert opening_engine_report["summary"]["same_layer_segment_added_count"] >= 1
+    assert opening_count == source_count + opening_engine_report["summary"]["same_layer_segment_added_count"]
+    assert any(element.attrib.get("data-crab-action") == "split_line_for_opening" for element in opening_root.iter())
+    assert opening_engine_report["quality"]["gates"]["same_layer_openings_applied_or_not_requested"] is True
 
 
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:

@@ -37,6 +37,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-preview", action="store_true")
     parser.add_argument("--max-mutations", type=int, default=24)
+    parser.add_argument("--apply-openings", action="store_true")
+    parser.add_argument("--max-openings", type=int, default=4)
     args, _ = parser.parse_known_args()
 
     solver_input_path = Path(os.environ["CRAB_ARCHI_SOLVER_INPUT"])
@@ -69,7 +71,7 @@ def main() -> None:
     root = tree.getroot()
     source_image_count = count_images(root)
     source_element_count = sum(1 for _ in root.iter())
-    summary = apply_same_layer_geometry_patch(root, patch_plan, max(1, args.max_mutations))
+    summary = apply_same_layer_geometry_patch(root, patch_plan, max(1, args.max_mutations), apply_openings=args.apply_openings, max_openings=max(1, args.max_openings))
     output_svg = run_dir / "same_layer_engine_candidate.svg"
     tree.write(output_svg, encoding="utf-8", xml_declaration=True)
 
@@ -84,9 +86,10 @@ def main() -> None:
         "source_element_addresses_used": summary["selected_candidate_count"] > 0,
         "existing_elements_mutated": summary["same_layer_mutation_count"] > 0,
         "existing_geometry_mutated": summary["same_layer_geometry_mutation_count"] > 0,
-        "same_layer_internal_partitions_removed": summary["same_layer_removal_count"] > 0,
+        "same_layer_internal_partitions_removed": summary["same_layer_removal_count"] > 0 or summary["same_layer_opening_split_count"] > 0,
+        "same_layer_openings_applied_or_not_requested": (not args.apply_openings) or summary["same_layer_opening_split_count"] > 0,
         "program_cluster_targets_used": summary["program_cluster_mutation_count"] > 0,
-        "new_overlay_elements_added": output_element_count == source_element_count,
+        "new_overlay_elements_added": output_element_count == source_element_count + summary["same_layer_segment_added_count"],
         "mutation_strategy_same_layer": summary["mutation_strategy"] == "same_layer_geometry_patch",
     }
     report = {

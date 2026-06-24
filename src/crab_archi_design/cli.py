@@ -2242,6 +2242,44 @@ def patch_role_priority(role: str | None) -> float:
     }.get(str(role or ""), 0.0)
 
 
+def build_opening_candidates(mutable_candidates: list[dict[str, Any]], max_candidates: int) -> list[dict[str, Any]]:
+    opening_candidates: list[dict[str, Any]] = []
+    preferred_roles = {"greenery_lounge", "fitness_gx", "golf_screen", "hall_lobby", "sauna_locker_shower"}
+    line_candidates = [
+        item
+        for item in mutable_candidates
+        if item.get("tag") == "line" and item.get("program_cluster_id") and item.get("program_role") in preferred_roles
+    ]
+    fallback_candidates = [item for item in mutable_candidates if item.get("tag") == "line" and item.get("program_cluster_id")]
+    seen_indices: set[Any] = set()
+    for source in [*line_candidates, *fallback_candidates]:
+        element_index = source.get("element_index")
+        if element_index in seen_indices:
+            continue
+        seen_indices.add(element_index)
+        opening_index = len(opening_candidates) + 1
+        candidate = {
+            "operation": "split_line_for_opening",
+            "operation_id": f"opening_{opening_index:03d}",
+            "target_element_index": element_index,
+            "tag": source.get("tag"),
+            "bbox": source.get("bbox"),
+            "center": source.get("center"),
+            "program_cluster_id": source.get("program_cluster_id"),
+            "program_role": source.get("program_role"),
+            "space_region_ids": source.get("space_region_ids", []),
+            "addressing": "source_svg_element_index",
+            "mutation_policy": "split_existing_line_in_same_parent",
+            "opening_start_ratio": 0.42,
+            "opening_end_ratio": 0.58,
+            "reason": "Create a same-layer wall opening candidate on a recognized mutable program boundary.",
+        }
+        opening_candidates.append(candidate)
+        if len(opening_candidates) >= max_candidates:
+            break
+    return opening_candidates
+
+
 def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240) -> dict[str, Any]:
     project = load_manifest(project_id, root)
     recognition = load_recognition_manifest(project_id, root)
@@ -2301,6 +2339,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             mutable_candidates.append(record)
 
     mutable_candidates = sorted(mutable_candidates, key=lambda item: (float(item.get("patch_priority") or 0.0), bbox_area(item.get("bbox") or {})), reverse=True)
+    opening_candidates = build_opening_candidates(mutable_candidates, min(max_candidates, 24))
 
     program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons)
     if not program_anchors:
@@ -2354,6 +2393,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
         },
         "program_anchors": program_anchors[:max_candidates],
         "same_layer_mutable_candidates": mutable_candidates[:max_candidates],
+        "same_layer_opening_candidates": opening_candidates[:max_candidates],
         "locked_candidates": locked_candidates[:max_candidates],
         "operation_templates": [
             {
@@ -2365,6 +2405,11 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
                 "operation": "move_or_extend_existing_wall_segment",
                 "target": "same_layer_mutable_candidates",
                 "rule": "Move endpoints of existing line/polyline/path segments; do not create a full new zoning block.",
+            },
+            {
+                "operation": "split_line_for_opening",
+                "target": "same_layer_opening_candidates",
+                "rule": "Split an existing same-layer wall line into before/after segments to create a door opening without drawing an overlay.",
             },
             {
                 "operation": "retarget_room_label_anchor",
@@ -2379,6 +2424,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
         ],
         "metrics": {
             "mutable_candidate_count": len(mutable_candidates),
+            "opening_candidate_count": len(opening_candidates),
             "program_cluster_candidate_count": sum(1 for item in mutable_candidates if item.get("program_cluster_id")),
             "program_cluster_count": len(program_clusters),
             "locked_candidate_count": len(locked_candidates),

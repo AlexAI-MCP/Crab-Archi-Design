@@ -362,6 +362,19 @@ crab-archi-design --project-root projects apply-edit \
 
 The same-layer engine consumes the latest `svg-patch-plan`, mutates existing SVG elements by source element index, collapses selected internal partition lines to zero length, and verifies that no overlay group, redraw layer, or raster image was added. It is the preferred built-in adapter for testing the production path before a full geometry trim/move solver is available.
 
+To test same-layer door-opening splits from the patch plan, pass the opening flag through the engine adapter:
+
+```bash
+crab-archi-design --project-root projects apply-edit \
+  --project-id a801-802-opencrab-test \
+  --intent all \
+  --engine-adapter same-layer-svg-engine \
+  --engine-arg=--apply-openings \
+  --skip-preview
+```
+
+This keeps the edit in the source SVG hierarchy: the target wall line is shortened, an after-segment is inserted beside it in the same parent, and the gap between them becomes the opening.
+
 For diagnostic end-to-end testing only, the built-in room-envelope redraw path can still be run with `--engine-adapter layout-svg-engine`:
 
 ```bash
