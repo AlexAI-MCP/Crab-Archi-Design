@@ -154,6 +154,76 @@ def format_path_points(points: list[tuple[float, float]]) -> str:
     return " ".join(segments)
 
 
+def point_distance(start: tuple[float, float], end: tuple[float, float]) -> float:
+    return ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
+
+
+def polyline_length(points: list[tuple[float, float]]) -> float:
+    return sum(point_distance(points[index], points[index + 1]) for index in range(len(points) - 1))
+
+
+def interpolate_point(start: tuple[float, float], end: tuple[float, float], ratio: float) -> tuple[float, float]:
+    return (start[0] + (end[0] - start[0]) * ratio, start[1] + (end[1] - start[1]) * ratio)
+
+
+def point_at_polyline_distance(points: list[tuple[float, float]], target_distance: float) -> tuple[tuple[float, float], int] | None:
+    if len(points) < 2:
+        return None
+    if target_distance <= 0.0:
+        return points[0], 0
+    traversed = 0.0
+    last_segment_index = len(points) - 2
+    for index in range(len(points) - 1):
+        segment_length = point_distance(points[index], points[index + 1])
+        if segment_length <= 1e-9:
+            continue
+        if traversed + segment_length >= target_distance - 1e-9:
+            ratio = min(1.0, max(0.0, (target_distance - traversed) / segment_length))
+            return interpolate_point(points[index], points[index + 1], ratio), index
+        traversed += segment_length
+    return points[-1], last_segment_index
+
+
+def compact_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    compacted: list[tuple[float, float]] = []
+    for point in points:
+        if not compacted or point_distance(compacted[-1], point) > 1e-9:
+            compacted.append(point)
+    return compacted
+
+
+def split_polyline_points_for_opening(
+    points: list[tuple[float, float]],
+    opening_start_ratio: float,
+    opening_end_ratio: float,
+) -> dict[str, Any] | None:
+    if len(points) < 2 or not (0.0 < opening_start_ratio < opening_end_ratio < 1.0):
+        return None
+    length = polyline_length(points)
+    if length <= 1e-9:
+        return None
+    start = point_at_polyline_distance(points, length * opening_start_ratio)
+    end = point_at_polyline_distance(points, length * opening_end_ratio)
+    if start is None or end is None:
+        return None
+    start_point, start_index = start
+    end_point, end_index = end
+    before_points = compact_points([*points[: start_index + 1], start_point])
+    after_points = compact_points([end_point, *points[end_index + 1 :]])
+    if len(before_points) < 2 or len(after_points) < 2:
+        return None
+    return {
+        "before_points": before_points,
+        "after_points": after_points,
+        "opening": {
+            "x1": start_point[0],
+            "y1": start_point[1],
+            "x2": end_point[0],
+            "y2": end_point[1],
+        },
+    }
+
+
 def interpolate_line_point(coords: tuple[float, float, float, float], ratio: float) -> tuple[float, float]:
     x1, y1, x2, y2 = coords
     return (x1 + (x2 - x1) * ratio, y1 + (y2 - y1) * ratio)
@@ -373,6 +443,69 @@ def split_line_for_opening(
         "before_segment": {"x1": coords[0], "y1": coords[1], "x2": start_x, "y2": start_y},
         "opening": {"x1": start_x, "y1": start_y, "x2": end_x, "y2": end_y},
         "after_segment": {"x1": end_x, "y1": end_y, "x2": coords[2], "y2": coords[3]},
+        "geometry_mutated": True,
+        "same_layer_segment_added": True,
+    }
+
+
+def split_path_for_opening(
+    parent: Element,
+    element: Element,
+    opening_start_ratio: float,
+    opening_end_ratio: float,
+    operation_id: str = "door_opening",
+) -> dict[str, Any]:
+    points = editable_path_points(element)
+    children = list(parent)
+    split = split_polyline_points_for_opening(points, opening_start_ratio, opening_end_ratio)
+    if not points or element not in children or split is None:
+        return {
+            "action": "split_path_for_opening",
+            "status": "skipped",
+            "reason": "requires direct child open single-subpath M/L/H/V path and 0 < start < end < 1",
+            "geometry_mutated": False,
+            "same_layer_segment_added": False,
+        }
+
+    preserve_original_attr(element, "d")
+    after_segment = deepcopy(element)
+    source_id = element.attrib.get("id")
+    if source_id:
+        after_segment.set("id", f"{source_id}__crab_{operation_id}_after")
+        after_segment.set("data-crab-derived-from", source_id)
+
+    before_d = format_path_points(split["before_points"])
+    after_d = format_path_points(split["after_points"])
+    opening = split["opening"]
+
+    element.set("d", before_d)
+    element.set("data-crab-action", "split_path_for_opening")
+    element.set("data-crab-same-layer-mutation", "same_layer_path_opening_split")
+    element.set("data-crab-opening-operation", operation_id)
+    element.set("data-crab-opening-segment", "before")
+    element.set("data-crab-opening-start-ratio", format_svg_number(opening_start_ratio))
+    element.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
+    element.set("data-crab-geometry-mutated", "true")
+
+    after_segment.set("d", after_d)
+    after_segment.set("data-crab-action", "split_path_for_opening")
+    after_segment.set("data-crab-same-layer-mutation", "same_layer_path_opening_split")
+    after_segment.set("data-crab-opening-operation", operation_id)
+    after_segment.set("data-crab-opening-segment", "after")
+    after_segment.set("data-crab-opening-start-ratio", format_svg_number(opening_start_ratio))
+    after_segment.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
+    after_segment.set("data-crab-generated-same-layer-segment", "true")
+    after_segment.set("data-crab-geometry-mutated", "true")
+
+    parent.insert(children.index(element) + 1, after_segment)
+    return {
+        "action": "split_path_for_opening",
+        "status": "applied",
+        "operation_id": operation_id,
+        "source_id": source_id,
+        "before_segment": {"d": before_d},
+        "opening": opening,
+        "after_segment": {"d": after_d},
         "geometry_mutated": True,
         "same_layer_segment_added": True,
     }
@@ -611,7 +744,8 @@ def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: 
         if element_index is None or element is None or parent is None:
             skipped.append({"target_element_index": element_index, "reason": "target element or parent not found"})
             continue
-        result = split_line_for_opening(
+        split_function = split_path_for_opening if local_tag(element) == "path" else split_line_for_opening
+        result = split_function(
             parent,
             element,
             svg_float(candidate.get("opening_start_ratio", 0.42)),

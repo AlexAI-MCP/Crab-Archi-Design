@@ -373,7 +373,7 @@ crab-archi-design --project-root projects apply-edit \
   --skip-preview
 ```
 
-This keeps the edit in the source SVG hierarchy: the target wall line is shortened, an after-segment is inserted beside it in the same parent, and the gap between them becomes the opening.
+This keeps the edit in the source SVG hierarchy: the target wall line or open single-subpath M/L/H/V path is shortened, an after-segment is inserted beside it in the same parent, and the gap between them becomes the opening. Curved, arc, and closed paths stay unchanged and are reported as skips.
 
 To test CAD-like line/polyline/path endpoint grip edits from `same_layer_endpoint_move_candidates`, pass the endpoint-move flag through the engine adapter. Candidate `x/y` and `dx/dy` values are interpreted in recognition/world coordinates; if the source element sits under SVG transforms, the same-layer engine converts the move back into that element's local attributes before writing the SVG. Path endpoint edits are limited to open single-subpath M/L/H/V paths; curved, arc, and closed paths stay unchanged and are reported as skips.
 

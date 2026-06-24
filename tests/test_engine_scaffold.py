@@ -89,6 +89,47 @@ def test_solver_patch_plan_uses_topology_adjacency_for_openings() -> None:
     assert openings[0]["opening_priority"] > candidates[0]["patch_priority"]
 
 
+def test_solver_patch_plan_builds_path_opening_candidates() -> None:
+    candidates = [
+        {
+            "element_index": 21,
+            "tag": "path",
+            "bbox": {"x": 10, "y": 10, "width": 100, "height": 2},
+            "center": [60, 11],
+            "patch_priority": 700.0,
+            "program_cluster_id": "cluster_golf",
+            "program_role": "golf_screen",
+            "space_region_ids": ["space_golf"],
+        }
+    ]
+    topology = {
+        "nodes": [
+            {"id": "cluster_golf", "type": "program_cluster", "role": "golf_screen", "bbox": {"x": 0, "y": 0, "width": 120, "height": 80}},
+            {"id": "cluster_hall", "type": "program_cluster", "role": "hall_lobby", "bbox": {"x": 110, "y": 0, "width": 80, "height": 80}},
+        ],
+        "edges": [
+            {
+                "id": "edge_topology_path_opening",
+                "type": "ontology_cluster_adjacency_target",
+                "source": "cluster_golf",
+                "target": "cluster_hall",
+                "left_role": "golf_screen",
+                "right_role": "hall_lobby",
+                "rationale": "path wall opening follows the topology prior",
+                "evidence": "OpenCrab topology prior",
+            }
+        ],
+    }
+
+    openings = build_opening_candidates(candidates, topology, 4)
+
+    assert openings[0]["operation"] == "split_line_for_opening"
+    assert openings[0]["tag"] == "path"
+    assert openings[0]["mutation_policy"] == "split_existing_path_in_same_parent"
+    assert openings[0]["connects_to_role"] == "hall_lobby"
+    assert openings[0]["topology_evidence"] == "OpenCrab topology prior"
+
+
 def test_solver_patch_plan_builds_endpoint_move_candidates() -> None:
     candidates = [
         {

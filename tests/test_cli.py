@@ -842,6 +842,90 @@ def test_solver_split_line_for_opening_creates_same_layer_segments() -> None:
     assert all(element.attrib["data-crab-action"] == "split_line_for_opening" for element in lines)
 
 
+def test_solver_same_layer_opening_splits_existing_path() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 60">
+          <path id="wall-path" d="M 10 20 L 60 20 L 110 20" fill="none" stroke="#111" stroke-width="4"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_opening_candidates": [
+            {
+                "operation": "split_line_for_opening",
+                "operation_id": "opening_001",
+                "target_element_index": 2,
+                "tag": "path",
+                "mutation_policy": "split_existing_path_in_same_parent",
+                "opening_start_ratio": 0.4,
+                "opening_end_ratio": 0.6,
+                "program_cluster_id": "program_cluster_path",
+                "program_role": "golf_screen",
+                "connects_to_role": "hall_lobby",
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_openings=True, max_openings=4)
+    paths = [element for element in root.iter() if element.tag.endswith("path")]
+    before, after = paths
+
+    assert summary["same_layer_opening_split_count"] == 1
+    assert summary["same_layer_segment_added_count"] == 1
+    assert summary["program_cluster_mutation_count"] == 1
+    assert len(paths) == 2
+    assert before.attrib["d"] == "M 10,20 L 50,20"
+    assert before.attrib["data-crab-original-d"] == "M 10 20 L 60 20 L 110 20"
+    assert before.attrib["data-crab-action"] == "split_path_for_opening"
+    assert before.attrib["data-crab-opening-segment"] == "before"
+    assert after.attrib["id"] == "wall-path__crab_opening_001_after"
+    assert after.attrib["d"] == "M 70,20 L 110,20"
+    assert after.attrib["data-crab-derived-from"] == "wall-path"
+    assert after.attrib["data-crab-action"] == "split_path_for_opening"
+    assert after.attrib["data-crab-opening-segment"] == "after"
+    assert summary["opening_mutations"][0]["opening"] == {"x1": 50.0, "y1": 20.0, "x2": 70.0, "y2": 20.0}
+
+
+def test_solver_same_layer_opening_skips_curved_path() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 60">
+          <path id="curved-wall" d="M 10 20 C 40 10 80 30 110 20" fill="none" stroke="#111" stroke-width="4"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_opening_candidates": [
+            {
+                "operation": "split_line_for_opening",
+                "operation_id": "opening_001",
+                "target_element_index": 2,
+                "tag": "path",
+                "mutation_policy": "split_existing_path_in_same_parent",
+                "opening_start_ratio": 0.4,
+                "opening_end_ratio": 0.6,
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_openings=True, max_openings=4)
+    paths = [element for element in root.iter() if element.tag.endswith("path")]
+
+    assert len(paths) == 1
+    assert paths[0].attrib["d"] == "M 10 20 C 40 10 80 30 110 20"
+    assert summary["same_layer_opening_split_count"] == 0
+    assert summary["opening_skips"][0]["action"] == "split_path_for_opening"
+    assert summary["opening_skips"][0]["reason"] == "requires direct child open single-subpath M/L/H/V path and 0 < start < end < 1"
+    assert "data-crab-action" not in paths[0].attrib
+
+
 def test_solver_same_layer_opening_skips_locked_target() -> None:
     root = ET.fromstring(
         """
