@@ -97,7 +97,7 @@ The Python engine should be split before the production parser and solver are ex
 - `crab_archi_design.svg`: safe SVG parsing, transforms, units, path flattening, style inheritance, and world-coordinate geometry.
 - `crab_archi_design.recognition`: Recognition IR v2 schema, stable node ids, and role classification.
 - `crab_archi_design.intents`: DesignIntent/EditIntent schemas and validation. LLMs produce intent JSON, not final coordinates.
-- `crab_archi_design.solver`: deterministic feasible-area, sizing, placement, local-search, and same-layer SVG mutation contracts. The `solver.svg_mutation` module is the CAD-like primitive layer for element-index addressing, reversible original-attribute preservation, internal partition removal, and future trim/move/door-opening operations.
+- `crab_archi_design.solver`: deterministic feasible-area, sizing, placement, local-search, and same-layer SVG mutation contracts. The `solver.svg_mutation` module is the CAD-like primitive layer for element-index addressing, reversible original-attribute preservation, internal partition removal, same-layer line splitting for door openings, and future trim/move operations.
 - `crab_archi_design.qa`: hard/soft gate helpers shared by recognition, topology, solver, and export checks.
 
 This split keeps the production path from becoming another overlay engine. SVG parsing creates IR, intent stays declarative, the solver mutates recognized elements, and QA decides whether the result is releasable.

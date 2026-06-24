@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 
 from crab_archi_design.layout_svg_engine import draw_layout
-from crab_archi_design.solver.svg_mutation import apply_same_layer_geometry_patch
+from crab_archi_design.solver.svg_mutation import apply_same_layer_geometry_patch, split_line_for_opening
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -738,6 +738,35 @@ def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
     assert partition.attrib["display"] == "none"
     assert partition.attrib["data-crab-original-x2"] == "80"
     assert partition.attrib["data-crab-program-role"] == "greenery_lounge"
+
+
+def test_solver_split_line_for_opening_creates_same_layer_segments() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40">
+          <line id="wall" x1="10" y1="20" x2="110" y2="20" stroke="#111" stroke-width="4"/>
+        </svg>
+        """
+    )
+    wall = next(element for element in root.iter() if element.attrib.get("id") == "wall")
+
+    result = split_line_for_opening(root, wall, 0.4, 0.6, operation_id="door_001")
+    lines = [element for element in root.iter() if element.tag.endswith("line")]
+    before, after = lines
+
+    assert result["status"] == "applied"
+    assert result["same_layer_segment_added"] is True
+    assert len(lines) == 2
+    assert before.attrib["x1"] == "10"
+    assert before.attrib["x2"] == "50"
+    assert before.attrib["data-crab-original-x2"] == "110"
+    assert before.attrib["data-crab-opening-segment"] == "before"
+    assert after.attrib["id"] == "wall__crab_door_001_after"
+    assert after.attrib["x1"] == "70"
+    assert after.attrib["x2"] == "110"
+    assert after.attrib["data-crab-derived-from"] == "wall"
+    assert after.attrib["data-crab-opening-segment"] == "after"
+    assert all(element.attrib["data-crab-action"] == "split_line_for_opening" for element in lines)
 
 
 def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -> None:

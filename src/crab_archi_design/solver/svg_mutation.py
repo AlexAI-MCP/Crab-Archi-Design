@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 from xml.etree.ElementTree import Element
 
@@ -31,6 +32,34 @@ def preserve_original_attrs(element: Element, names: list[str]) -> None:
         preserve_original_attr(element, name)
 
 
+def svg_float(value: Any) -> float:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def format_svg_number(value: float) -> str:
+    text = f"{value:.3f}".rstrip("0").rstrip(".")
+    return "0" if text == "-0" else text
+
+
+def line_points(element: Element) -> tuple[float, float, float, float] | None:
+    if local_tag(element) != "line" or not {"x1", "y1", "x2", "y2"} <= set(element.attrib):
+        return None
+    return (
+        svg_float(element.attrib["x1"]),
+        svg_float(element.attrib["y1"]),
+        svg_float(element.attrib["x2"]),
+        svg_float(element.attrib["y2"]),
+    )
+
+
+def interpolate_line_point(coords: tuple[float, float, float, float], ratio: float) -> tuple[float, float]:
+    x1, y1, x2, y2 = coords
+    return (x1 + (x2 - x1) * ratio, y1 + (y2 - y1) * ratio)
+
+
 def candidate_sort_key(candidate: dict[str, Any]) -> tuple[float, float, int]:
     bbox = candidate.get("bbox") or {}
     area = float(bbox.get("width") or 0.0) * float(bbox.get("height") or 0.0)
@@ -58,6 +87,71 @@ def collapse_line_to_zero_length(element: Element) -> bool:
     element.set("x2", element.attrib["x1"])
     element.set("y2", element.attrib["y1"])
     return True
+
+
+def split_line_for_opening(
+    parent: Element,
+    element: Element,
+    opening_start_ratio: float,
+    opening_end_ratio: float,
+    operation_id: str = "door_opening",
+) -> dict[str, Any]:
+    coords = line_points(element)
+    children = list(parent)
+    if coords is None or element not in children or not (0.0 < opening_start_ratio < opening_end_ratio < 1.0):
+        return {
+            "action": "split_line_for_opening",
+            "status": "skipped",
+            "reason": "requires direct child line and 0 < start < end < 1",
+            "geometry_mutated": False,
+            "same_layer_segment_added": False,
+        }
+
+    preserve_original_attrs(element, ["x1", "y1", "x2", "y2"])
+    start_x, start_y = interpolate_line_point(coords, opening_start_ratio)
+    end_x, end_y = interpolate_line_point(coords, opening_end_ratio)
+
+    after_segment = deepcopy(element)
+    source_id = element.attrib.get("id")
+    if source_id:
+        after_segment.set("id", f"{source_id}__crab_{operation_id}_after")
+        after_segment.set("data-crab-derived-from", source_id)
+
+    element.set("x2", format_svg_number(start_x))
+    element.set("y2", format_svg_number(start_y))
+    element.set("data-crab-action", "split_line_for_opening")
+    element.set("data-crab-same-layer-mutation", "same_layer_line_opening_split")
+    element.set("data-crab-opening-operation", operation_id)
+    element.set("data-crab-opening-segment", "before")
+    element.set("data-crab-opening-start-ratio", format_svg_number(opening_start_ratio))
+    element.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
+    element.set("data-crab-geometry-mutated", "true")
+
+    after_segment.set("x1", format_svg_number(end_x))
+    after_segment.set("y1", format_svg_number(end_y))
+    after_segment.set("x2", format_svg_number(coords[2]))
+    after_segment.set("y2", format_svg_number(coords[3]))
+    after_segment.set("data-crab-action", "split_line_for_opening")
+    after_segment.set("data-crab-same-layer-mutation", "same_layer_line_opening_split")
+    after_segment.set("data-crab-opening-operation", operation_id)
+    after_segment.set("data-crab-opening-segment", "after")
+    after_segment.set("data-crab-opening-start-ratio", format_svg_number(opening_start_ratio))
+    after_segment.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
+    after_segment.set("data-crab-generated-same-layer-segment", "true")
+    after_segment.set("data-crab-geometry-mutated", "true")
+
+    parent.insert(children.index(element) + 1, after_segment)
+    return {
+        "action": "split_line_for_opening",
+        "status": "applied",
+        "operation_id": operation_id,
+        "source_id": source_id,
+        "before_segment": {"x1": coords[0], "y1": coords[1], "x2": start_x, "y2": start_y},
+        "opening": {"x1": start_x, "y1": start_y, "x2": end_x, "y2": end_y},
+        "after_segment": {"x1": end_x, "y1": end_y, "x2": coords[2], "y2": coords[3]},
+        "geometry_mutated": True,
+        "same_layer_segment_added": True,
+    }
 
 
 def remove_mutable_partition_element(element: Element) -> dict[str, Any]:
