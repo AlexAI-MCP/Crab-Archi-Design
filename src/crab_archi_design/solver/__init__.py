@@ -2,6 +2,7 @@
 
 from crab_archi_design.solver.contract import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA
 from crab_archi_design.solver.feasible import build_feasible_report
+from crab_archi_design.solver.localsearch import build_local_search_report
 from crab_archi_design.solver.objective import evaluate_topology_fit
 from crab_archi_design.solver.patch_plan import build_endpoint_move_candidates, build_opening_candidates, patch_role_priority
 from crab_archi_design.solver.placement import build_initial_placement_report
@@ -17,6 +18,7 @@ __all__ = [
     "build_endpoint_move_candidates",
     "build_opening_candidates",
     "build_initial_placement_report",
+    "build_local_search_report",
     "evaluate_topology_fit",
     "extract_program_targets",
     "infer_architectural_scale",

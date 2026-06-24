@@ -12,6 +12,7 @@ from crab_archi_design.solver import (
     extract_program_targets,
     infer_architectural_scale,
     build_initial_placement_report,
+    build_local_search_report,
     resolve_architectural_scale,
 )
 from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening, split_polyline_for_opening
@@ -543,6 +544,8 @@ def test_solver_feasible_and_objective_report_constraints_and_targets(tmp_path) 
     assert report["initial_placement"]["status"] == "active"
     assert report["initial_placement"]["program_order"] == ["greenery_lounge", "fitness_gx"]
     assert report["initial_placement"]["program_count"] == 2
+    assert report["local_search"]["status"] == "active"
+    assert report["local_search"]["satisfied_adjacency_count"] == 1
 
 
 def test_solver_initial_placement_slices_mutable_bbox_by_target_area(tmp_path) -> None:
@@ -574,6 +577,49 @@ def test_solver_initial_placement_slices_mutable_bbox_by_target_area(tmp_path) -
     assert lounge["planned_box"] == {"x": 0.0, "y": 0.0, "width": 200.0, "height": 100.0}
     assert fitness["planned_box"] == {"x": 200.0, "y": 0.0, "width": 100.0, "height": 100.0}
     assert report["planned_drawing_area"] == report["placement_bbox_area"]
+
+
+def test_solver_local_search_improves_opencrab_adjacency_order(tmp_path) -> None:
+    standards_csv = tmp_path / "standards.csv"
+    standards_csv.write_text(
+        "\n".join(
+            [
+                "세대수,,,,,900",
+                "문화,필수,그리너리 카페 (카페 + 작은도서관),,면적(m2),80",
+                "운동,필수,피트니스클럽,,면적(m2),60",
+                "운동,필수,골프클럽,,면적(m2),40",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    standards = {"household_count": 900, "standard_items": [{"source_file": str(standards_csv), "payload": {"selected_rows": []}}]}
+    constraints = {
+        "constraint_items": [
+            {"id": "shell", "role": "community_shell", "points": [[0, 0], [300, 0], [300, 100], [0, 100]]},
+            {"id": "mutable", "role": "mutable", "points": [[0, 0], [300, 0], [300, 100], [0, 100]]},
+        ]
+    }
+    topology = {
+        "edges": [
+            {
+                "id": "edge_lounge_golf",
+                "type": "ontology_cluster_adjacency_target",
+                "left_role": "greenery_lounge",
+                "right_role": "golf_screen",
+                "evidence": "OpenCrab topology prior",
+            }
+        ]
+    }
+
+    placement = build_initial_placement_report(standards, constraints, topology)
+    search = build_local_search_report(placement, topology)
+
+    assert placement["program_order"] == ["greenery_lounge", "fitness_gx", "golf_screen"]
+    assert search["status"] == "active"
+    assert search["initial_score"] < search["final_score"]
+    assert search["accepted_move_count"] == 1
+    assert search["satisfied_adjacency_count"] == 1
+    assert search["final_program_order"] == ["greenery_lounge", "golf_screen", "fitness_gx"]
 
 
 def test_solver_scale_calibration_enables_area_comparison(tmp_path) -> None:
