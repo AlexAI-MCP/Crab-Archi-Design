@@ -10,6 +10,7 @@ import zipfile
 from pathlib import Path
 
 from crab_archi_design.layout_svg_engine import draw_layout
+from crab_archi_design.solver.svg_mutation import apply_same_layer_geometry_patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -699,6 +700,44 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["same_layer_mutable_candidates"][0]["addressing"] == "source_svg_element_index"
     assert plan["same_layer_mutable_candidates"][0]["mutation_policy"] == "modify_or_remove_existing_element_only"
     assert "program_cluster_id" in plan["same_layer_mutable_candidates"][0]
+
+
+def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 80">
+          <rect id="shell" x="5" y="5" width="90" height="70" fill="none" stroke="#111"/>
+          <line id="partition" x1="20" y1="40" x2="80" y2="40" stroke="#111" stroke-width="5"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [
+            {
+                "element_index": 3,
+                "tag": "line",
+                "role_hint": "wall_candidate",
+                "bbox": {"x": 20, "y": 40, "width": 60, "height": 0},
+                "patch_priority": 100,
+                "mutation_policy": "modify_or_remove_existing_element_only",
+                "program_cluster_id": "program_cluster_001",
+                "program_role": "greenery_lounge",
+            }
+        ],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4)
+    partition = next(element for element in root.iter() if element.attrib.get("id") == "partition")
+
+    assert summary["mutation_strategy"] == "same_layer_geometry_patch"
+    assert summary["same_layer_geometry_mutation_count"] == 1
+    assert summary["same_layer_removal_count"] == 1
+    assert partition.attrib["x2"] == partition.attrib["x1"]
+    assert partition.attrib["y2"] == partition.attrib["y1"]
+    assert partition.attrib["display"] == "none"
+    assert partition.attrib["data-crab-original-x2"] == "80"
+    assert partition.attrib["data-crab-program-role"] == "greenery_lounge"
 
 
 def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -> None:
