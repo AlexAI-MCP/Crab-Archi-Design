@@ -30,6 +30,8 @@ SRC_ROOT = Path(__file__).resolve().parents[1]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from crab_archi_design.solver.patch_plan import build_opening_candidates, patch_role_priority
+
 
 def now() -> str:
     return datetime.now().isoformat(timespec="seconds")
@@ -2231,55 +2233,6 @@ def program_anchors_from_topology(topology: dict[str, Any] | None, mutable_polyg
     return anchors
 
 
-def patch_role_priority(role: str | None) -> float:
-    return {
-        "greenery_lounge": 700.0,
-        "fitness_gx": 600.0,
-        "golf_screen": 520.0,
-        "sauna_locker_shower": 460.0,
-        "hall_lobby": 380.0,
-        "management_support": 120.0,
-    }.get(str(role or ""), 0.0)
-
-
-def build_opening_candidates(mutable_candidates: list[dict[str, Any]], max_candidates: int) -> list[dict[str, Any]]:
-    opening_candidates: list[dict[str, Any]] = []
-    preferred_roles = {"greenery_lounge", "fitness_gx", "golf_screen", "hall_lobby", "sauna_locker_shower"}
-    line_candidates = [
-        item
-        for item in mutable_candidates
-        if item.get("tag") == "line" and item.get("program_cluster_id") and item.get("program_role") in preferred_roles
-    ]
-    fallback_candidates = [item for item in mutable_candidates if item.get("tag") == "line" and item.get("program_cluster_id")]
-    seen_indices: set[Any] = set()
-    for source in [*line_candidates, *fallback_candidates]:
-        element_index = source.get("element_index")
-        if element_index in seen_indices:
-            continue
-        seen_indices.add(element_index)
-        opening_index = len(opening_candidates) + 1
-        candidate = {
-            "operation": "split_line_for_opening",
-            "operation_id": f"opening_{opening_index:03d}",
-            "target_element_index": element_index,
-            "tag": source.get("tag"),
-            "bbox": source.get("bbox"),
-            "center": source.get("center"),
-            "program_cluster_id": source.get("program_cluster_id"),
-            "program_role": source.get("program_role"),
-            "space_region_ids": source.get("space_region_ids", []),
-            "addressing": "source_svg_element_index",
-            "mutation_policy": "split_existing_line_in_same_parent",
-            "opening_start_ratio": 0.42,
-            "opening_end_ratio": 0.58,
-            "reason": "Create a same-layer wall opening candidate on a recognized mutable program boundary.",
-        }
-        opening_candidates.append(candidate)
-        if len(opening_candidates) >= max_candidates:
-            break
-    return opening_candidates
-
-
 def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240) -> dict[str, Any]:
     project = load_manifest(project_id, root)
     recognition = load_recognition_manifest(project_id, root)
@@ -2339,7 +2292,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             mutable_candidates.append(record)
 
     mutable_candidates = sorted(mutable_candidates, key=lambda item: (float(item.get("patch_priority") or 0.0), bbox_area(item.get("bbox") or {})), reverse=True)
-    opening_candidates = build_opening_candidates(mutable_candidates, min(max_candidates, 24))
+    opening_candidates = build_opening_candidates(mutable_candidates, topology, min(max_candidates, 24))
 
     program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons)
     if not program_anchors:
@@ -5734,7 +5687,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
         {
             "id": "svg_patch_plan",
             "cli_subcommand": "svg-patch-plan",
-            "description": "Plan same-layer SVG element mutations from recognized topology instead of generating an overlay redraw layer.",
+            "description": "Plan topology-aware same-layer SVG element mutations and OpenCrab-adjacency opening candidates instead of generating an overlay redraw layer.",
             "required_args": ["--project-id"],
             "optional_args": ["--max-candidates"],
             "outputs": ["patch_plans/svg_patch_plan_###.json"],

@@ -598,6 +598,7 @@ def test_recognition_audit_gates_svg_mutation_readiness(tmp_path: Path) -> None:
               <rect x="130" y="145" width="12" height="12" fill="#111"/>
               <text transform="matrix(1 0 0 1 80 90)">작은도서관</text>
               <text x="80" y="220">피트니스</text>
+              <text x="300" y="220">홀</text>
             </svg>
             """
         ).strip(),
@@ -633,7 +634,7 @@ def test_recognition_audit_gates_svg_mutation_readiness(tmp_path: Path) -> None:
     assert audit["status"] == "pass"
     assert audit["design_generation_policy"] == "allow_projection_and_svg_mutation"
     assert all(audit["gates"].values())
-    assert audit["metrics"]["positioned_program_label_count"] == 2
+    assert audit["metrics"]["positioned_program_label_count"] == 3
     assert audit["metrics"]["column_candidate_count"] >= 1
 
 
@@ -653,6 +654,7 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
               <rect x="130" y="145" width="12" height="12" fill="#111"/>
               <text transform="matrix(1 0 0 1 80 90)">작은도서관</text>
               <text x="80" y="220">피트니스</text>
+              <text x="300" y="220">홀</text>
             </svg>
             """
         ).strip(),
@@ -693,7 +695,7 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["gates"]["overlay_generation_disallowed"] is True
     assert plan["metrics"]["mutable_candidate_count"] >= 1
     assert plan["metrics"]["opening_candidate_count"] >= 1
-    assert plan["metrics"]["program_anchor_count"] == 2
+    assert plan["metrics"]["program_anchor_count"] >= 3
     assert plan["metrics"]["program_cluster_count"] >= 1
     assert plan["metrics"]["program_cluster_candidate_count"] >= 1
     assert plan["program_clusters"]
@@ -703,6 +705,11 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert "program_cluster_id" in plan["same_layer_mutable_candidates"][0]
     assert plan["same_layer_opening_candidates"][0]["operation"] == "split_line_for_opening"
     assert plan["same_layer_opening_candidates"][0]["mutation_policy"] == "split_existing_line_in_same_parent"
+    opening_roles = {plan["same_layer_opening_candidates"][0]["program_role"], plan["same_layer_opening_candidates"][0]["connects_to_role"]}
+    assert "hall_lobby" in opening_roles
+    assert plan["same_layer_opening_candidates"][0]["topology_evidence"] == "OpenCrab topology prior"
+    assert plan["same_layer_opening_candidates"][0]["adjacency_edge_id"]
+    assert plan["same_layer_opening_candidates"][0]["opening_priority"] > 0
 
 
 def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
@@ -788,6 +795,7 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
               <rect id="column-a" x="130" y="145" width="12" height="12" fill="#111"/>
               <text x="80" y="90">작은도서관</text>
               <text x="80" y="220">피트니스</text>
+              <text x="300" y="220">홀</text>
             </svg>
             """
         ).strip(),

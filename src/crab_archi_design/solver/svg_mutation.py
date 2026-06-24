@@ -180,7 +180,7 @@ def split_line_for_opening(
 
 
 def opening_sort_key(candidate: dict[str, Any]) -> tuple[float, int]:
-    return (float(candidate.get("patch_priority") or 0.0), int(candidate.get("target_element_index") or 0))
+    return (float(candidate.get("opening_priority", candidate.get("patch_priority") or 0.0)), int(candidate.get("target_element_index") or 0))
 
 
 def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: int) -> dict[str, Any]:
@@ -207,6 +207,12 @@ def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: 
         result["target_element_index"] = element_index
         result["program_cluster_id"] = candidate.get("program_cluster_id")
         result["program_role"] = candidate.get("program_role")
+        result["connects_to_role"] = candidate.get("connects_to_role")
+        result["connects_to_cluster_id"] = candidate.get("connects_to_cluster_id")
+        result["adjacency_edge_id"] = candidate.get("adjacency_edge_id")
+        result["adjacency_rationale"] = candidate.get("adjacency_rationale")
+        result["topology_evidence"] = candidate.get("topology_evidence")
+        result["opening_priority"] = candidate.get("opening_priority")
         if result.get("status") == "applied":
             applied.append(result)
             opened_indices.add(element_index)
