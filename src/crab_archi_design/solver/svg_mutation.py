@@ -4,7 +4,7 @@ from typing import Any
 from xml.etree.ElementTree import Element
 
 from crab_archi_design.solver.svg_edit_ops import (
-    collapse_line_to_zero_length,
+    collapse_linear_element_to_zero_length,
     count_images,
     edit_capability_report,
     local_tag,
@@ -506,7 +506,7 @@ def remove_mutable_partition_element(element: Element) -> dict[str, Any]:
             "d",
         ],
     )
-    geometry_mutated = collapse_line_to_zero_length(element) if tag == "line" else False
+    geometry_mutated = collapse_linear_element_to_zero_length(element)
     element.set("display", "none")
     element.set("data-crab-action", "remove_internal_partition")
     element.set("data-crab-same-layer-removal", "true")
@@ -616,12 +616,17 @@ def apply_same_layer_geometry_patch(
     selected, mutable_locked_skips = select_candidates(plan, max_mutations, locked_indices=locked_indices)
     selected = [candidate for candidate in selected if selected_candidate_index(candidate) not in opened_indices and selected_candidate_index(candidate) not in endpoint_moved_indices]
     mutated: list[dict[str, Any]] = []
+    partition_skips: list[dict[str, Any]] = []
     missing: list[int] = []
     for candidate in selected:
         element_index = selected_candidate_index(candidate) or 0
         element = element_map.get(element_index)
         if element is None:
             missing.append(element_index)
+            continue
+        capability = edit_capability_report(element, parent_map.get(element_index), transform_map.get(element_index))
+        if capability["operations"]["partition_remove"]["status"] != "supported":
+            partition_skips.append(review_required_skip(candidate, element_index, "remove_internal_partition", capability, "partition_remove"))
             continue
         mutated.append(patch_existing_element(element, candidate, len(mutated) + 1))
 
@@ -645,6 +650,7 @@ def apply_same_layer_geometry_patch(
         "program_cluster_mutation_count": sum(1 for item in mutated if item.get("program_cluster_id")) + opening_program_cluster_count + endpoint_program_cluster_count,
         "missing_element_indices": missing,
         "mutations": mutated,
+        "partition_remove_skips": partition_skips,
         "opening_mutations": opening_summary["opening_mutations"],
         "opening_skips": opening_summary["opening_skips"],
         "endpoint_move_mutations": endpoint_summary["endpoint_move_mutations"],

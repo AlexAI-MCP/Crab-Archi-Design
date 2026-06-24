@@ -771,6 +771,89 @@ def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
     assert partition.attrib["data-crab-program-role"] == "greenery_lounge"
 
 
+def test_solver_same_layer_geometry_patch_collapses_polyline_and_path_partitions() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80">
+          <polyline id="poly-partition" points="10,20 40,20 80,20" fill="none" stroke="#111"/>
+          <path id="path-partition" d="M 10 50 L 40 50 L 80 50" fill="none" stroke="#111"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [
+            {
+                "element_index": 2,
+                "tag": "polyline",
+                "role_hint": "wall_candidate",
+                "bbox": {"x": 10, "y": 20, "width": 70, "height": 0},
+                "patch_priority": 120,
+                "mutation_policy": "modify_or_remove_existing_element_only",
+            },
+            {
+                "element_index": 3,
+                "tag": "path",
+                "role_hint": "wall_candidate",
+                "bbox": {"x": 10, "y": 50, "width": 70, "height": 0},
+                "patch_priority": 110,
+                "mutation_policy": "modify_or_remove_existing_element_only",
+            },
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4)
+    polyline = next(element for element in root.iter() if element.attrib.get("id") == "poly-partition")
+    path = next(element for element in root.iter() if element.attrib.get("id") == "path-partition")
+
+    assert summary["same_layer_removal_count"] == 2
+    assert summary["same_layer_geometry_mutation_count"] == 2
+    assert summary["edit_capability_summary"]["partition_remove"]["supported_count"] == 2
+    assert summary["partition_remove_skips"] == []
+    assert polyline.attrib["points"] == "10,20 10,20"
+    assert polyline.attrib["data-crab-original-points"] == "10,20 40,20 80,20"
+    assert path.attrib["d"] == "M 10,50 L 10,50"
+    assert path.attrib["data-crab-original-d"] == "M 10 50 L 40 50 L 80 50"
+    assert path.attrib["display"] == "none"
+
+
+def test_solver_same_layer_geometry_patch_skips_curved_path_partition_remove() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80">
+          <path id="curved-partition" d="M 10 40 C 30 20 60 60 90 40" fill="none" stroke="#111"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [
+            {
+                "element_index": 2,
+                "tag": "path",
+                "role_hint": "wall_candidate",
+                "bbox": {"x": 10, "y": 20, "width": 80, "height": 40},
+                "patch_priority": 120,
+                "mutation_policy": "modify_or_remove_existing_element_only",
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4)
+    path = next(element for element in root.iter() if element.attrib.get("id") == "curved-partition")
+    skip = summary["partition_remove_skips"][0]
+
+    assert summary["same_layer_removal_count"] == 0
+    assert summary["same_layer_geometry_mutation_count"] == 0
+    assert summary["edit_capability_summary"]["partition_remove"]["review_required_count"] == 1
+    assert skip["review_required"] is True
+    assert skip["reason"] == "unsupported path commands for CAD-like edit: C"
+    assert path.attrib["d"] == "M 10 40 C 30 20 60 60 90 40"
+    assert "display" not in path.attrib
+
+
 def test_solver_same_layer_geometry_patch_skips_locked_mutation_target() -> None:
     root = ET.fromstring(
         """

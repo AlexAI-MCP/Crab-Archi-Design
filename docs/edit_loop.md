@@ -377,6 +377,8 @@ This keeps the edit in the source SVG hierarchy: the target wall line or open si
 
 The same-layer engine delegates these primitive CAD-like operations to `solver/svg_edit_ops.py`; `solver/svg_mutation.py` only selects patch-plan candidates, enforces locked targets, and reports mutation/QA summaries. Before opening or endpoint geometry is touched, the engine runs the same capability checks used by `edit_capability_summary`; unsupported primitives are skipped with `review_required: true` and a concrete reason such as unsupported path commands or non-invertible transforms. This keeps future wall/path/polyline mutators testable without changing the higher-level OpenCrab/topology handoff.
 
+Internal partition removal uses the same native geometry principle: line, polyline, and editable open M/L/H/V path partitions are collapsed to zero length before being marked removed, while curved, arc, closed, or multi-subpath paths are skipped for review instead of being hidden as if they were safely edited.
+
 To test CAD-like line/polyline/path endpoint grip edits from `same_layer_endpoint_move_candidates`, pass the endpoint-move flag through the engine adapter. Candidate `x/y` and `dx/dy` values are interpreted in recognition/world coordinates; if the source element sits under SVG transforms, the same-layer engine converts the move back into that element's local attributes before writing the SVG. Path endpoint edits are limited to open single-subpath M/L/H/V paths; curved, arc, and closed paths stay unchanged and are reported as skips.
 
 ```bash

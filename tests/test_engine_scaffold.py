@@ -95,6 +95,8 @@ def test_svg_edit_ops_reports_supported_and_review_required_operations() -> None
     assert curved_report["operations"]["opening_split"]["status"] == "review_required"
     assert "C" in curved_report["operations"]["opening_split"]["reason"]
     assert curved_report["operations"]["endpoint_move"]["status"] == "review_required"
+    assert curved_report["operations"]["partition_remove"]["status"] == "review_required"
+    assert "C" in curved_report["operations"]["partition_remove"]["reason"]
 
 
 def test_intent_and_gate_contracts() -> None:

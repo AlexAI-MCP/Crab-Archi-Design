@@ -169,7 +169,14 @@ def edit_capability_report(
     if endpoint_reason is None:
         endpoint_reason = transform_reason
 
-    partition_reason = None if tag in {"line", "polyline", "path"} else "partition removal requires line/polyline/path source geometry"
+    if tag == "line":
+        partition_reason = None if line_points(element) is not None else "line requires x1/y1/x2/y2 attributes"
+    elif tag == "polyline":
+        partition_reason = None if len(polyline_points(element)) >= 2 else "polyline requires at least two points"
+    elif tag == "path":
+        partition_reason = path_reason
+    else:
+        partition_reason = "partition removal requires line/polyline/path source geometry"
 
     operations = {
         "opening_split": operation_status(opening_reason is None, opening_reason),
@@ -301,6 +308,35 @@ def collapse_line_to_zero_length(element: Element) -> bool:
     element.set("x2", element.attrib["x1"])
     element.set("y2", element.attrib["y1"])
     return True
+
+
+def collapse_polyline_to_zero_length(element: Element) -> bool:
+    points = polyline_points(element)
+    if len(points) < 2:
+        return False
+    preserve_original_attr(element, "points")
+    element.set("points", format_polyline_points([points[0], points[0]]))
+    return True
+
+
+def collapse_path_to_zero_length(element: Element) -> bool:
+    points = editable_path_points(element)
+    if len(points) < 2:
+        return False
+    preserve_original_attr(element, "d")
+    element.set("d", format_path_points([points[0], points[0]]))
+    return True
+
+
+def collapse_linear_element_to_zero_length(element: Element) -> bool:
+    tag = local_tag(element)
+    if tag == "line":
+        return collapse_line_to_zero_length(element)
+    if tag == "polyline":
+        return collapse_polyline_to_zero_length(element)
+    if tag == "path":
+        return collapse_path_to_zero_length(element)
+    return False
 
 
 def split_line_for_opening(
