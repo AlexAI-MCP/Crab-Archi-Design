@@ -970,6 +970,88 @@ def test_solver_same_layer_endpoint_move_updates_existing_polyline() -> None:
     assert wall.attrib["data-crab-same-layer-mutation"] == "same_layer_polyline_endpoint_move"
 
 
+def test_solver_endpoint_move_converts_world_delta_through_group_transform() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80">
+          <g id="scaled" transform="scale(2)">
+            <line id="movable-wall" x1="10" y1="20" x2="50" y2="20" stroke="#111" stroke-width="4"/>
+          </g>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_endpoint_move_candidates": [
+            {
+                "operation": "move_line_endpoint",
+                "operation_id": "endpoint_move_001",
+                "target_element_index": 3,
+                "tag": "line",
+                "endpoint": "end",
+                "dx": 20,
+                "dy": 0,
+                "endpoint_move_priority": 900,
+                "program_cluster_id": "program_cluster_003",
+                "program_role": "hall_lobby",
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_endpoint_moves=True, max_endpoint_moves=4)
+    wall = next(element for element in root.iter() if element.attrib.get("id") == "movable-wall")
+    mutation = summary["endpoint_move_mutations"][0]
+
+    assert summary["same_layer_endpoint_move_count"] == 1
+    assert wall.attrib["x2"] == "60"
+    assert wall.attrib["y2"] == "20"
+    assert wall.attrib["data-crab-transform-aware"] == "true"
+    assert mutation["transform_aware"] is True
+    assert mutation["before"] == {"x": 50.0, "y": 20.0}
+    assert mutation["after"] == {"x": 60.0, "y": 20.0}
+    assert mutation["world_before"] == {"x": 100.0, "y": 40.0}
+    assert mutation["world_after"] == {"x": 120.0, "y": 40.0}
+
+
+def test_solver_endpoint_move_converts_world_absolute_target_through_group_transform() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80">
+          <g id="scaled" transform="scale(2)">
+            <polyline id="movable-wall" points="10,20 30,20 50,20" fill="none" stroke="#111" stroke-width="4"/>
+          </g>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_endpoint_move_candidates": [
+            {
+                "operation": "move_line_endpoint",
+                "operation_id": "endpoint_move_001",
+                "target_element_index": 3,
+                "tag": "polyline",
+                "endpoint": "end",
+                "x": 140,
+                "endpoint_move_priority": 900,
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_endpoint_moves=True, max_endpoint_moves=4)
+    wall = next(element for element in root.iter() if element.attrib.get("id") == "movable-wall")
+    mutation = summary["endpoint_move_mutations"][0]
+
+    assert summary["same_layer_endpoint_move_count"] == 1
+    assert wall.attrib["points"] == "10,20 30,20 70,20"
+    assert wall.attrib["data-crab-transform-aware"] == "true"
+    assert mutation["world_after"] == {"x": 140.0, "y": 40.0}
+
+
 def test_solver_same_layer_endpoint_move_skips_locked_target() -> None:
     root = ET.fromstring(
         """

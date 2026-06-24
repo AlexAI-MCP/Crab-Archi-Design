@@ -3,7 +3,7 @@ from crab_archi_design.qa import gate_status
 from crab_archi_design.recognition import PARSER_VERSION, RECOGNITION_IR_SCHEMA, build_recognition_ir_v2, stable_node_id
 from crab_archi_design.recognition.ir import empty_recognition_ir
 from crab_archi_design.solver import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA, build_endpoint_move_candidates, build_opening_candidates
-from crab_archi_design.svg import BBox, apply_matrix, bbox_center, identity_matrix, multiply_matrix, point_in_polygon
+from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
 from crab_archi_design.svg.geometry import polygon_area, quantize_point
 from crab_archi_design.svg.transform import parse_transform
 
@@ -34,6 +34,9 @@ def test_svg_geometry_and_transform_helpers_are_deterministic() -> None:
     matrix = multiply_matrix(translate, scale)
     assert apply_matrix(identity_matrix(), (3.0, 4.0)) == (3.0, 4.0)
     assert apply_matrix(matrix, (3.0, 4.0)) == (16.0, 28.0)
+    assert inverse_matrix(matrix) is not None
+    assert apply_inverse_matrix(matrix, (16.0, 28.0)) == (3.0, 4.0)
+    assert apply_inverse_linear(matrix, (10.0, 0.0)) == (5.0, 0.0)
 
 
 def test_intent_and_gate_contracts() -> None:

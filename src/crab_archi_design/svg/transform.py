@@ -32,6 +32,37 @@ def apply_matrix(matrix: Matrix, point: Point) -> Point:
     return (a * x + c * y + e, b * x + d * y + f)
 
 
+def inverse_matrix(matrix: Matrix) -> Matrix | None:
+    a, b, c, d, e, f = matrix
+    determinant = a * d - b * c
+    if abs(determinant) < 1e-12:
+        return None
+    return (
+        d / determinant,
+        -b / determinant,
+        -c / determinant,
+        a / determinant,
+        (c * f - d * e) / determinant,
+        (b * e - a * f) / determinant,
+    )
+
+
+def apply_inverse_matrix(matrix: Matrix, point: Point) -> Point | None:
+    inverse = inverse_matrix(matrix)
+    if inverse is None:
+        return None
+    return apply_matrix(inverse, point)
+
+
+def apply_inverse_linear(matrix: Matrix, vector: Point) -> Point | None:
+    inverse = inverse_matrix(matrix)
+    if inverse is None:
+        return None
+    a, b, c, d, _, _ = inverse
+    x, y = vector
+    return (a * x + c * y, b * x + d * y)
+
+
 def parse_numbers(value: str) -> list[float]:
     return [float(item) for item in re.findall(SVG_NUMBER_RE, value.replace(",", " "))]
 

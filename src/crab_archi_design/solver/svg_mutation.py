@@ -4,7 +4,16 @@ from copy import deepcopy
 from typing import Any
 from xml.etree.ElementTree import Element
 
-from crab_archi_design.svg.transform import parse_numbers
+from crab_archi_design.svg.transform import (
+    Matrix,
+    apply_inverse_linear,
+    apply_inverse_matrix,
+    apply_matrix,
+    identity_matrix,
+    multiply_matrix,
+    parse_numbers,
+    parse_transform,
+)
 
 
 def local_tag(element: Element) -> str:
@@ -17,6 +26,29 @@ def count_images(root: Element) -> int:
 
 def existing_elements_by_document_index(root: Element) -> dict[int, Element]:
     return {index: element for index, element in enumerate(root.iter(), start=1)}
+
+
+def element_matrices_by_document_index(root: Element) -> dict[int, Matrix]:
+    matrices: dict[int, Matrix] = {}
+    index = 1
+
+    def walk(element: Element, parent_matrix: Matrix) -> None:
+        nonlocal index
+        current_index = index
+        index += 1
+        matrix = multiply_matrix(parent_matrix, parse_transform(element.attrib.get("transform")))
+        matrices[current_index] = matrix
+        for child in list(element):
+            walk(child, matrix)
+
+    walk(root, identity_matrix())
+    return matrices
+
+
+def matrix_is_identity(matrix: Matrix | None) -> bool:
+    if matrix is None:
+        return True
+    return all(abs(left - right) < 1e-9 for left, right in zip(matrix, identity_matrix()))
 
 
 def parents_by_document_index(root: Element) -> dict[int, Element | None]:
@@ -328,18 +360,41 @@ def endpoint_move_sort_key(candidate: dict[str, Any]) -> tuple[float, int]:
     return (float(candidate.get("endpoint_move_priority", candidate.get("patch_priority") or 0.0)), int(candidate.get("target_element_index") or 0))
 
 
-def endpoint_target(coords: tuple[float, float, float, float], endpoint: str, candidate: dict[str, Any]) -> tuple[float, float] | None:
+def endpoint_target(coords: tuple[float, float, float, float], endpoint: str, candidate: dict[str, Any], transform_matrix: Matrix | None = None) -> tuple[float, float] | None:
     x1, y1, x2, y2 = coords
     base_x, base_y = (x1, y1) if endpoint == "start" else (x2, y2)
+    matrix = transform_matrix or identity_matrix()
     has_absolute = candidate.get("x") is not None or candidate.get("y") is not None
     if has_absolute:
-        return (svg_float(candidate.get("x", base_x)), svg_float(candidate.get("y", base_y)))
+        if matrix_is_identity(matrix):
+            return (
+                svg_float(candidate["x"]) if candidate.get("x") is not None else base_x,
+                svg_float(candidate["y"]) if candidate.get("y") is not None else base_y,
+            )
+        base_world_x, base_world_y = apply_matrix(matrix, (base_x, base_y))
+        target_world = (
+            svg_float(candidate["x"]) if candidate.get("x") is not None else base_world_x,
+            svg_float(candidate["y"]) if candidate.get("y") is not None else base_world_y,
+        )
+        return apply_inverse_matrix(matrix, target_world)
     if candidate.get("dx") is None and candidate.get("dy") is None:
         return None
-    return (base_x + svg_float(candidate.get("dx", 0.0)), base_y + svg_float(candidate.get("dy", 0.0)))
+    delta = (svg_float(candidate.get("dx", 0.0)), svg_float(candidate.get("dy", 0.0)))
+    if not matrix_is_identity(matrix):
+        local_delta = apply_inverse_linear(matrix, delta)
+        if local_delta is None:
+            return None
+        delta = local_delta
+    return (base_x + delta[0], base_y + delta[1])
 
 
-def move_line_endpoint(element: Element, endpoint: str, candidate: dict[str, Any], operation_id: str = "endpoint_move") -> dict[str, Any]:
+def move_line_endpoint(
+    element: Element,
+    endpoint: str,
+    candidate: dict[str, Any],
+    operation_id: str = "endpoint_move",
+    transform_matrix: Matrix | None = None,
+) -> dict[str, Any]:
     tag = local_tag(element)
     coords = linear_endpoint_coords(element)
     if coords is None or endpoint not in {"start", "end"}:
@@ -350,18 +405,21 @@ def move_line_endpoint(element: Element, endpoint: str, candidate: dict[str, Any
             "geometry_mutated": False,
             "same_layer_endpoint_moved": False,
         }
-    target = endpoint_target(coords, endpoint, candidate)
+    matrix = transform_matrix or identity_matrix()
+    target = endpoint_target(coords, endpoint, candidate, transform_matrix=matrix)
     if target is None:
         return {
             "action": "move_line_endpoint",
             "status": "skipped",
-            "reason": "requires absolute x/y or relative dx/dy target",
+            "reason": "requires invertible transform and absolute x/y or relative dx/dy target",
             "geometry_mutated": False,
             "same_layer_endpoint_moved": False,
         }
 
     target_x, target_y = target
     source_x, source_y = (coords[0], coords[1]) if endpoint == "start" else (coords[2], coords[3])
+    source_world_x, source_world_y = apply_matrix(matrix, (source_x, source_y))
+    target_world_x, target_world_y = apply_matrix(matrix, (target_x, target_y))
     if format_svg_number(source_x) == format_svg_number(target_x) and format_svg_number(source_y) == format_svg_number(target_y):
         return {
             "action": "move_line_endpoint",
@@ -409,6 +467,8 @@ def move_line_endpoint(element: Element, endpoint: str, candidate: dict[str, Any
     element.set("data-crab-endpoint-move-operation", operation_id)
     element.set("data-crab-endpoint", endpoint)
     element.set("data-crab-geometry-mutated", "true")
+    if not matrix_is_identity(matrix):
+        element.set("data-crab-transform-aware", "true")
     return {
         "action": "move_line_endpoint",
         "status": "applied",
@@ -417,6 +477,9 @@ def move_line_endpoint(element: Element, endpoint: str, candidate: dict[str, Any
         "endpoint": endpoint,
         "before": {"x": source_x, "y": source_y},
         "after": {"x": target_x, "y": target_y},
+        "world_before": {"x": source_world_x, "y": source_world_y},
+        "world_after": {"x": target_world_x, "y": target_world_y},
+        "transform_aware": not matrix_is_identity(matrix),
         "geometry_mutated": True,
         "same_layer_endpoint_moved": True,
     }
@@ -428,10 +491,13 @@ def apply_endpoint_move_candidates(
     max_endpoint_moves: int,
     locked_indices: set[int] | None = None,
     excluded_indices: set[int] | None = None,
+    element_map: dict[int, Element] | None = None,
+    transform_map: dict[int, Matrix] | None = None,
 ) -> dict[str, Any]:
     locked_indices = locked_indices or set()
     excluded_indices = excluded_indices or set()
-    element_map = existing_elements_by_document_index(root)
+    element_map = element_map or existing_elements_by_document_index(root)
+    transform_map = transform_map or element_matrices_by_document_index(root)
     candidates = sorted(plan.get("same_layer_endpoint_move_candidates", []), key=endpoint_move_sort_key, reverse=True)
     applied: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -458,6 +524,7 @@ def apply_endpoint_move_candidates(
             str(candidate.get("endpoint") or "end"),
             candidate,
             operation_id=str(candidate.get("operation_id") or f"endpoint_move_{len(applied) + 1:03d}"),
+            transform_matrix=transform_map.get(element_index),
         )
         result["target_element_index"] = element_index
         result["program_cluster_id"] = candidate.get("program_cluster_id")
@@ -618,6 +685,7 @@ def apply_same_layer_geometry_patch(
     root.set("data-crab-overlay-elements-added", "0")
 
     element_map = existing_elements_by_document_index(root)
+    transform_map = element_matrices_by_document_index(root)
     locked_indices = locked_candidate_indices(plan)
     locked_before = capture_locked_element_states(root, plan)
     opening_summary = apply_opening_candidates(root, plan, max_openings, locked_indices=locked_indices) if apply_openings else {
@@ -636,6 +704,8 @@ def apply_same_layer_geometry_patch(
         max_endpoint_moves,
         locked_indices=locked_indices,
         excluded_indices=opened_indices,
+        element_map=element_map,
+        transform_map=transform_map,
     ) if apply_endpoint_moves else {
         "endpoint_move_candidate_count": len(plan.get("same_layer_endpoint_move_candidates", [])),
         "same_layer_endpoint_move_count": 0,
