@@ -138,6 +138,9 @@ crab-archi-design run-job \
 crab-archi-design recognize-svg \
   --project-id demo
 
+crab-archi-design recognize-svg-v2 \
+  --project-id demo
+
 crab-archi-design standards-attach \
   --project-id demo \
   --file examples/area_standard_sample.csv \
@@ -250,6 +253,8 @@ crab-archi-design qa --project-id demo
 
 `recognize-svg` writes `projects/<project>/recognition/recognition_manifest.json`. It stores SVG parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, label candidates, and program role hints before any layout mutation.
 
+`recognize-svg-v2` writes `projects/<project>/recognition/recognition_ir_v2.json`. It uses the modular parser stack (`safe_load`, `namespace`, `style`, `units`, `transform`, `shapes`, `path`, `recognition/classify`) to normalize SVG primitives into world coordinates. This is the parser/solver development path for real same-layer mutation: it keeps path geometry, inherited style, nested transforms, labels, raster detection, and role hints in a single IR instead of asking an LLM to redraw geometry.
+
 `topology-build` writes `projects/<project>/topology/topology_manifest.json`. It turns recognition candidates, standards rows, OpenCrab evidence, and doodle constraints into an explicit node/edge graph for labels, room envelopes, columns, walls, program standards, protected constraints, and ontology adjacency targets. `qa`, `edit-brief`, `project-status`, `design-handoff`, and `apply-edit` require this manifest to be active before a final SVG alternative can pass.
 
 `recognition-audit` writes `projects/<project>/audits/recognition_audit_###.json`. It is the recognition-first gate for real architectural drawings: program labels must have coordinates, wall and column candidates must be detected, the community shell/mutable zone/protected no-go zones must be confirmed, and topology must connect labels to room envelopes. If this audit is `review_required`, the correct next step is to improve recognition or user-confirmed constraints, not to generate another zoning block.
@@ -300,7 +305,10 @@ This repository contains the reusable framework shell, schemas, and orchestratio
 
 ```text
 Original SVG
-  -> Recognition IR
+  -> Recognition IR v2
+  -> Safe SVG load / style / units / transform normalization
+  -> Shape and path flattening
+  -> Role classification
   -> Recognition Manifest
   -> Constraint Graph
   -> OpenCrab MCP Ontology Evidence

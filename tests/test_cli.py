@@ -29,7 +29,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_request", "opencrab_sync", "topology_build", "recognition_audit", "svg_patch_plan", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
+    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_request", "opencrab_sync", "topology_build", "recognize_svg_v2", "recognition_audit", "svg_patch_plan", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
     create_job_tool = next(tool for tool in manifest["tools"] if tool["id"] == "create_job")
@@ -481,6 +481,48 @@ def test_recognize_svg_extracts_text_matrix_transform_positions(tmp_path: Path) 
     assert label["x"] == 123.5
     assert label["y"] == 234.5
     assert label["position_source"] == "matrix_transform"
+
+
+def test_recognize_svg_v2_writes_world_coordinate_ir(tmp_path: Path) -> None:
+    source_svg = tmp_path / "world.svg"
+    source_svg.write_text(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 100 50">
+              <g id="community" transform="translate(10 5)">
+                <rect id="room" x="1" y="2" width="3" height="4" fill="none" stroke="#111" stroke-width="0.5"/>
+                <text id="label" transform="matrix(1 0 0 1 20 15)">피트니스</text>
+              </g>
+            </svg>
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "init",
+        "--project-id",
+        "world-demo",
+        "--source-svg",
+        str(source_svg),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "recognize-svg-v2", "--project-id", "world-demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    ir = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert ir["schema"] == "crab-archi-design-recognition-ir-v2"
+    assert ir["parser_version"] == "2.0.0"
+    assert ir["document"]["coordinate_space"] == "world"
+    assert ir["document"]["unit_scale_mm"] == 1.0
+    room = next(node for node in ir["nodes"] if node["source_id"] == "room")
+    label = next(node for node in ir["nodes"] if node["source_id"] == "label")
+    assert room["bbox"] == {"x": 11.0, "y": 7.0, "w": 3.0, "h": 4.0}
+    assert label["text"]["anchor"] == [30.0, 20.0]
 
 
 def test_topology_build_creates_target_graph(tmp_path: Path) -> None:

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Proprietary" }
 authors = [{ name = "AlexAI-MCP" }]
-dependencies = []
+dependencies = ["defusedxml>=0.7.1"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

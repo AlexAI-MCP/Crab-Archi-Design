@@ -26,6 +26,9 @@ OPENCRAB_HOMEPAGE = "https://opencrab.sh"
 PROJECT_NAME = "crab-archi-design"
 PROJECT_VERSION = "0.1.0"
 SVG_NUMBER_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+SRC_ROOT = Path(__file__).resolve().parents[1]
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 
 def now() -> str:
@@ -1258,6 +1261,37 @@ def command_recognize_svg(args: argparse.Namespace) -> None:
                 "column_candidate_count": recognition_manifest["geometry_summary"].get("column_candidate_count", 0),
                 "wall_candidate_count": recognition_manifest["geometry_summary"].get("wall_candidate_count", 0),
                 "image_elements": recognition_manifest["source_svg_info"].get("image_elements"),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def command_recognize_svg_v2(args: argparse.Namespace) -> None:
+    from crab_archi_design.recognition import build_recognition_ir_v2
+
+    root = Path(args.project_root)
+    manifest = load_manifest(args.project_id, root)
+    source_svg = Path(args.source_svg).expanduser() if args.source_svg else Path(manifest["source_svg"]).expanduser()
+    if not source_svg.exists():
+        raise SystemExit(f"Missing source SVG: {source_svg}")
+    ir = build_recognition_ir_v2(source_svg)
+    ir["project_id"] = args.project_id
+    ir["created_at"] = now()
+    ir["required_for_final_svg"] = False
+    out = project_dir(args.project_id, root) / "recognition" / "recognition_ir_v2.json"
+    write_json(out, ir)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": ir.get("status"),
+                "schema": ir.get("schema"),
+                "parser_version": ir.get("parser_version"),
+                "node_count": len(ir.get("nodes", [])),
+                "raster_count": len(ir.get("raster_nodes", [])),
+                "warning_count": len(ir.get("warnings", [])),
+                "summary": ir.get("summary", {}),
             },
             ensure_ascii=False,
         )
@@ -5110,6 +5144,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["topology_manifest_active"],
         },
         {
+            "id": "recognize_svg_v2",
+            "cli_subcommand": "recognize-svg-v2",
+            "description": "Create a safe-parser, world-coordinate Recognition IR v2 for parser/solver development.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--source-svg"],
+            "outputs": ["recognition/recognition_ir_v2.json"],
+            "gates": ["safe_svg_parse", "world_coordinate_ir"],
+        },
+        {
             "id": "recognition_audit",
             "cli_subcommand": "recognition-audit",
             "description": "Audit whether the target SVG is understood well enough for ontology projection and native SVG mutation.",
@@ -5572,6 +5615,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_recognize.add_argument("--source-svg", help="Override the project source SVG.")
     p_recognize.add_argument("--max-labels", type=int, default=500)
     p_recognize.set_defaults(func=command_recognize_svg)
+
+    p_recognize_v2 = sub.add_parser("recognize-svg-v2", help="Create a world-coordinate Recognition IR v2 from the source SVG.")
+    p_recognize_v2.add_argument("--project-id", required=True)
+    p_recognize_v2.add_argument("--source-svg", help="Override the project source SVG.")
+    p_recognize_v2.set_defaults(func=command_recognize_svg_v2)
 
     p_topology = sub.add_parser("topology-build", help="Build a target topology graph from recognition, standards, evidence, and constraints.")
     p_topology.add_argument("--project-id", required=True)

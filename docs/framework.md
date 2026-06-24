@@ -82,6 +82,8 @@ recognize-svg
 
 `recognize-svg` converts the original SVG into a lightweight recognition manifest: XML parse status, viewBox, primitive counts, primitive bounding boxes, column candidates, wall candidates, room-envelope candidates, raster image detection, text label candidates, and program role hints.
 
+`recognize-svg-v2` converts the original SVG into the development-grade Recognition IR v2. It uses the split parser engines in `crab_archi_design.svg`: safe XML loading, namespace normalization, inherited presentation style, unit/viewBox normalization, affine transform accumulation, primitive shape extraction, path flattening, and geometry metrics. `crab_archi_design.recognition` then assigns stable node ids and role hints. This is the path that should feed future topology and same-layer SVG mutation work.
+
 `topology-build` converts recognition, standards, OpenCrab evidence, and drawing constraints into a target topology manifest. It creates nodes for program labels, room envelopes, structural columns, wall candidates, standards roles, and constraints, then links them with edges such as label-inside-envelope, column-inside-envelope, standard-applies-to-program, protected-geometry, and OpenCrab adjacency targets.
 
 `recognition-audit` is the design-generation brake. It checks that the target drawing is understood as an architectural plan before ontology projection mutates SVG geometry: positioned program labels, detected wall and column candidates, confirmed community shell, mutable zone, protected no-go zones, active topology, and label-to-envelope topology edges. If it fails, the workflow should return to recognition and constraint correction instead of asking an engine to draw a new layout.
@@ -99,6 +101,15 @@ The Python engine should be split before the production parser and solver are ex
 - `crab_archi_design.qa`: hard/soft gate helpers shared by recognition, topology, solver, and export checks.
 
 This split keeps the production path from becoming another overlay engine. SVG parsing creates IR, intent stays declarative, the solver mutates recognized elements, and QA decides whether the result is releasable.
+
+The split is intentionally closer to multiple small engines than one large Python script:
+
+1. Parser engines create stable geometry facts from SVG.
+2. Recognition engines attach architectural role hints and confidence.
+3. Topology engines connect labels, envelopes, protected elements, standards, and OpenCrab evidence.
+4. Intent engines translate natural language and doodles into bounded edit JSON.
+5. Solver engines search only inside mutable regions and emit native SVG patches.
+6. QA engines reject candidates that violate shell, parking, core, column, ramp, egress, standards, or topology constraints.
 
 `create-job` is the product-facing first-run entry point. It turns uploaded source SVG, standards, OpenCrab MCP evidence, doodle constraints, prompt text, engine policy, and export settings into a `crab-archi-design-job-spec-v1` file that can be validated and executed by workers without hand-written JSON. With `--brief`, it also writes a Markdown review brief summarizing the job, referenced files, validation checks, and next commands.
 

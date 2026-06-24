@@ -1,6 +1,6 @@
 from crab_archi_design.intents import DESIGN_INTENT_SCHEMA, EDIT_INTENT_SCHEMA, validate_intent_schema
 from crab_archi_design.qa import gate_status
-from crab_archi_design.recognition import PARSER_VERSION, RECOGNITION_IR_SCHEMA, stable_node_id
+from crab_archi_design.recognition import PARSER_VERSION, RECOGNITION_IR_SCHEMA, build_recognition_ir_v2, stable_node_id
 from crab_archi_design.recognition.ir import empty_recognition_ir
 from crab_archi_design.solver import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA
 from crab_archi_design.svg import BBox, apply_matrix, bbox_center, identity_matrix, multiply_matrix, point_in_polygon
@@ -42,3 +42,95 @@ def test_intent_and_gate_contracts() -> None:
     assert validate_intent_schema({"schema": "unknown"})
     assert gate_status({"a": True, "b": True}) == "pass"
     assert gate_status({"a": True, "b": False}) == "review_required"
+
+
+def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:
+    source = tmp_path / "nested.svg"
+    source.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 100 50">
+          <g id="outer" transform="translate(10 5)">
+            <g id="inner" transform="scale(2)">
+              <rect id="r1" x="1" y="2" width="3" height="4" fill="none" stroke="#111" stroke-width="0.5"/>
+              <text id="t1" x="5" y="6">라운지</text>
+            </g>
+          </g>
+        </svg>
+        """.strip(),
+        encoding="utf-8",
+    )
+    ir = build_recognition_ir_v2(source)
+    assert ir["schema"] == RECOGNITION_IR_SCHEMA
+    assert ir["status"] == "active"
+    assert ir["document"]["coordinate_space"] == "world"
+    assert ir["document"]["unit_scale_mm"] == 1.0
+    rect = next(node for node in ir["nodes"] if node["source_id"] == "r1")
+    text = next(node for node in ir["nodes"] if node["source_id"] == "t1")
+    assert rect["group_path"] == ["outer", "inner"]
+    assert rect["bbox"] == {"x": 12.0, "y": 9.0, "w": 6.0, "h": 8.0}
+    assert text["text"]["anchor"] == [20.0, 17.0]
+    assert text["text"]["content"] == "라운지"
+
+
+def test_recognition_ir_v2_strips_svg_doctype_without_resolving(tmp_path) -> None:
+    source = tmp_path / "doctype.svg"
+    source.write_text(
+        """
+        <?xml version="1.0"?>
+        <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+          <rect id="r1" x="1" y="1" width="2" height="3"/>
+        </svg>
+        """.strip(),
+        encoding="utf-8",
+    )
+    ir = build_recognition_ir_v2(source)
+    assert ir["status"] == "active"
+    assert ir["summary"]["primitive_count"] == 1
+
+
+def test_recognition_ir_v2_flattens_basic_paths_in_world_coordinates(tmp_path) -> None:
+    source = tmp_path / "path.svg"
+    source.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 100 50">
+          <g id="outer" transform="translate(10 5)">
+            <g id="inner" transform="scale(2)">
+              <path id="p1" d="M1 2 H4 V6 H1 Z" fill="none" stroke="#111" stroke-width="0.5"/>
+            </g>
+          </g>
+        </svg>
+        """.strip(),
+        encoding="utf-8",
+    )
+    ir = build_recognition_ir_v2(source)
+    path = next(node for node in ir["nodes"] if node["source_id"] == "p1")
+    assert path["tag"] == "path"
+    assert path["bbox"] == {"x": 12.0, "y": 9.0, "w": 6.0, "h": 8.0}
+    assert path["is_closed"] is True
+    assert path["analytic"]["subpath_count"] == 1
+    assert ir["warnings"] == []
+
+
+def test_recognition_ir_v2_classifies_basic_drawing_roles(tmp_path) -> None:
+    source = tmp_path / "roles.svg"
+    source.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600">
+          <rect id="room" x="50" y="50" width="700" height="420" fill="none" stroke="#111" stroke-width="5"/>
+          <rect id="column" x="100" y="100" width="22" height="22" fill="#111"/>
+          <line id="wall" x1="90" y1="260" x2="690" y2="260" stroke="#111" stroke-width="7"/>
+          <text id="label" x="80" y="90">피트니스</text>
+        </svg>
+        """.strip(),
+        encoding="utf-8",
+    )
+    ir = build_recognition_ir_v2(source)
+    roles = {node["source_id"]: node["role_hint"] for node in ir["nodes"]}
+    assert roles["room"] == "room_envelope"
+    assert roles["column"] == "column"
+    assert roles["wall"] == "wall"
+    assert roles["label"] == "label"
+    assert ir["summary"]["room_envelope_candidate_count"] == 1
+    assert ir["summary"]["column_candidate_count"] == 1
+    assert ir["summary"]["wall_candidate_count"] == 1

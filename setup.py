@@ -8,6 +8,7 @@ setup(
     package_dir={"": "src"},
     packages=find_packages("src"),
     python_requires=">=3.9",
+    install_requires=["defusedxml>=0.7.1"],
     extras_require={"test": ["pytest>=8"]},
     entry_points={
         "console_scripts": [
