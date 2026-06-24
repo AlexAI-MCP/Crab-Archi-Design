@@ -470,6 +470,28 @@ def test_recognition_ir_v2_flattens_basic_paths_in_world_coordinates(tmp_path) -
     assert ir["warnings"] == []
 
 
+def test_recognition_ir_v2_flattens_elliptical_arc_paths(tmp_path) -> None:
+    source = tmp_path / "arc.svg"
+    source.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+          <path id="arc-wall" d="M 0 20 A 10 10 0 0 1 20 20" fill="none" stroke="#111" stroke-width="1"/>
+        </svg>
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    ir = build_recognition_ir_v2(source)
+    path = next(node for node in ir["nodes"] if node["source_id"] == "arc-wall")
+
+    assert path["tag"] == "path"
+    assert path["bbox"] == {"x": 0.0, "y": 10.0, "w": 20.0, "h": 10.0}
+    assert len(path["polygon"]) > 2
+    assert path["polygon"][len(path["polygon"]) // 2] == [10.0, 10.0]
+    assert path["analytic"]["subpath_count"] == 1
+    assert ir["warnings"] == []
+
+
 def test_recognition_ir_v2_expands_defs_symbol_use_instances(tmp_path) -> None:
     source = tmp_path / "symbol_use.svg"
     source.write_text(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import re
 
 from crab_archi_design.svg.geometry import Point
@@ -209,12 +210,20 @@ def parse_path(raw: str | None, curve_steps: int = 8) -> ParsedPath:
                 if any(item is None for item in args):
                     warnings.append("path_arc_incomplete")
                     break
+                rx = float(args[0])  # type: ignore[arg-type]
+                ry = float(args[1])  # type: ignore[arg-type]
+                x_axis_rotation = float(args[2])  # type: ignore[arg-type]
+                large_arc_flag = bool(int(float(args[3])))  # type: ignore[arg-type]
+                sweep_flag = bool(int(float(args[4])))  # type: ignore[arg-type]
                 end = (float(args[5]), float(args[6]))  # type: ignore[arg-type]
                 if relative:
                     end = current[0] + end[0], current[1] + end[1]
-                append_point(end)
+                arc_points, arc_warning = flatten_arc(current, rx, ry, x_axis_rotation, large_arc_flag, sweep_flag, end, curve_steps)
+                for point in arc_points:
+                    append_point(point)
                 current = end
-                warnings.append("path_arc_approximated_as_line")
+                if arc_warning:
+                    warnings.append(arc_warning)
             last_cubic_control = None
             last_quad_control = None
             continue
@@ -264,3 +273,84 @@ def quadratic_point(start: Point, control: Point, end: Point, t: float) -> Point
     x = inv**2 * start[0] + 2 * inv * t * control[0] + t**2 * end[0]
     y = inv**2 * start[1] + 2 * inv * t * control[1] + t**2 * end[1]
     return x, y
+
+
+def flatten_arc(
+    start: Point,
+    rx: float,
+    ry: float,
+    x_axis_rotation: float,
+    large_arc_flag: bool,
+    sweep_flag: bool,
+    end: Point,
+    curve_steps: int,
+) -> tuple[list[Point], str | None]:
+    rx = abs(rx)
+    ry = abs(ry)
+    if points_equal(start, end):
+        return [], "path_arc_same_point"
+    if rx < 1e-12 or ry < 1e-12:
+        return [end], "path_arc_degenerate_as_line"
+
+    phi = math.radians(x_axis_rotation % 360.0)
+    cos_phi = math.cos(phi)
+    sin_phi = math.sin(phi)
+    x1, y1 = start
+    x2, y2 = end
+    dx2 = (x1 - x2) / 2.0
+    dy2 = (y1 - y2) / 2.0
+    x1p = cos_phi * dx2 + sin_phi * dy2
+    y1p = -sin_phi * dx2 + cos_phi * dy2
+
+    radius_scale = (x1p**2) / (rx**2) + (y1p**2) / (ry**2)
+    if radius_scale > 1.0:
+        scale = math.sqrt(radius_scale)
+        rx *= scale
+        ry *= scale
+
+    rx_sq = rx**2
+    ry_sq = ry**2
+    x1p_sq = x1p**2
+    y1p_sq = y1p**2
+    denominator = rx_sq * y1p_sq + ry_sq * x1p_sq
+    if denominator < 1e-12:
+        return [end], "path_arc_degenerate_as_line"
+    sign = -1.0 if large_arc_flag == sweep_flag else 1.0
+    numerator = max(0.0, rx_sq * ry_sq - rx_sq * y1p_sq - ry_sq * x1p_sq)
+    factor = sign * math.sqrt(numerator / denominator)
+    cxp = factor * (rx * y1p / ry)
+    cyp = factor * (-ry * x1p / rx)
+
+    cx = cos_phi * cxp - sin_phi * cyp + (x1 + x2) / 2.0
+    cy = sin_phi * cxp + cos_phi * cyp + (y1 + y2) / 2.0
+
+    start_vector = ((x1p - cxp) / rx, (y1p - cyp) / ry)
+    end_vector = ((-x1p - cxp) / rx, (-y1p - cyp) / ry)
+    theta1 = vector_angle((1.0, 0.0), start_vector)
+    delta_theta = vector_angle(start_vector, end_vector)
+    if not sweep_flag and delta_theta > 0:
+        delta_theta -= math.tau
+    elif sweep_flag and delta_theta < 0:
+        delta_theta += math.tau
+
+    steps = max(1, int(math.ceil(abs(delta_theta) / math.pi * max(1, curve_steps))))
+    points: list[Point] = []
+    for step in range(1, steps + 1):
+        theta = theta1 + delta_theta * (step / steps)
+        cos_theta = math.cos(theta)
+        sin_theta = math.sin(theta)
+        x = cx + rx * cos_phi * cos_theta - ry * sin_phi * sin_theta
+        y = cy + rx * sin_phi * cos_theta + ry * cos_phi * sin_theta
+        points.append((x, y))
+    points[-1] = end
+    return points, None
+
+
+def vector_angle(left: Point, right: Point) -> float:
+    dot = left[0] * right[0] + left[1] * right[1]
+    determinant = left[0] * right[1] - left[1] * right[0]
+    return math.atan2(determinant, dot)
+
+
+def points_equal(left: Point, right: Point, tolerance: float = 1e-12) -> bool:
+    return abs(left[0] - right[0]) <= tolerance and abs(left[1] - right[1]) <= tolerance
