@@ -173,6 +173,21 @@ projects/a801-802-opencrab-test/audits/recognition_audit_###.json
 
 The audit must pass before a production redraw workflow should proceed. It checks positioned program labels, wall candidates, column candidates, confirmed community shell, mutable zone, protected no-go zones, active topology, and label-to-envelope edges. If it fails, fix recognition or constraints first.
 
+After the audit, create a same-layer mutation plan:
+
+```bash
+crab-archi-design --project-root projects svg-patch-plan \
+  --project-id a801-802-opencrab-test
+```
+
+This creates:
+
+```text
+projects/a801-802-opencrab-test/patch_plans/svg_patch_plan_###.json
+```
+
+This is the preferred path for real design work. It does not draw a new alternative layer. It records which existing SVG elements can be modified or removed inside the mutable community zone, which elements are locked by protected zones, and which program labels anchor the existing topology.
+
 ## Natural Language
 
 ```bash
@@ -335,7 +350,7 @@ crab-archi-design --project-root projects apply-edit \
   --skip-preview
 ```
 
-For the built-in room-envelope redraw path, initialize the project with `--engine-adapter layout-svg-engine` or pass it at runtime:
+For diagnostic end-to-end testing only, the built-in room-envelope redraw path can still be run with `--engine-adapter layout-svg-engine`:
 
 ```bash
 crab-archi-design --project-root projects apply-edit \
@@ -345,7 +360,7 @@ crab-archi-design --project-root projects apply-edit \
   --skip-preview
 ```
 
-The layout engine writes a native SVG candidate with a standards-backed room-envelope redraw layer and an engine report. It uses the community shell, mutable zone, and no-go constraints to keep the proposed program rooms inside the allowed area, masks the old mutable/internal layout with native SVG geometry, then adds a plan-detail layer for partition walls, door openings, the corridor axis, and lounge/hall glazing.
+The layout engine writes a native SVG candidate with a standards-backed room-envelope redraw layer and an engine report. This is useful for smoke testing the pipeline, but it is not the target production method. Production alternatives should consume `svg-patch-plan` and modify existing SVG elements in the same drawing layer.
 
 For a diagnostic smoke test, `reference-svg-engine` remains available. It writes a native SVG candidate with an additive reference layer and verifies that recognition, OpenCrab evidence, standards, constraints, intents, solver handoff, artifact discovery, QA, and review panels all connect correctly.
 
@@ -442,18 +457,19 @@ For architectural layout revisions, use this order:
 6. `constraint-attach`: convert shell/no-go/mutable doodles into enforced project constraints.
 7. `topology-build`: connect recognition, standards, evidence, and constraints into the target topology graph.
 8. `recognition-audit`: block SVG mutation until the target drawing is actually understood.
-9. Natural language: describe the design intent and constraints.
-10. Doodle: mark the exact edge, room, circulation line, or wall segment.
-11. `edit-brief`: check recognition, topology, evidence, standards, constraints, source SVG parse, and sketch bounds.
-12. `project-status`: confirm the project is ready for solver handoff.
-13. `design-handoff`: package the current topology, evidence, standards, constraints, and prompt blocks.
-14. `apply-edit`: generate a native SVG candidate.
-15. `review-panel`: inspect before/after.
-16. `project-status`: confirm the latest candidate and review artifacts are complete.
-17. `export-package`: bundle the latest artifacts for handoff.
-18. `verify-package`: validate the ZIP before upload or handoff.
-19. `doctor`: diagnose local install, project gates, OpenCrab configuration, candidate readiness, and optional package verification.
-20. Repeat with another short prompt or doodle repair intent.
+9. `svg-patch-plan`: identify existing SVG elements to mutate in place.
+10. Natural language: describe the design intent and constraints.
+11. Doodle: mark the exact edge, room, circulation line, or wall segment.
+12. `edit-brief`: check recognition, topology, evidence, standards, constraints, source SVG parse, and sketch bounds.
+13. `project-status`: confirm the project is ready for solver handoff.
+14. `design-handoff`: package the current topology, evidence, standards, constraints, and prompt blocks.
+15. `apply-edit`: generate a native SVG candidate.
+16. `review-panel`: inspect before/after.
+17. `project-status`: confirm the latest candidate and review artifacts are complete.
+18. `export-package`: bundle the latest artifacts for handoff.
+19. `verify-package`: validate the ZIP before upload or handoff.
+20. `doctor`: diagnose local install, project gates, OpenCrab configuration, candidate readiness, and optional package verification.
+21. Repeat with another short prompt or doodle repair intent.
 
 ## Safety Order
 

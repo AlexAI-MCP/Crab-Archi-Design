@@ -479,6 +479,42 @@ def point_in_bbox(point: tuple[float, float], box: dict[str, float], pad: float 
     return box.get("x", 0.0) - pad <= x <= box.get("x", 0.0) + box.get("width", 0.0) + pad and box.get("y", 0.0) - pad <= y <= box.get("y", 0.0) + box.get("height", 0.0) + pad
 
 
+def point_in_polygon(point: tuple[float, float], polygon: list[tuple[float, float]]) -> bool:
+    if len(polygon) < 3:
+        return False
+    x, y = point
+    inside = False
+    previous_x, previous_y = polygon[-1]
+    for current_x, current_y in polygon:
+        crosses = (current_y > y) != (previous_y > y)
+        if crosses:
+            at_x = (previous_x - current_x) * (y - current_y) / ((previous_y - current_y) or 1e-9) + current_x
+            if x < at_x:
+                inside = not inside
+        previous_x, previous_y = current_x, current_y
+    return inside
+
+
+def bbox_sample_points(box: dict[str, float]) -> list[tuple[float, float]]:
+    x = box.get("x", 0.0)
+    y = box.get("y", 0.0)
+    width = box.get("width", 0.0)
+    height = box.get("height", 0.0)
+    return [
+        (x, y),
+        (x + width, y),
+        (x, y + height),
+        (x + width, y + height),
+        (x + width * 0.5, y + height * 0.5),
+    ]
+
+
+def bbox_touches_polygon(box: dict[str, float], polygon: list[tuple[float, float]]) -> bool:
+    if not box or not polygon:
+        return False
+    return any(point_in_polygon(point, polygon) for point in bbox_sample_points(box)) or any(point_in_bbox(point, box) for point in polygon)
+
+
 def label_point(label: dict[str, Any]) -> tuple[float, float] | None:
     if label.get("x") is None or label.get("y") is None:
         return None
@@ -1632,6 +1668,189 @@ def command_recognition_audit(args: argparse.Namespace) -> None:
                 "blocking_issue_count": len(audit["blocking_issues"]),
                 "failed_gates": [key for key, value in audit["gates"].items() if not value],
                 "metrics": audit["metrics"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def constraint_polygons(manifest: dict[str, Any] | None, roles: set[str]) -> list[dict[str, Any]]:
+    polygons = []
+    for item in (manifest or {}).get("constraint_items", []):
+        role = item.get("role")
+        if role not in roles:
+            continue
+        points: list[tuple[float, float]] = []
+        for point in item.get("points", []):
+            if isinstance(point, list) and len(point) >= 2:
+                points.append((svg_float(point[0]), svg_float(point[1])))
+        if len(points) >= 3:
+            polygons.append(
+                {
+                    "id": item.get("id"),
+                    "role": role,
+                    "stroke_id": item.get("stroke_id"),
+                    "target_hint": item.get("target_hint"),
+                    "points": points,
+                }
+            )
+    return polygons
+
+
+def candidate_patch_record(item: dict[str, Any], classification: str, reason: str) -> dict[str, Any]:
+    box = item.get("bbox") or {}
+    return {
+        "element_index": item.get("index"),
+        "tag": item.get("tag"),
+        "id": item.get("id"),
+        "class": item.get("class"),
+        "role_hint": item.get("role_hint"),
+        "bbox": box,
+        "center": list(bbox_center(box)) if box else None,
+        "classification": classification,
+        "reason": reason,
+        "addressing": "source_svg_element_index",
+        "mutation_policy": "modify_or_remove_existing_element_only" if classification == "mutable_candidate" else "lock_existing_element",
+    }
+
+
+def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240) -> dict[str, Any]:
+    project = load_manifest(project_id, root)
+    recognition = load_recognition_manifest(project_id, root)
+    topology = load_topology_manifest(project_id, root)
+    constraints = load_constraint_manifest(project_id, root)
+    recognition_audit_path = latest_recognition_audit_path(project_id, root)
+    recognition_audit = read_json(recognition_audit_path) if recognition_audit_path else None
+    geometry = (recognition or {}).get("geometry_candidates", {})
+    mutable_polygons = constraint_polygons(constraints, {"mutable", "projectable"})
+    shell_polygons = constraint_polygons(constraints, {"community_shell"})
+    protected_polygons = constraint_polygons(constraints, {"no_go", "lock", "protect"})
+    mutable_candidates: list[dict[str, Any]] = []
+    locked_candidates: list[dict[str, Any]] = []
+
+    geometry_items = [
+        *geometry.get("wall_candidates", []),
+        *geometry.get("room_envelope_candidates", []),
+        *geometry.get("column_candidates", []),
+    ]
+    seen: set[tuple[Any, Any]] = set()
+    for item in geometry_items:
+        key = (item.get("index"), item.get("tag"))
+        if key in seen:
+            continue
+        seen.add(key)
+        box = item.get("bbox") or {}
+        if not box:
+            continue
+        role_hint = item.get("role_hint")
+        in_mutable = any(bbox_touches_polygon(box, polygon["points"]) for polygon in mutable_polygons)
+        in_shell = any(bbox_touches_polygon(box, polygon["points"]) for polygon in shell_polygons) if shell_polygons else True
+        in_protected = any(bbox_touches_polygon(box, polygon["points"]) for polygon in protected_polygons)
+        if role_hint == "column_candidate":
+            locked_candidates.append(candidate_patch_record(item, "locked_candidate", "recognized column candidate"))
+            continue
+        if in_protected:
+            locked_candidates.append(candidate_patch_record(item, "locked_candidate", "inside protected no-go/lock/protect polygon"))
+            continue
+        if in_mutable and in_shell and role_hint in {"wall_candidate", "room_envelope_candidate"}:
+            mutable_candidates.append(candidate_patch_record(item, "mutable_candidate", "existing SVG element intersects mutable community zone"))
+
+    program_anchors = []
+    for item in (recognition or {}).get("program_label_candidates", []):
+        point = label_point(item)
+        if not point:
+            continue
+        in_mutable = any(point_in_polygon(point, polygon["points"]) for polygon in mutable_polygons)
+        in_shell = any(point_in_polygon(point, polygon["points"]) for polygon in shell_polygons) if shell_polygons else True
+        if in_mutable and in_shell:
+            program_anchors.append(
+                {
+                    "text": item.get("text"),
+                    "role_hint": item.get("role_hint"),
+                    "point": list(point),
+                    "position_source": item.get("position_source"),
+                    "use": "anchor_same_layer_patch_to_existing_room_label",
+                }
+            )
+
+    gates = {
+        "recognition_manifest_active": recognition_status(recognition) == "active",
+        "topology_manifest_active": topology_status(topology) == "active",
+        "recognition_audit_pass": recognition_audit is not None and recognition_audit.get("status") == "pass",
+        "mutable_zone_found": bool(mutable_polygons),
+        "protected_zone_found": bool(protected_polygons),
+        "same_layer_mutable_candidates_found": bool(mutable_candidates),
+        "program_anchors_found": bool(program_anchors),
+        "overlay_generation_disallowed": True,
+    }
+    return {
+        "schema": "crab-archi-design-svg-patch-plan-v1",
+        "created_at": now(),
+        "project_id": project_id,
+        "source_svg": project.get("source_svg"),
+        "status": "pass" if all(gates.values()) else "review_required",
+        "mutation_strategy": "same_layer_element_patch",
+        "non_goal": "Do not create a new zoning overlay layer or mask the existing plan as the final design.",
+        "required_before_svg_mutation": True,
+        "gates": gates,
+        "blocking_issues": [
+            "Recognition audit must pass before same-layer SVG mutation." if not gates["recognition_audit_pass"] else None,
+            "Mutable candidates were not found inside the confirmed mutable zone." if not gates["same_layer_mutable_candidates_found"] else None,
+            "Program label anchors were not found inside the mutable community zone." if not gates["program_anchors_found"] else None,
+            "Protected no-go/lock/protect zones must be confirmed before editing existing SVG elements." if not gates["protected_zone_found"] else None,
+        ],
+        "constraints_used": {
+            "mutable_polygon_count": len(mutable_polygons),
+            "community_shell_polygon_count": len(shell_polygons),
+            "protected_polygon_count": len(protected_polygons),
+        },
+        "program_anchors": program_anchors[:max_candidates],
+        "same_layer_mutable_candidates": mutable_candidates[:max_candidates],
+        "locked_candidates": locked_candidates[:max_candidates],
+        "operation_templates": [
+            {
+                "operation": "delete_or_trim_internal_partition",
+                "target": "same_layer_mutable_candidates",
+                "rule": "Only remove or trim existing wall/partition elements whose bbox intersects mutable zone and avoids protected zones.",
+            },
+            {
+                "operation": "move_or_extend_existing_wall_segment",
+                "target": "same_layer_mutable_candidates",
+                "rule": "Move endpoints of existing line/polyline/path segments; do not create a full new zoning block.",
+            },
+            {
+                "operation": "retarget_room_label_anchor",
+                "target": "program_anchors",
+                "rule": "Use existing program label positions to keep edits tied to the original drawing topology.",
+            },
+        ],
+        "metrics": {
+            "mutable_candidate_count": len(mutable_candidates),
+            "locked_candidate_count": len(locked_candidates),
+            "program_anchor_count": len(program_anchors),
+            "source_geometry_candidate_count": len(geometry_items),
+        },
+    }
+
+
+def command_svg_patch_plan(args: argparse.Namespace) -> None:
+    root = Path(args.project_root)
+    load_manifest(args.project_id, root)
+    plan = build_svg_patch_plan(args.project_id, root, args.max_candidates)
+    plan["blocking_issues"] = [issue for issue in plan["blocking_issues"] if issue]
+    out_dir = project_dir(args.project_id, root) / "patch_plans"
+    seq = next_sequence(out_dir, "svg_patch_plan_*.json")
+    out = out_dir / f"svg_patch_plan_{seq:03d}.json"
+    write_json(out, plan)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": plan["status"],
+                "mutation_strategy": plan["mutation_strategy"],
+                "blocking_issue_count": len(plan["blocking_issues"]),
+                "metrics": plan["metrics"],
+                "gates": plan["gates"],
             },
             ensure_ascii=False,
         )
@@ -4899,6 +5118,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["program_labels_positioned", "columns_detected", "community_shell_confirmed", "mutable_zone_confirmed", "protected_zone_confirmed", "label_topology_edges_present"],
         },
         {
+            "id": "svg_patch_plan",
+            "cli_subcommand": "svg-patch-plan",
+            "description": "Plan same-layer SVG element mutations from recognized topology instead of generating an overlay redraw layer.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--max-candidates"],
+            "outputs": ["patch_plans/svg_patch_plan_###.json"],
+            "gates": ["same_layer_mutable_candidates_found", "program_anchors_found", "overlay_generation_disallowed", "recognition_audit_pass"],
+        },
+        {
             "id": "opencrab_request",
             "cli_subcommand": "opencrab-request",
             "description": "Create an OpenCrab MCP tool-call request package from the current project context before evidence sync.",
@@ -5084,7 +5312,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "saas_job_runner": ["create_job", "validate_job", "run_job"],
             "new_project_to_candidate": ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"],
             "revision_loop": ["revision_run", "export_package", "verify_package", "doctor", "release_audit"],
-            "manual_revision_loop": ["topology_build", "recognition_audit", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
+            "manual_revision_loop": ["topology_build", "recognition_audit", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
             "opencrab_first_manual_loop": ["opencrab_request", "opencrab_sync", "constraint_attach", "topology_build", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
             "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
@@ -5352,6 +5580,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_recognition_audit = sub.add_parser("recognition-audit", help="Gate SVG mutation on target drawing recognition quality.")
     p_recognition_audit.add_argument("--project-id", required=True)
     p_recognition_audit.set_defaults(func=command_recognition_audit)
+
+    p_svg_patch_plan = sub.add_parser("svg-patch-plan", help="Plan same-layer SVG element mutations inside confirmed mutable zones.")
+    p_svg_patch_plan.add_argument("--project-id", required=True)
+    p_svg_patch_plan.add_argument("--max-candidates", type=int, default=240)
+    p_svg_patch_plan.set_defaults(func=command_svg_patch_plan)
 
     p_standards = sub.add_parser("standards-attach", help="Attach standards files such as CSV, Excel, PDF, or JSON to a project.")
     p_standards.add_argument("--project-id", required=True)

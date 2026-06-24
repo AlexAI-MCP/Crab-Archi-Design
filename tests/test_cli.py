@@ -29,7 +29,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["opencrab"]["homepage"] == "https://opencrab.sh"
     assert manifest["transport"]["primary"] == "exec"
     tool_ids = {tool["id"] for tool in manifest["tools"]}
-    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_request", "opencrab_sync", "topology_build", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
+    assert {"create_job", "run_job", "validate_job", "workflow_run", "revision_run", "opencrab_request", "opencrab_sync", "topology_build", "recognition_audit", "svg_patch_plan", "prompt_edit", "sketch_intent", "apply_edit", "export_package", "verify_package", "doctor", "release_audit"} <= tool_ids
     assert "mcp_config" in tool_ids
     assert "mcp_smoke" in tool_ids
     create_job_tool = next(tool for tool in manifest["tools"] if tool["id"] == "create_job")
@@ -38,6 +38,7 @@ def test_mcp_manifest_describes_exec_tools(tmp_path: Path) -> None:
     assert manifest["recommended_sequences"]["saas_job_runner"] == ["create_job", "validate_job", "run_job"]
     assert manifest["recommended_sequences"]["new_project_to_candidate"] == ["workflow_run", "export_package", "verify_package", "doctor", "release_audit"]
     assert manifest["recommended_sequences"]["opencrab_first_manual_loop"][0] == "opencrab_request"
+    assert manifest["recommended_sequences"]["manual_revision_loop"][:3] == ["topology_build", "recognition_audit", "svg_patch_plan"]
     assert manifest["recommended_sequences"]["mcp_server_bootstrap"] == ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"]
     assert manifest["security"]["source_svg_in_package"].startswith("opt-in")
 
@@ -582,6 +583,61 @@ def test_recognition_audit_gates_svg_mutation_readiness(tmp_path: Path) -> None:
     assert all(audit["gates"].values())
     assert audit["metrics"]["positioned_program_label_count"] == 2
     assert audit["metrics"]["column_candidate_count"] >= 1
+
+
+def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> None:
+    source_svg = tmp_path / "patch-plan.svg"
+    source_svg.write_text(
+        textwrap.dedent(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 340">
+              <rect x="30" y="30" width="360" height="250" fill="none" stroke="#111" stroke-width="5"/>
+              <line x1="60" y1="160" x2="360" y2="160" stroke="#111" stroke-width="7"/>
+              <line x1="250" y1="50" x2="250" y2="260" stroke="#111" stroke-width="7"/>
+              <rect x="130" y="145" width="12" height="12" fill="#111"/>
+              <text transform="matrix(1 0 0 1 80 90)">작은도서관</text>
+              <text x="80" y="220">피트니스</text>
+            </svg>
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    constraint = tmp_path / "constraint.json"
+    constraint.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [
+                    {"stroke_id": "shell", "mode": "community_shell", "target_hint": "community_outer_shell", "points": [[30, 30], [390, 30], [390, 280], [30, 280], [30, 30]]},
+                    {"stroke_id": "mutable", "mode": "mutable", "target_hint": "internal_community_program_rework", "points": [[50, 50], [370, 50], [370, 260], [50, 260], [50, 50]]},
+                    {"stroke_id": "no-go", "mode": "no_go", "target_hint": "parking_core_no_go", "points": [[400, 40], [470, 40], [470, 130], [400, 130], [400, 40]]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for args in [
+        ("init", "--project-id", "patch-demo", "--source-svg", str(source_svg), "--ontology-pack", "community_svg_topology_ontology_v2"),
+        ("recognize-svg", "--project-id", "patch-demo"),
+        ("constraint-attach", "--project-id", "patch-demo", "--sketch", str(constraint)),
+        ("topology-build", "--project-id", "patch-demo"),
+        ("recognition-audit", "--project-id", "patch-demo"),
+    ]:
+        result = run_cli("--project-root", str(tmp_path / "projects"), *args, cwd=ROOT)
+        assert result.returncode == 0, result.stderr
+
+    result = run_cli("--project-root", str(tmp_path / "projects"), "svg-patch-plan", "--project-id", "patch-demo", cwd=ROOT)
+    assert result.returncode == 0, result.stderr
+    plan = json.loads(Path(result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert plan["schema"] == "crab-archi-design-svg-patch-plan-v1"
+    assert plan["status"] == "pass"
+    assert plan["mutation_strategy"] == "same_layer_element_patch"
+    assert plan["gates"]["overlay_generation_disallowed"] is True
+    assert plan["metrics"]["mutable_candidate_count"] >= 1
+    assert plan["metrics"]["program_anchor_count"] == 2
+    assert plan["same_layer_mutable_candidates"][0]["addressing"] == "source_svg_element_index"
+    assert plan["same_layer_mutable_candidates"][0]["mutation_policy"] == "modify_or_remove_existing_element_only"
 
 
 def test_edit_brief_flags_out_of_viewbox_sketch(tmp_path: Path) -> None:

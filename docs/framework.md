@@ -60,6 +60,8 @@ recognize-svg
   -> topology/topology_manifest.json
   -> recognition-audit
   -> audits/recognition_audit_###.json
+  -> svg-patch-plan
+  -> patch_plans/svg_patch_plan_###.json
   -> prompt-edit / sketch-intent
   -> edit-brief
   -> project-status
@@ -83,6 +85,8 @@ recognize-svg
 `topology-build` converts recognition, standards, OpenCrab evidence, and drawing constraints into a target topology manifest. It creates nodes for program labels, room envelopes, structural columns, wall candidates, standards roles, and constraints, then links them with edges such as label-inside-envelope, column-inside-envelope, standard-applies-to-program, protected-geometry, and OpenCrab adjacency targets.
 
 `recognition-audit` is the design-generation brake. It checks that the target drawing is understood as an architectural plan before ontology projection mutates SVG geometry: positioned program labels, detected wall and column candidates, confirmed community shell, mutable zone, protected no-go zones, active topology, and label-to-envelope topology edges. If it fails, the workflow should return to recognition and constraint correction instead of asking an engine to draw a new layout.
+
+`svg-patch-plan` is the first same-layer mutation artifact. It does not draw an alternative. It identifies existing source SVG elements inside confirmed mutable zones, records their element index/tag/bbox addressing, separates locked candidates in protected zones, anchors changes to recognized program labels, and sets the mutation strategy to `same_layer_element_patch`. A production engine should edit these existing elements rather than adding a new zoning overlay layer.
 
 `create-job` is the product-facing first-run entry point. It turns uploaded source SVG, standards, OpenCrab MCP evidence, doodle constraints, prompt text, engine policy, and export settings into a `crab-archi-design-job-spec-v1` file that can be validated and executed by workers without hand-written JSON. With `--brief`, it also writes a Markdown review brief summarizing the job, referenced files, validation checks, and next commands.
 
@@ -114,7 +118,7 @@ recognize-svg
 
 The engine adapter may be a Python script, local executable, or MCP-backed wrapper. It receives environment variables such as `CRAB_ARCHI_SOLVER_INPUT`, `CRAB_ARCHI_RUN_DIR`, `CRAB_ARCHI_PROJECT_DIR`, and `CRAB_ARCHI_SOURCE_SVG`.
 
-The built-in `layout-svg-engine` adapter is now treated as a diagnostic room-envelope solver, not a sufficient production design author by itself. It reads `solver_input.json`, uses community shell and mutable-zone constraints as the redraw boundary, searches for a shell-aware layout box that avoids no-go envelopes, preserves recognized column candidates as a top SVG layer, applies standards rows to greenery lounge, fitness, golf, wellness, hall, and support programs, and writes a native SVG candidate with a cleanup mask for old mutable/internal layout geometry, partition rectangles, partition-wall overlays, door openings, a corridor axis, lounge/hall glazing, and labels. Its report records the repair strategy and rejects candidates when room boxes still escape the community shell, intrude into no-go boxes, leave too little usable coverage inside the selected layout box, omit the cleanup mask or plan-detail layer, create extreme sliver-like room aspects, or break the large-program hierarchy of greenery lounge, fitness, and golf.
+The built-in `layout-svg-engine` adapter is now treated as a diagnostic room-envelope solver, not a sufficient production design author by itself. It writes an overlay-style redraw layer, which is useful for end-to-end QA but not acceptable as the high-quality architectural output. The production direction is to consume `svg-patch-plan` and mutate recognized source SVG elements in place.
 
 The built-in `reference-svg-engine` adapter remains available for end-to-end diagnostics. It copies the source SVG into a native SVG candidate, adds a compact reference layer with operations/evidence/standards/constraints summary, and writes a quality-gated engine report.
 

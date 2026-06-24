@@ -242,7 +242,9 @@ crab-archi-design qa --project-id demo
 
 `apply-edit` reads structured natural-language and doodle intents plus recognition, topology, evidence, standards, and constraints, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`.
 
-`layout-svg-engine` is the built-in room-envelope adapter. It reads the community shell, mutable zone, no-go constraints, recognized column candidates, standards rows, and OpenCrab-backed intent, then creates a native SVG redraw layer with a cleanup mask for the old mutable/internal layout, program rooms, partition walls, door openings, a corridor axis, interior glazing at the lounge/hall connection, labels, preserved shell/column markup, and no raster overlay.
+`svg-patch-plan` writes `projects/<project>/patch_plans/svg_patch_plan_###.json`. It is the preferred bridge from recognition into real SVG editing: it identifies existing source SVG elements by element index/tag/bbox, separates mutable wall/room candidates from locked geometry, anchors edits to existing program labels, and explicitly disallows zoning overlay generation. Production redraw engines should consume this plan and mutate existing SVG elements in place.
+
+`layout-svg-engine` is retained as a diagnostic room-envelope adapter only. It reads the community shell, mutable zone, no-go constraints, recognized column candidates, standards rows, and OpenCrab-backed intent, then creates a native SVG redraw layer with a cleanup mask for the old mutable/internal layout, program rooms, partition walls, door openings, a corridor axis, interior glazing at the lounge/hall connection, labels, preserved shell/column markup, and no raster overlay. This overlay-style candidate is not the target production workflow for high-quality architectural drawings.
 
 `reference-svg-engine` remains available as a diagnostic adapter. It consumes the same solver input and emits a native SVG candidate plus engine report, using only additive SVG elements and no raster overlay.
 
