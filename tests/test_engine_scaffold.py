@@ -10,6 +10,7 @@ from crab_archi_design.solver import (
     build_opening_candidates,
     evaluate_topology_fit,
     extract_program_targets,
+    infer_architectural_scale,
 )
 from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening, split_polyline_for_opening
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
@@ -503,6 +504,45 @@ def test_solver_feasible_and_objective_report_constraints_and_targets(tmp_path) 
     assert report["covered_target_role_count"] == 2
     assert report["adjacency_summary"]["ontology_cluster_adjacency_target_count"] == 1
     assert {item["role"] for item in report["role_evaluations"]} == {"greenery_lounge", "fitness_gx"}
+
+
+def test_solver_scale_calibration_enables_area_comparison(tmp_path) -> None:
+    standards_csv = tmp_path / "standards.csv"
+    standards_csv.write_text(
+        "\n".join(
+            [
+                "세대수,,,,,900",
+                "문화,필수,그리너리 카페 (카페 + 작은도서관),,면적(m2),7.056",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    standards = {"household_count": 900, "standard_items": [{"source_file": str(standards_csv), "payload": {"selected_rows": []}}]}
+    topology = {
+        "nodes": [
+            {"id": "cluster_lounge", "type": "program_cluster", "role": "greenery_lounge", "area": 1000.0, "space_region_count": 1},
+        ],
+        "edges": [],
+    }
+    recognition_ir = {
+        "nodes": [
+            {"id": "text_dim_1", "tag": "text", "text": {"content": "8400", "anchor": [50.0, -18.0]}, "centroid": [50.0, -18.0]},
+            {"id": "line_dim_1", "tag": "line", "is_closed": False, "bbox": {"x": 0.0, "y": 0.0, "w": 100.0, "h": 0.0}},
+            {"id": "text_dim_2", "tag": "text", "text": {"content": "4200", "anchor": [118.0, 25.0]}, "centroid": [118.0, 25.0]},
+            {"id": "line_dim_2", "tag": "line", "is_closed": False, "bbox": {"x": 140.0, "y": 0.0, "w": 0.0, "h": 50.0}},
+        ]
+    }
+
+    scale = infer_architectural_scale(recognition_ir)
+    report = evaluate_topology_fit(topology, standards, {"constraint_items": []}, recognition_ir)
+    lounge = next(item for item in report["role_evaluations"] if item["role"] == "greenery_lounge")
+
+    assert scale["status"] == "active"
+    assert scale["mm_per_world"] == 84.0
+    assert report["scale_calibration"]["status"] == "active"
+    assert lounge["area_comparison_status"] == "calibrated_comparison"
+    assert lounge["recognized_area_m2"] == 7.056
+    assert lounge["area_delta_m2"] == 0.0
 
 
 def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:

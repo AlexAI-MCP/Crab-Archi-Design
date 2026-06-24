@@ -2304,7 +2304,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
     mutable_candidates = sorted(mutable_candidates, key=lambda item: (float(item.get("patch_priority") or 0.0), bbox_area(item.get("bbox") or {})), reverse=True)
     opening_candidates = build_opening_candidates(mutable_candidates, topology, min(max_candidates, 24))
     endpoint_move_candidates = build_endpoint_move_candidates(mutable_candidates, topology, min(max_candidates, 24))
-    solver_objective = evaluate_topology_fit(topology, standards, constraints)
+    solver_objective = evaluate_topology_fit(topology, standards, constraints, recognition_ir)
 
     program_anchors = program_anchors_from_topology(topology, mutable_polygons, shell_polygons)
     if not program_anchors:
@@ -2404,6 +2404,8 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             "target_program_count": solver_objective.get("target_program_count", 0),
             "covered_target_role_count": solver_objective.get("covered_target_role_count", 0),
             "feasible_available_area_estimate": solver_objective.get("feasible_report", {}).get("available_area_estimate"),
+            "scale_calibration_status": solver_objective.get("scale_calibration", {}).get("status"),
+            "scale_calibration_confidence": solver_objective.get("scale_calibration", {}).get("confidence"),
         },
         "program_clusters": program_clusters[:max_candidates],
     }

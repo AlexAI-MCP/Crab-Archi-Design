@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from crab_archi_design.solver.feasible import build_feasible_report
+from crab_archi_design.solver.scale import infer_architectural_scale
 from crab_archi_design.solver.sizing import extract_program_targets
 
 
@@ -70,15 +71,50 @@ def adjacency_summary(topology: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def evaluate_topology_fit(topology: dict[str, Any] | None, standards: dict[str, Any] | None, constraints: dict[str, Any] | None) -> dict[str, Any]:
+def calibrated_area_m2(area_world: float | None, scale_report: dict[str, Any]) -> float | None:
+    if area_world is None or scale_report.get("status") != "active":
+        return None
+    mm_per_world = scale_report.get("mm_per_world")
+    try:
+        scale = float(mm_per_world)
+    except (TypeError, ValueError):
+        return None
+    return round(float(area_world) * scale * scale / 1_000_000.0, 3)
+
+
+def area_comparison(target_m2: Any, recognized_m2: float | None, has_cluster: bool) -> dict[str, Any]:
+    if not has_cluster or target_m2 is None:
+        return {"status": "missing_target_or_cluster"}
+    if recognized_m2 is None:
+        return {"status": "needs_drawing_scale_calibration"}
+    target = float(target_m2)
+    delta = round(recognized_m2 - target, 3)
+    ratio = round(recognized_m2 / target, 3) if target > 0 else None
+    return {
+        "status": "calibrated_comparison",
+        "recognized_area_m2": recognized_m2,
+        "area_delta_m2": delta,
+        "area_ratio": ratio,
+    }
+
+
+def evaluate_topology_fit(
+    topology: dict[str, Any] | None,
+    standards: dict[str, Any] | None,
+    constraints: dict[str, Any] | None,
+    recognition_ir: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     targets = extract_program_targets(standards)
     target_by_role = {str(target["role"]): target for target in targets}
     cluster_by_role = program_cluster_summary(topology)
+    scale_report = infer_architectural_scale(recognition_ir)
     roles = sorted(set(target_by_role) | set(cluster_by_role))
     role_evaluations: list[dict[str, Any]] = []
     for role in roles:
         target = target_by_role.get(role, {})
         cluster = cluster_by_role.get(role, {})
+        recognized_area_m2 = calibrated_area_m2(cluster.get("recognized_area_world"), scale_report)
+        comparison = area_comparison(target.get("target_area_m2"), recognized_area_m2, bool(cluster))
         role_evaluations.append(
             {
                 "role": role,
@@ -89,7 +125,10 @@ def evaluate_topology_fit(topology: dict[str, Any] | None, standards: dict[str, 
                 "cluster_count": cluster.get("cluster_count", 0),
                 "space_region_count": cluster.get("space_region_count", 0),
                 "recognized_area_world": cluster.get("recognized_area_world"),
-                "area_comparison_status": "needs_drawing_scale_calibration" if target and cluster else "missing_target_or_cluster",
+                "recognized_area_m2": comparison.get("recognized_area_m2"),
+                "area_delta_m2": comparison.get("area_delta_m2"),
+                "area_ratio": comparison.get("area_ratio"),
+                "area_comparison_status": comparison["status"],
                 "cluster_ids": cluster.get("cluster_ids", []),
             }
         )
@@ -106,6 +145,7 @@ def evaluate_topology_fit(topology: dict[str, Any] | None, standards: dict[str, 
         "covered_target_role_count": len(covered_roles),
         "covered_target_roles": covered_roles,
         "missing_target_roles": missing_target_roles,
+        "scale_calibration": scale_report,
         "role_evaluations": role_evaluations,
         "feasible_report": {
             key: value
