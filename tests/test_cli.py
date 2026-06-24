@@ -1643,7 +1643,10 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     assert report["status"] == "pass"
     assert report["checks"]["engine_report_status_pass"] is True
     assert report["checks"]["engine_quality_gates_pass"] is True
+    assert report["checks"]["candidate_hard_gates_pass"] is True
+    assert report["candidate_quality"]["hard_status"] == "pass"
     assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["locked_geometry_unchanged"] is True
+    assert report["candidate_quality"]["gate_groups"]["engine_hard"]["crab-archi-design-same-layer-engine-report-v1.locked_geometry_unchanged"] is True
     assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["locked_targets_not_selected"] is True
     assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["same_layer_endpoint_moves_applied_or_not_requested"] is True
     alternative = Path(report["copied_artifacts"]["svg"][0])
@@ -1946,6 +1949,8 @@ def test_apply_edit_runs_builtin_reference_engine(tmp_path: Path) -> None:
     assert report["checks"]["engine_report_status_pass"] is True
     assert report["checks"]["engine_quality_gates_pass"] is True
     assert report["checks"]["native_svg_no_images"] is True
+    assert report["checks"]["candidate_hard_gates_pass"] is True
+    assert report["candidate_quality"]["hard_status"] == "pass"
     alternative = Path(report["copied_artifacts"]["svg"][0])
     if not alternative.is_absolute():
         alternative = command_cwd / alternative
@@ -2048,6 +2053,9 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     assert report["checks"]["engine_report_quality_found"] is True
     assert report["checks"]["engine_report_status_pass"] is True
     assert report["checks"]["engine_quality_gates_pass"] is True
+    assert report["checks"]["candidate_hard_gates_pass"] is True
+    assert report["candidate_quality"]["hard_status"] == "pass"
+    assert report["candidate_quality"]["gate_groups"]["engine_hard"]["crab-archi-design-layout-engine-report-v1.rooms_inside_community_shell"] is True
     alternative = Path(report["copied_artifacts"]["svg"][0])
     alternative_text = alternative.read_text(encoding="utf-8")
     assert "crab_archi_design_layout_engine_candidate" in alternative_text
@@ -2798,6 +2806,9 @@ def test_apply_edit_runs_engine_and_collects_svg(tmp_path: Path) -> None:
     assert report["checks"]["engine_report_quality_found"] is False
     assert report["checks"]["engine_report_status_pass"] is False
     assert report["checks"]["engine_quality_gates_pass"] is False
+    assert report["checks"]["candidate_hard_gates_pass"] is False
+    assert report["candidate_quality"]["hard_status"] == "review_required"
+    assert "engine_report_quality_found" in report["candidate_quality"]["hard_failures"]
     assert report["checks"]["native_svg_no_images"] is True
     assert report["checks"]["recognition_manifest_active"] is True
     assert report["checks"]["topology_manifest_active"] is True

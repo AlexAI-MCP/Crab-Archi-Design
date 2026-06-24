@@ -125,6 +125,8 @@ The split is intentionally closer to multiple small engines than one large Pytho
 
 `revision-run` is the product-facing repeat-edit contract for an existing project. It can attach updated constraints, rebuild topology, add natural-language and doodle intents, rebuild the edit brief and design handoff, run the selected engine adapter, generate a review panel, and record the full revision in `revisions/revision_run_###.json`.
 
+`apply-edit` now records a normalized `candidate_quality` report in addition to raw engine gates. `qa.gates` classifies native SVG, shell containment, no-go intrusion, locked geometry, OpenCrab/evidence readiness, and standards readiness as hard gates, while coverage, aspect efficiency, program hierarchy, door/opening planning, corridor axes, and edit-capability detail are tracked as soft quality gates. This gives the architect-facing loop a common QA vocabulary even when different deterministic engines produce different report schemas.
+
 `opencrab-sync` is the MCP bridge. It normalizes `opencrab_query`, `opencrab_search_documents`, or similar OpenCrab MCP JSON results into a project sync artifact and appends the extracted evidence to the evidence manifest.
 
 `constraint-attach` converts doodle strokes into enforceable project constraints such as community shell, no-go zones, lock boundaries, mutable zones, and projectable zones.

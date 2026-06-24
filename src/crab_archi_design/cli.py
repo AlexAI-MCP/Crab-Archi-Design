@@ -43,6 +43,7 @@ SRC_ROOT = Path(__file__).resolve().parents[1]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from crab_archi_design.qa import build_candidate_quality_report
 from crab_archi_design.solver.objective import evaluate_topology_fit
 from crab_archi_design.solver.patch_plan import build_endpoint_move_candidates, build_opening_candidates, patch_role_priority
 from crab_archi_design.solver.sizing import standard_role_rows_from_manifest
@@ -3600,7 +3601,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
 
     svg_info = inspect_svg(alternative_svg) if alternative_svg else {"xml_parse": "missing", "image_elements": None}
     engine_report_quality = summarize_engine_reports(copied["report"])
-    checks = {
+    checks: dict[str, Any] = {
         "engine_returncode_zero": proc.returncode == 0,
         "engine_report_quality_found": engine_report_quality["quality_found"],
         "engine_report_status_pass": engine_report_quality["all_status_pass"],
@@ -3615,6 +3616,8 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "standards_manifest_active": standards_status(standards_manifest) == "active",
         "intent_count_positive": len(intent_paths) > 0,
     }
+    candidate_quality = build_candidate_quality_report(checks, engine_report_quality)
+    checks["candidate_hard_gates_pass"] = candidate_quality["hard_status"] == "pass"
     report = {
         "schema": "crab-archi-design-apply-edit-report-v1",
         "created_at": now(),
@@ -3628,6 +3631,7 @@ def command_apply_edit(args: argparse.Namespace) -> None:
         "copied_artifacts": copied,
         "svg_inspection": svg_info,
         "engine_report_quality": engine_report_quality,
+        "candidate_quality": candidate_quality,
         "checks": checks,
         "status": "pass" if all(checks.values()) else "review_required",
     }
@@ -5955,7 +5959,7 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "required_args": ["--project-id"],
             "optional_args": ["--intent", "--engine-adapter", "--engine-cwd", "--engine-arg", "--candidate-svg", "--candidate-report", "--preview", "--skip-preview", "--timeout"],
             "outputs": ["runs/apply_edit_###/apply_edit_report.json", "alternatives/alternative_###.svg"],
-            "gates": ["native_svg_no_images", "latest_apply_pass", "latest_alternative_native_svg", "locked_geometry_unchanged", "locked_targets_not_selected"],
+            "gates": ["native_svg_no_images", "candidate_hard_gates_pass", "latest_apply_pass", "latest_alternative_native_svg", "locked_geometry_unchanged", "locked_targets_not_selected"],
         },
         {
             "id": "review_panel",

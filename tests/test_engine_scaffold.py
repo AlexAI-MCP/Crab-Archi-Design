@@ -1,5 +1,5 @@
 from crab_archi_design.intents import DESIGN_INTENT_SCHEMA, EDIT_INTENT_SCHEMA, validate_intent_schema
-from crab_archi_design.qa import gate_status
+from crab_archi_design.qa import build_candidate_quality_report, gate_status
 from crab_archi_design.recognition import PARSER_VERSION, RECOGNITION_IR_SCHEMA, build_recognition_ir_v2, stable_node_id
 from crab_archi_design.recognition.ir import empty_recognition_ir
 from crab_archi_design.solver import (
@@ -165,6 +165,40 @@ def test_intent_and_gate_contracts() -> None:
     assert validate_intent_schema({"schema": "unknown"})
     assert gate_status({"a": True, "b": True}) == "pass"
     assert gate_status({"a": True, "b": False}) == "review_required"
+
+
+def test_candidate_quality_report_classifies_hard_and_soft_gates() -> None:
+    report = build_candidate_quality_report(
+        {
+            "engine_returncode_zero": True,
+            "candidate_svg_exists": True,
+            "native_svg_no_images": True,
+            "recognition_manifest_active": True,
+            "topology_manifest_active": True,
+            "opencrab_evidence_verified": True,
+            "constraint_manifest_active": True,
+            "standards_manifest_active": True,
+            "intent_count_positive": True,
+        },
+        {
+            "gates": {
+                "layout": {
+                    "native_svg_only": True,
+                    "no_raster_overlay_added": True,
+                    "rooms_inside_community_shell": True,
+                    "no_go_intrusion_free": True,
+                    "layout_coverage_sufficient": False,
+                    "large_program_hierarchy": True,
+                }
+            }
+        },
+    )
+
+    assert report["hard_status"] == "pass"
+    assert report["soft_status"] == "review_required"
+    assert report["hard_failure_count"] == 0
+    assert report["soft_failures"] == ["layout.layout_coverage_sufficient"]
+    assert "layout.rooms_inside_community_shell" in report["gate_groups"]["engine_hard"]
 
 
 def test_solver_patch_plan_uses_topology_adjacency_for_openings() -> None:
