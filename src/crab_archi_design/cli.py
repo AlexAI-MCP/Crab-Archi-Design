@@ -308,8 +308,19 @@ def recognition_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT
     return project_dir(project_id, root) / "recognition" / "recognition_manifest.json"
 
 
+def recognition_ir_v2_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
+    return project_dir(project_id, root) / "recognition" / "recognition_ir_v2.json"
+
+
 def load_recognition_manifest(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> dict[str, Any] | None:
     path = recognition_manifest_path(project_id, root)
+    if not path.exists():
+        return None
+    return read_json(path)
+
+
+def load_recognition_ir_v2(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> dict[str, Any] | None:
+    path = recognition_ir_v2_path(project_id, root)
     if not path.exists():
         return None
     return read_json(path)
@@ -321,6 +332,14 @@ def recognition_status(manifest: dict[str, Any] | None) -> str:
     if manifest.get("status"):
         return str(manifest["status"])
     return "active" if manifest.get("source_svg_info", {}).get("xml_parse") == "ok" else "review_required"
+
+
+def recognition_ir_v2_status(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return "missing"
+    if manifest.get("status"):
+        return str(manifest["status"])
+    return "active" if manifest.get("schema") == "crab-archi-design-recognition-ir-v2" else "review_required"
 
 
 def topology_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
@@ -522,6 +541,88 @@ def label_point(label: dict[str, Any]) -> tuple[float, float] | None:
     if label.get("x") is None or label.get("y") is None:
         return None
     return (svg_float(label.get("x")), svg_float(label.get("y")))
+
+
+def normalize_bbox_dict(box: dict[str, Any] | None) -> dict[str, float]:
+    box = box or {}
+    return {
+        "x": svg_float(box.get("x")),
+        "y": svg_float(box.get("y")),
+        "width": svg_float(box.get("width", box.get("w"))),
+        "height": svg_float(box.get("height", box.get("h"))),
+    }
+
+
+def recognition_ir_v2_program_labels(ir: dict[str, Any] | None, max_labels: int = 500) -> list[dict[str, Any]]:
+    labels: list[dict[str, Any]] = []
+    if recognition_ir_v2_status(ir) != "active":
+        return labels
+    for node in ir.get("nodes", []):
+        if node.get("tag") != "text":
+            continue
+        text_info = node.get("text") or {}
+        content = str(text_info.get("content") or "").strip()
+        role = classify_label_role(content)
+        anchor = text_info.get("anchor")
+        if not content or not role or not isinstance(anchor, list) or len(anchor) < 2:
+            continue
+        labels.append(
+            {
+                "text": content,
+                "role_hint": role,
+                "x": float(anchor[0]),
+                "y": float(anchor[1]),
+                "position_source": "recognition_ir_v2.text_anchor",
+                "source_node_id": node.get("id"),
+                "source_id": node.get("source_id"),
+            }
+        )
+        if len(labels) >= max_labels:
+            break
+    return labels
+
+
+def recognition_ir_v2_geometry_candidates(ir: dict[str, Any] | None, max_items: int = 1200) -> dict[str, Any]:
+    candidates = {
+        "column_candidates": [],
+        "wall_candidates": [],
+        "room_envelope_candidates": [],
+        "summary": {
+            "column_candidate_count": 0,
+            "wall_candidate_count": 0,
+            "room_envelope_candidate_count": 0,
+        },
+    }
+    if recognition_ir_v2_status(ir) != "active":
+        return candidates
+    role_to_key = {
+        "column": "column_candidates",
+        "wall": "wall_candidates",
+        "room_envelope": "room_envelope_candidates",
+    }
+    total_counts = {key: 0 for key in candidates["summary"]}
+    for node in ir.get("nodes", []):
+        key = role_to_key.get(str(node.get("role_hint")))
+        if not key:
+            continue
+        summary_key = key.replace("s", "_count")
+        total_counts[summary_key] = total_counts.get(summary_key, 0) + 1
+        if len(candidates[key]) >= max_items:
+            continue
+        candidates[key].append(
+            {
+                "id": node.get("id"),
+                "source_id": node.get("source_id"),
+                "tag": node.get("tag"),
+                "bbox": normalize_bbox_dict(node.get("bbox")),
+                "role_hint": f"{node.get('role_hint')}_candidate",
+                "role_confidence": node.get("role_confidence"),
+                "polygon": node.get("polygon", [])[:64],
+                "source": "recognition_ir_v2.nodes",
+            }
+        )
+    candidates["summary"] = total_counts
+    return candidates
 
 
 def geometry_role_hint(tag: str, box: dict[str, float], el: ET.Element, viewbox: list[float]) -> str | None:
@@ -1383,13 +1484,50 @@ def containing_envelope(point: tuple[float, float], envelope_nodes: list[dict[st
     return sorted(containers, key=lambda node: bbox_area(node.get("bbox") or {}))[0]
 
 
+def constraint_points(item: dict[str, Any]) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+    for point in item.get("points", []):
+        if isinstance(point, list) and len(point) >= 2:
+            points.append((svg_float(point[0]), svg_float(point[1])))
+    return points
+
+
+def points_bbox(points: list[tuple[float, float]]) -> dict[str, float] | None:
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return {"x": min(xs), "y": min(ys), "width": max(xs) - min(xs), "height": max(ys) - min(ys)}
+
+
+def nodes_touching_constraint(nodes: list[dict[str, Any]], points: list[tuple[float, float]], limit: int) -> list[dict[str, Any]]:
+    if len(points) < 3:
+        return nodes[:limit]
+    matches = [node for node in nodes if bbox_touches_polygon(node.get("bbox") or {}, points)]
+    return matches[:limit]
+
+
+def labels_inside_constraint(nodes: list[dict[str, Any]], points: list[tuple[float, float]], limit: int) -> list[dict[str, Any]]:
+    if len(points) < 3:
+        return nodes[:limit]
+    matches = []
+    for node in nodes:
+        point_raw = node.get("point")
+        if point_raw and point_in_polygon((float(point_raw[0]), float(point_raw[1])), points):
+            matches.append(node)
+    return matches[:limit]
+
+
 def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
     project = load_manifest(project_id, root)
     recognition = load_recognition_manifest(project_id, root)
+    recognition_ir = load_recognition_ir_v2(project_id, root)
     constraints = load_constraint_manifest(project_id, root)
     standards = load_standards_manifest(project_id, root)
     evidence = load_evidence_manifest(project_id, root)
-    geometry = (recognition or {}).get("geometry_candidates", {})
+    use_ir_v2 = recognition_ir_v2_status(recognition_ir) == "active"
+    geometry = recognition_ir_v2_geometry_candidates(recognition_ir) if use_ir_v2 else (recognition or {}).get("geometry_candidates", {})
+    program_labels = recognition_ir_v2_program_labels(recognition_ir) if use_ir_v2 else (recognition or {}).get("program_label_candidates", [])
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     role_to_nodes: dict[str, list[str]] = {}
@@ -1398,7 +1536,7 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
         if role:
             role_to_nodes.setdefault(role, []).append(node_id)
 
-    for index, item in enumerate((recognition or {}).get("program_label_candidates", []), start=1):
+    for index, item in enumerate(program_labels, start=1):
         point = label_point(item)
         node = {
             "id": f"program_label_{index:03d}",
@@ -1406,7 +1544,8 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
             "label": item.get("text"),
             "role": item.get("role_hint"),
             "point": list(point) if point else None,
-            "source": "recognition.program_label_candidates",
+            "source": item.get("source", "recognition_ir_v2.program_labels" if use_ir_v2 else "recognition.program_label_candidates"),
+            "source_node_id": item.get("source_node_id"),
         }
         nodes.append(node)
         register_role(node.get("role"), node["id"])
@@ -1415,10 +1554,10 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
         node = {
             "id": f"room_envelope_{index:03d}",
             "type": "room_envelope",
-            "bbox": item.get("bbox"),
+            "bbox": normalize_bbox_dict(item.get("bbox")),
             "tag": item.get("tag"),
             "source_id": item.get("id"),
-            "source": "recognition.geometry_candidates.room_envelope_candidates",
+            "source": item.get("source", "recognition_ir_v2.nodes" if use_ir_v2 else "recognition.geometry_candidates.room_envelope_candidates"),
         }
         nodes.append(node)
 
@@ -1426,10 +1565,10 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
         node = {
             "id": f"column_{index:03d}",
             "type": "structural_column",
-            "bbox": item.get("bbox"),
+            "bbox": normalize_bbox_dict(item.get("bbox")),
             "tag": item.get("tag"),
             "protected": True,
-            "source": "recognition.geometry_candidates.column_candidates",
+            "source": item.get("source", "recognition_ir_v2.nodes" if use_ir_v2 else "recognition.geometry_candidates.column_candidates"),
         }
         nodes.append(node)
 
@@ -1437,13 +1576,14 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
         node = {
             "id": f"wall_{index:03d}",
             "type": "wall_candidate",
-            "bbox": item.get("bbox"),
+            "bbox": normalize_bbox_dict(item.get("bbox")),
             "tag": item.get("tag"),
-            "source": "recognition.geometry_candidates.wall_candidates",
+            "source": item.get("source", "recognition_ir_v2.nodes" if use_ir_v2 else "recognition.geometry_candidates.wall_candidates"),
         }
         nodes.append(node)
 
     for index, item in enumerate((constraints or {}).get("constraint_items", []), start=1):
+        points = constraint_points(item)
         node = {
             "id": f"constraint_{index:03d}",
             "type": "constraint",
@@ -1451,6 +1591,8 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
             "mode": item.get("mode"),
             "target_hint": item.get("target_hint"),
             "point_count": item.get("point_count"),
+            "points": [[point[0], point[1]] for point in points],
+            "bbox": points_bbox(points),
             "solver_policy": item.get("solver_policy"),
             "source": "constraints.constraint_items",
         }
@@ -1505,11 +1647,12 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
     protected_constraint_roles = {"community_shell", "lock", "no_go", "protect"}
     for constraint in constraint_nodes:
         role = constraint.get("role")
+        points = [(svg_float(point[0]), svg_float(point[1])) for point in constraint.get("points", []) if isinstance(point, list) and len(point) >= 2]
         if role in protected_constraint_roles:
-            for column in column_nodes[:60]:
+            for column in nodes_touching_constraint(column_nodes, points, 240):
                 add_topology_edge(edges, constraint["id"], column["id"], "constraint_protects_geometry", role=role)
         elif role in {"mutable", "projectable"}:
-            for label in label_nodes[:24]:
+            for label in labels_inside_constraint(label_nodes, points, 60):
                 add_topology_edge(edges, constraint["id"], label["id"], "constraint_guides_program", role=role)
 
     adjacency_pairs = [
@@ -1534,7 +1677,8 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
                 evidence="OpenCrab topology prior",
             )
 
-    status = "active" if recognition_status(recognition) == "active" and nodes and edges else "review_required"
+    recognition_ok = recognition_status(recognition) == "active" or use_ir_v2
+    status = "active" if recognition_ok and nodes and edges else "review_required"
     node_counts = node_type_counts(nodes)
     edge_counts = edge_type_counts(edges)
     protected_count = sum(1 for node in nodes if node.get("protected") is True or node.get("type") == "structural_column")
@@ -1548,6 +1692,7 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
         "required_for_final_svg": True,
         "source_manifests": {
             "recognition_manifest": str(recognition_manifest_path(project_id, root)) if recognition else None,
+            "recognition_ir_v2": str(recognition_ir_v2_path(project_id, root)) if recognition_ir else None,
             "standards_manifest": str(standards_manifest_path(project_id, root)) if standards else None,
             "evidence_manifest": str(evidence_manifest_path(project_id, root)) if evidence else None,
             "constraint_manifest": str(constraint_manifest_path(project_id, root)) if constraints else None,
@@ -1560,11 +1705,15 @@ def build_topology_manifest(project_id: str, root: Path) -> dict[str, Any]:
             "program_role_count": len(role_to_nodes),
             "protected_node_count": protected_count,
             "roles": sorted(role_to_nodes),
+            "recognition_source": "recognition_ir_v2" if use_ir_v2 else "recognition_manifest",
+            "recognition_ir_v2_summary": (recognition_ir or {}).get("summary", {}) if use_ir_v2 else {},
         },
         "nodes": nodes,
         "edges": edges,
         "quality_gates": {
             "recognition_manifest_active": recognition_status(recognition) == "active",
+            "recognition_ir_v2_active": use_ir_v2,
+            "recognition_input_active": recognition_ok,
             "has_program_or_standard_nodes": bool(label_nodes or standard_nodes),
             "has_geometry_nodes": bool(envelope_nodes or column_nodes),
             "has_topology_edges": bool(edges),
@@ -1630,17 +1779,20 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
     source_svg = Path(manifest["source_svg"]).expanduser()
     source_info = inspect_svg(source_svg)
     recognition = load_recognition_manifest(project_id, root)
+    recognition_ir = load_recognition_ir_v2(project_id, root)
     topology = load_topology_manifest(project_id, root)
     constraints = load_constraint_manifest(project_id, root)
-    geometry_summary = (recognition or {}).get("geometry_summary", {})
-    program_labels = (recognition or {}).get("program_label_candidates", [])
+    use_ir_v2 = recognition_ir_v2_status(recognition_ir) == "active"
+    geometry_summary = (recognition_ir or {}).get("summary", {}) if use_ir_v2 else (recognition or {}).get("geometry_summary", {})
+    program_labels = recognition_ir_v2_program_labels(recognition_ir) if use_ir_v2 else (recognition or {}).get("program_label_candidates", [])
     positioned_program_labels = [label for label in program_labels if label_point(label) is not None]
     roles = constraint_roles(constraints)
     edge_counts = topology_edge_counts(topology)
     label_topology_edge_count = edge_counts.get("label_inside_envelope", 0) + edge_counts.get("label_nearest_envelope", 0)
+    recognition_input_active = recognition_status(recognition) == "active" or use_ir_v2
     gates = {
         "source_svg_parse_ok": source_info.get("xml_parse") == "ok",
-        "recognition_manifest_active": recognition_status(recognition) == "active",
+        "recognition_manifest_active": recognition_input_active,
         "program_labels_detected": len(program_labels) > 0,
         "program_labels_positioned": len(program_labels) > 0 and len(positioned_program_labels) == len(program_labels),
         "wall_candidates_detected": int(geometry_summary.get("wall_candidate_count", 0) or 0) > 0,
@@ -1652,6 +1804,8 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
         "label_topology_edges_present": label_topology_edge_count > 0,
     }
     blocking_issues = recognition_audit_blocking_issues(gates)
+    hard_gate_keys = list(gates)
+    hard_gates = gates
     next_actions = [
         "Fix SVG recognition before running layout generation." if not gates["recognition_manifest_active"] else None,
         "Add or correct a community shell constraint from actual community outer walls." if not gates["community_shell_confirmed"] else None,
@@ -1665,10 +1819,11 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
         "created_at": now(),
         "project_id": project_id,
         "source_svg": str(source_svg),
-        "status": "pass" if all(gates.values()) else "review_required",
+        "status": "pass" if all(hard_gates.values()) else "review_required",
         "purpose": "Gate design generation until the target drawing is understood as an architectural SVG, not a blank zoning canvas.",
-        "design_generation_policy": "allow_projection_and_svg_mutation" if all(gates.values()) else "blocked_until_recognition_audit_passes",
+        "design_generation_policy": "allow_projection_and_svg_mutation" if all(hard_gates.values()) else "blocked_until_recognition_audit_passes",
         "gates": gates,
+        "hard_gate_keys": hard_gate_keys,
         "blocking_issues": blocking_issues,
         "metrics": {
             "program_label_count": len(program_labels),
@@ -1676,6 +1831,8 @@ def build_recognition_audit(project_id: str, root: Path) -> dict[str, Any]:
             "wall_candidate_count": int(geometry_summary.get("wall_candidate_count", 0) or 0),
             "column_candidate_count": int(geometry_summary.get("column_candidate_count", 0) or 0),
             "room_envelope_candidate_count": int(geometry_summary.get("room_envelope_candidate_count", 0) or 0),
+            "recognition_source": "recognition_ir_v2" if use_ir_v2 else "recognition_manifest",
+            "recognition_ir_v2_active": use_ir_v2,
             "constraint_roles": sorted(roles),
             "topology_node_count": (topology or {}).get("node_count", 0),
             "topology_edge_count": (topology or {}).get("edge_count", 0),
@@ -1700,7 +1857,7 @@ def command_recognition_audit(args: argparse.Namespace) -> None:
                 "status": audit["status"],
                 "design_generation_policy": audit["design_generation_policy"],
                 "blocking_issue_count": len(audit["blocking_issues"]),
-                "failed_gates": [key for key, value in audit["gates"].items() if not value],
+                "failed_gates": [key for key in audit.get("hard_gate_keys", audit["gates"].keys()) if not audit["gates"].get(key)],
                 "metrics": audit["metrics"],
             },
             ensure_ascii=False,

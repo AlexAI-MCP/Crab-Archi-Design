@@ -557,6 +557,7 @@ def test_topology_build_creates_target_graph(tmp_path: Path) -> None:
     for args in [
         ("init", "--project-id", "topology-demo", "--source-svg", str(source_svg), "--ontology-pack", "community_svg_topology_ontology_v2"),
         ("recognize-svg", "--project-id", "topology-demo"),
+        ("recognize-svg-v2", "--project-id", "topology-demo"),
         ("standards-attach", "--project-id", "topology-demo", "--file", str(standards), "--households", "900"),
         ("constraint-attach", "--project-id", "topology-demo", "--sketch", str(constraint)),
     ]:
@@ -575,6 +576,9 @@ def test_topology_build_creates_target_graph(tmp_path: Path) -> None:
     assert {"program_label", "room_envelope", "structural_column", "standard_program", "constraint"} <= node_types
     assert {"label_inside_envelope", "column_inside_envelope", "standard_applies_to_program", "ontology_adjacency_target"} <= edge_types
     assert topology["graph_summary"]["protected_node_count"] >= 1
+    assert topology["graph_summary"]["recognition_source"] == "recognition_ir_v2"
+    assert topology["source_manifests"]["recognition_ir_v2"].endswith("recognition_ir_v2.json")
+    assert topology["quality_gates"]["recognition_ir_v2_active"] is True
 
 
 def test_recognition_audit_gates_svg_mutation_readiness(tmp_path: Path) -> None:
