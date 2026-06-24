@@ -468,6 +468,7 @@ def apply_opening_candidates(
                 svg_float(candidate.get("opening_start_ratio", 0.42)),
                 svg_float(candidate.get("opening_end_ratio", 0.58)),
                 operation_id=str(candidate.get("operation_id") or f"opening_{len(applied) + 1:03d}"),
+                transform_matrix=transform_map.get(element_index),
             )
         else:
             result = split_line_for_opening(

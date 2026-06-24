@@ -159,7 +159,7 @@ def edit_capability_report(
         opening_reason = "opening split requires line, polyline, or open single-subpath M/L/H/V path"
     if opening_reason is None:
         opening_reason = parent_reason
-    if opening_reason is None and tag == "path":
+    if opening_reason is None and tag in {"polyline", "path"}:
         opening_reason = transform_reason
 
     if linear_endpoint_coords(element) is not None:
@@ -412,11 +412,14 @@ def split_polyline_for_opening(
     opening_start_ratio: float,
     opening_end_ratio: float,
     operation_id: str = "door_opening",
+    transform_matrix: Matrix | None = None,
 ) -> dict[str, Any]:
-    points = polyline_points(element)
+    local_points = polyline_points(element)
     children = list(parent)
-    split = split_polyline_points_for_opening(points, opening_start_ratio, opening_end_ratio)
-    if not points or element not in children or split is None:
+    matrix = transform_matrix or identity_matrix()
+    split_points = [apply_matrix(matrix, point) for point in local_points] if not matrix_is_identity(matrix) else local_points
+    split = split_polyline_points_for_opening(split_points, opening_start_ratio, opening_end_ratio)
+    if not local_points or element not in children or split is None:
         return {
             "action": "split_polyline_for_opening",
             "status": "skipped",
@@ -424,6 +427,25 @@ def split_polyline_for_opening(
             "geometry_mutated": False,
             "same_layer_segment_added": False,
         }
+    world_opening = split["opening"] if not matrix_is_identity(matrix) else None
+    if not matrix_is_identity(matrix):
+        before_points = inverse_points(matrix, split["before_points"])
+        after_points = inverse_points(matrix, split["after_points"])
+        opening_start = apply_inverse_matrix(matrix, (split["opening"]["x1"], split["opening"]["y1"]))
+        opening_end = apply_inverse_matrix(matrix, (split["opening"]["x2"], split["opening"]["y2"]))
+        if before_points is None or after_points is None or opening_start is None or opening_end is None:
+            return {
+                "action": "split_polyline_for_opening",
+                "status": "skipped",
+                "reason": "requires invertible transform for polyline opening split",
+                "geometry_mutated": False,
+                "same_layer_segment_added": False,
+            }
+        local_opening = opening_dict_from_points(opening_start, opening_end)
+    else:
+        before_points = split["before_points"]
+        after_points = split["after_points"]
+        local_opening = split["opening"]
 
     preserve_original_attr(element, "points")
     after_segment = deepcopy(element)
@@ -432,8 +454,6 @@ def split_polyline_for_opening(
         after_segment.set("id", f"{source_id}__crab_{operation_id}_after")
         after_segment.set("data-crab-derived-from", source_id)
 
-    before_points = split["before_points"]
-    after_points = split["after_points"]
     before_attr = format_polyline_points(before_points)
     after_attr = format_polyline_points(after_points)
 
@@ -445,6 +465,8 @@ def split_polyline_for_opening(
     element.set("data-crab-opening-start-ratio", format_svg_number(opening_start_ratio))
     element.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
     element.set("data-crab-geometry-mutated", "true")
+    if not matrix_is_identity(matrix):
+        element.set("data-crab-transform-aware", "true")
 
     after_segment.set("points", after_attr)
     after_segment.set("data-crab-action", "split_polyline_for_opening")
@@ -455,19 +477,25 @@ def split_polyline_for_opening(
     after_segment.set("data-crab-opening-end-ratio", format_svg_number(opening_end_ratio))
     after_segment.set("data-crab-generated-same-layer-segment", "true")
     after_segment.set("data-crab-geometry-mutated", "true")
+    if not matrix_is_identity(matrix):
+        after_segment.set("data-crab-transform-aware", "true")
 
     parent.insert(children.index(element) + 1, after_segment)
-    return {
+    result = {
         "action": "split_polyline_for_opening",
         "status": "applied",
         "operation_id": operation_id,
         "source_id": source_id,
         "before_segment": {"points": before_attr},
-        "opening": split["opening"],
+        "opening": local_opening,
         "after_segment": {"points": after_attr},
+        "transform_aware": not matrix_is_identity(matrix),
         "geometry_mutated": True,
         "same_layer_segment_added": True,
     }
+    if world_opening is not None:
+        result["world_opening"] = world_opening
+    return result
 
 
 def split_path_for_opening(

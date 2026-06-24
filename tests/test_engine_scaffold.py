@@ -72,6 +72,24 @@ def test_svg_edit_ops_split_polyline_opening_is_same_parent_native_svg() -> None
     assert all(child.attrib["data-crab-action"] == "split_polyline_for_opening" for child in root)
 
 
+def test_svg_edit_ops_split_polyline_opening_uses_world_length_under_transform() -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring('<svg><g transform="scale(2 1)"><polyline id="wall" points="0,0 100,0 100,100"/></g></svg>')
+    group = root[0]
+    wall = group[0]
+    matrix = parse_transform(group.attrib["transform"])
+
+    result = split_polyline_for_opening(group, wall, 0.5, 0.75, operation_id="door_001", transform_matrix=matrix)
+
+    assert result["status"] == "applied"
+    assert result["transform_aware"] is True
+    assert result["opening"] == {"x1": 75.0, "y1": 0.0, "x2": 100.0, "y2": 25.0}
+    assert result["world_opening"] == {"x1": 150.0, "y1": 0.0, "x2": 200.0, "y2": 25.0}
+    assert group[0].attrib["points"] == "0,0 75,0"
+    assert group[1].attrib["points"] == "100,25 100,100"
+
+
 def test_svg_edit_ops_split_path_opening_uses_world_length_under_transform() -> None:
     import xml.etree.ElementTree as ET
 

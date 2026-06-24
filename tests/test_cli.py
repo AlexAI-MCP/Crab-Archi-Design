@@ -1018,6 +1018,50 @@ def test_solver_same_layer_opening_splits_existing_polyline() -> None:
     assert summary["opening_mutations"][0]["opening"] == {"x1": 50.0, "y1": 20.0, "x2": 70.0, "y2": 20.0}
 
 
+def test_solver_same_layer_opening_splits_transformed_polyline_by_world_length() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 140">
+          <g id="scaled" transform="scale(2 1)">
+            <polyline id="wall-polyline" points="0,0 100,0 100,100" fill="none" stroke="#111" stroke-width="4"/>
+          </g>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_opening_candidates": [
+            {
+                "operation": "split_line_for_opening",
+                "operation_id": "opening_001",
+                "target_element_index": 3,
+                "tag": "polyline",
+                "mutation_policy": "split_existing_polyline_in_same_parent",
+                "opening_start_ratio": 0.5,
+                "opening_end_ratio": 0.75,
+                "program_cluster_id": "program_cluster_polyline",
+                "program_role": "greenery_lounge",
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_openings=True, max_openings=4)
+    polylines = [element for element in root.iter() if element.tag.endswith("polyline")]
+    before, after = polylines
+    mutation = summary["opening_mutations"][0]
+
+    assert summary["same_layer_opening_split_count"] == 1
+    assert before.attrib["points"] == "0,0 75,0"
+    assert after.attrib["points"] == "100,25 100,100"
+    assert before.attrib["data-crab-transform-aware"] == "true"
+    assert after.attrib["data-crab-transform-aware"] == "true"
+    assert mutation["transform_aware"] is True
+    assert mutation["opening"] == {"x1": 75.0, "y1": 0.0, "x2": 100.0, "y2": 25.0}
+    assert mutation["world_opening"] == {"x1": 150.0, "y1": 0.0, "x2": 200.0, "y2": 25.0}
+
+
 def test_solver_same_layer_opening_splits_transformed_path_by_world_length() -> None:
     root = ET.fromstring(
         """
