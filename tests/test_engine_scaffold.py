@@ -5,7 +5,7 @@ from crab_archi_design.recognition.ir import empty_recognition_ir
 from crab_archi_design.solver import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA, build_endpoint_move_candidates, build_opening_candidates
 from crab_archi_design.solver.svg_edit_ops import edit_capability_report, split_line_for_opening, split_path_for_opening, split_polyline_for_opening
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
-from crab_archi_design.svg.geometry import polygon_area, quantize_point
+from crab_archi_design.svg.geometry import polygon_area, polyline_length, quantize_point, scaled_polyline_length
 from crab_archi_design.svg.transform import parse_transform
 
 
@@ -27,6 +27,9 @@ def test_svg_geometry_and_transform_helpers_are_deterministic() -> None:
     assert box.area == 1200.0
     assert bbox_center(box) == (25.0, 40.0)
     assert polygon_area([(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]) == 100.0
+    assert polyline_length([(0.0, 0.0), (3.0, 4.0)]) == 5.0
+    assert polyline_length([(0.0, 0.0), (3.0, 0.0), (3.0, 4.0)], closed=True) == 12.0
+    assert scaled_polyline_length([(0.0, 0.0), (3.0, 0.0), (3.0, 4.0), (0.0, 4.0)], 2.0, 1.0, closed=True) == 20.0
     assert point_in_polygon((5.0, 5.0), [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]) is True
     assert quantize_point((1.23456, 9.87654), 3) == (1.235, 9.877)
 
@@ -436,8 +439,16 @@ def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:
     assert rect["editable_source"] is True
     assert rect["from_use_instance"] is False
     assert rect["bbox"] == {"x": 12.0, "y": 9.0, "w": 6.0, "h": 8.0}
+    assert rect["bbox_mm"] == {"x": 12.0, "y": 9.0, "w": 6.0, "h": 8.0}
+    assert rect["area"] == 48.0
+    assert rect["area_mm2"] == 48.0
+    assert rect["area_m2"] == 0.000048
+    assert rect["perimeter"] == 28.0
+    assert rect["perimeter_mm"] == 28.0
+    assert rect["physical_metrics_source"] == "document_unit_scale"
     assert text["text"]["anchor"] == [20.0, 17.0]
     assert text["text"]["content"] == "라운지"
+    assert text["centroid_mm"] == [20.0, 17.0]
 
 
 def test_recognition_ir_v2_strips_svg_doctype_without_resolving(tmp_path) -> None:
@@ -476,6 +487,14 @@ def test_recognition_ir_v2_reports_nonuniform_document_unit_scale(tmp_path) -> N
     assert ir["document"]["unit_scale_consistent"] is False
     assert ir["document"]["unit_scale_relative_error"] == 0.5
     assert ir["document"]["unit_scale_source"] == "width_height"
+    rect = next(node for node in ir["nodes"] if node["source_id"] == "r1")
+    assert rect["bbox"] == {"x": 1.0, "y": 1.0, "w": 2.0, "h": 3.0}
+    assert rect["bbox_mm"] == {"x": 2.0, "y": 1.0, "w": 4.0, "h": 3.0}
+    assert rect["area"] == 6.0
+    assert rect["area_mm2"] == 12.0
+    assert rect["area_m2"] == 0.000012
+    assert rect["perimeter"] == 10.0
+    assert rect["perimeter_mm"] == 14.0
 
 
 def test_recognition_ir_v2_flattens_basic_paths_in_world_coordinates(tmp_path) -> None:

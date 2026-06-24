@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 Point = tuple[float, float]
 
@@ -30,6 +31,26 @@ def polygon_area(points: list[Point]) -> float:
         total += previous_x * current_y - current_x * previous_y
         previous_x, previous_y = current_x, current_y
     return abs(total) * 0.5
+
+
+def polyline_length(points: list[Point], closed: bool = False) -> float:
+    if len(points) < 2:
+        return 0.0
+    total = 0.0
+    previous = points[0]
+    for current in points[1:]:
+        total += math.dist(previous, current)
+        previous = current
+    if closed and len(points) > 2:
+        total += math.dist(points[-1], points[0])
+    return total
+
+
+def scaled_polyline_length(points: list[Point], scale_x: float, scale_y: float, closed: bool = False) -> float:
+    if len(points) < 2:
+        return 0.0
+    scaled = [(x * scale_x, y * scale_y) for x, y in points]
+    return polyline_length(scaled, closed)
 
 
 def point_in_polygon(point: Point, polygon: list[Point]) -> bool:

@@ -7,6 +7,7 @@ from xml.etree.ElementTree import Element
 from crab_archi_design.recognition.ir import empty_recognition_ir
 from crab_archi_design.recognition.classify import classify_node
 from crab_archi_design.svg.defs import collect_id_index, referenced_element, use_instance_matrix
+from crab_archi_design.svg.geometry import Point, scaled_polyline_length
 from crab_archi_design.svg.namespace import local_name
 from crab_archi_design.svg.safe_load import SvgLoadError, safe_load_svg
 from crab_archi_design.svg.shapes import build_shape_node
@@ -49,6 +50,7 @@ def build_recognition_ir_v2(path: Path) -> dict[str, Any]:
         role_hint, confidence = classify_node(node, drawing_area)
         node["role_hint"] = role_hint
         node["role_confidence"] = confidence
+    attach_physical_metrics(nodes, ir["document"])
     ir["nodes"] = nodes
     ir["raster_nodes"] = raster_nodes
     ir["summary"] = summarize_nodes(nodes, raster_nodes)
@@ -141,4 +143,66 @@ def summarize_nodes(nodes: list[dict[str, Any]], raster_nodes: list[dict[str, An
         "label_count": label_count,
         "protected_candidate_count": sum(1 for node in nodes if node.get("role_hint") == "column"),
         "raster_count": len(raster_nodes),
+        "physical_metric_node_count": sum(1 for node in nodes if node.get("physical_metrics_source")),
     }
+
+
+def attach_physical_metrics(nodes: list[dict[str, Any]], document: dict[str, Any]) -> None:
+    scale_x = coerce_float(document.get("unit_scale_x_mm") or document.get("unit_scale_mm"))
+    scale_y = coerce_float(document.get("unit_scale_y_mm") or document.get("unit_scale_mm"))
+    document["physical_metrics_available"] = scale_x is not None and scale_y is not None
+    if scale_x is None or scale_y is None:
+        return
+    for node in nodes:
+        bbox = node.get("bbox")
+        if isinstance(bbox, dict):
+            node["bbox_mm"] = {
+                "x": round(float(bbox.get("x") or 0.0) * scale_x, 3),
+                "y": round(float(bbox.get("y") or 0.0) * scale_y, 3),
+                "w": round(float(bbox.get("w") or 0.0) * scale_x, 3),
+                "h": round(float(bbox.get("h") or 0.0) * scale_y, 3),
+            }
+        centroid = point_from_sequence(node.get("centroid"))
+        if centroid:
+            node["centroid_mm"] = [round(centroid[0] * scale_x, 3), round(centroid[1] * scale_y, 3)]
+        area = coerce_float(node.get("area")) or 0.0
+        area_mm2 = area * scale_x * scale_y if bool(node.get("is_closed")) and area > 0.0 else 0.0
+        node["area_mm2"] = round(area_mm2, 3)
+        node["area_m2"] = round(area_mm2 / 1_000_000.0, 6)
+        points = points_from_polygon(node.get("polygon"))
+        if points:
+            node["perimeter_mm"] = round(scaled_polyline_length(points, scale_x, scale_y, bool(node.get("is_closed"))), 3)
+        else:
+            perimeter = coerce_float(node.get("perimeter")) or 0.0
+            node["perimeter_mm"] = round(perimeter * max(scale_x, scale_y), 3)
+        node["physical_metrics_source"] = "document_unit_scale"
+
+
+def coerce_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def point_from_sequence(value: Any) -> Point | None:
+    if not isinstance(value, (list, tuple)) or len(value) < 2:
+        return None
+    x = coerce_float(value[0])
+    y = coerce_float(value[1])
+    if x is None or y is None:
+        return None
+    return (x, y)
+
+
+def points_from_polygon(value: Any) -> list[Point]:
+    if not isinstance(value, list):
+        return []
+    points: list[Point] = []
+    for item in value:
+        point = point_from_sequence(item)
+        if point:
+            points.append(point)
+    return points

@@ -529,6 +529,13 @@ def test_recognize_svg_v2_writes_world_coordinate_ir(tmp_path: Path) -> None:
     room = next(node for node in ir["nodes"] if node["source_id"] == "room")
     label = next(node for node in ir["nodes"] if node["source_id"] == "label")
     assert room["bbox"] == {"x": 11.0, "y": 7.0, "w": 3.0, "h": 4.0}
+    assert room["bbox_mm"] == {"x": 11.0, "y": 7.0, "w": 3.0, "h": 4.0}
+    assert room["area"] == 12.0
+    assert room["area_mm2"] == 12.0
+    assert room["area_m2"] == 0.000012
+    assert room["perimeter"] == 14.0
+    assert room["perimeter_mm"] == 14.0
+    assert ir["summary"]["physical_metric_node_count"] >= 2
     assert label["text"]["anchor"] == [30.0, 20.0]
 
 

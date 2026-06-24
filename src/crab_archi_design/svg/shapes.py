@@ -4,7 +4,7 @@ import math
 from typing import Any
 from xml.etree.ElementTree import Element
 
-from crab_archi_design.svg.geometry import BBox, Point, bbox_center, polygon_area
+from crab_archi_design.svg.geometry import BBox, Point, bbox_center, polygon_area, polyline_length
 from crab_archi_design.svg.namespace import local_name
 from crab_archi_design.svg.path import flatten_path_points, parse_path, path_is_closed
 from crab_archi_design.svg.style import style_number
@@ -141,7 +141,7 @@ def build_shape_node(
         "bbox": bbox_dict(box),
         "centroid": [round(item, 3) for item in bbox_center(box)],
         "area": round(polygon_area(points), 3) if is_closed else 0.0,
-        "perimeter": 0.0,
+        "perimeter": round(polyline_length(points, is_closed), 3),
         "style": normalized_style(style),
         "text": None,
         "role_hint": "unknown",
