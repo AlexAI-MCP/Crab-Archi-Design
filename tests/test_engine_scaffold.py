@@ -422,6 +422,13 @@ def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:
     assert ir["status"] == "active"
     assert ir["document"]["coordinate_space"] == "world"
     assert ir["document"]["unit_scale_mm"] == 1.0
+    assert ir["document"]["unit_scale_x_mm"] == 1.0
+    assert ir["document"]["unit_scale_y_mm"] == 1.0
+    assert ir["document"]["unit_scale_consistent"] is True
+    assert ir["document"]["unit_scale_relative_error"] == 0.0
+    assert ir["document"]["unit_scale_source"] == "width_height"
+    assert ir["document"]["physical_width_mm"] == 100.0
+    assert ir["document"]["physical_height_mm"] == 50.0
     rect = next(node for node in ir["nodes"] if node["source_id"] == "r1")
     text = next(node for node in ir["nodes"] if node["source_id"] == "t1")
     assert rect["group_path"] == ["outer", "inner"]
@@ -448,6 +455,27 @@ def test_recognition_ir_v2_strips_svg_doctype_without_resolving(tmp_path) -> Non
     ir = build_recognition_ir_v2(source)
     assert ir["status"] == "active"
     assert ir["summary"]["primitive_count"] == 1
+
+
+def test_recognition_ir_v2_reports_nonuniform_document_unit_scale(tmp_path) -> None:
+    source = tmp_path / "nonuniform_units.svg"
+    source.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="50mm" viewBox="0 0 100 50">
+          <rect id="r1" x="1" y="1" width="2" height="3"/>
+        </svg>
+        """.strip(),
+        encoding="utf-8",
+    )
+    ir = build_recognition_ir_v2(source)
+
+    assert ir["status"] == "active"
+    assert ir["document"]["unit_scale_mm"] == 2.0
+    assert ir["document"]["unit_scale_x_mm"] == 2.0
+    assert ir["document"]["unit_scale_y_mm"] == 1.0
+    assert ir["document"]["unit_scale_consistent"] is False
+    assert ir["document"]["unit_scale_relative_error"] == 0.5
+    assert ir["document"]["unit_scale_source"] == "width_height"
 
 
 def test_recognition_ir_v2_flattens_basic_paths_in_world_coordinates(tmp_path) -> None:

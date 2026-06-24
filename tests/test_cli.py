@@ -520,6 +520,12 @@ def test_recognize_svg_v2_writes_world_coordinate_ir(tmp_path: Path) -> None:
     assert ir["parser_version"] == "2.0.0"
     assert ir["document"]["coordinate_space"] == "world"
     assert ir["document"]["unit_scale_mm"] == 1.0
+    assert ir["document"]["unit_scale_x_mm"] == 1.0
+    assert ir["document"]["unit_scale_y_mm"] == 1.0
+    assert ir["document"]["unit_scale_consistent"] is True
+    assert ir["document"]["unit_scale_relative_error"] == 0.0
+    assert ir["document"]["physical_width_mm"] == 100.0
+    assert ir["document"]["physical_height_mm"] == 50.0
     room = next(node for node in ir["nodes"] if node["source_id"] == "room")
     label = next(node for node in ir["nodes"] if node["source_id"] == "label")
     assert room["bbox"] == {"x": 11.0, "y": 7.0, "w": 3.0, "h": 4.0}

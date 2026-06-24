@@ -46,3 +46,44 @@ def unit_scale_mm(width_raw: str | None, viewbox: ViewBox) -> float | None:
     if not unit or unit not in UNIT_TO_MM or viewbox.width <= 0 or width_value <= 0:
         return None
     return width_value * UNIT_TO_MM[unit] / viewbox.width
+
+
+def document_unit_scale(width_raw: str | None, height_raw: str | None, viewbox: ViewBox) -> dict[str, float | str | bool | None]:
+    width_value, width_unit = parse_length(width_raw)
+    height_value, height_unit = parse_length(height_raw)
+    physical_width_mm = length_to_mm(width_value, width_unit)
+    physical_height_mm = length_to_mm(height_value, height_unit)
+    scale_x = physical_width_mm / viewbox.width if physical_width_mm is not None and viewbox.width > 0 else None
+    scale_y = physical_height_mm / viewbox.height if physical_height_mm is not None and viewbox.height > 0 else None
+    scale_relative_error = None
+    if scale_x is not None and scale_y is not None:
+        denominator = max(abs(scale_x), abs(scale_y), 1e-12)
+        scale_relative_error = abs(scale_x - scale_y) / denominator
+        scale_consistent = scale_relative_error <= 1e-3
+        source = "width_height"
+    elif scale_x is not None:
+        scale_consistent = None
+        source = "width"
+    elif scale_y is not None:
+        scale_consistent = None
+        source = "height"
+    else:
+        scale_consistent = None
+        source = "none"
+    return {
+        "unit_scale_x_mm": scale_x,
+        "unit_scale_y_mm": scale_y,
+        "unit_scale_consistent": scale_consistent,
+        "unit_scale_relative_error": scale_relative_error,
+        "unit_scale_source": source,
+        "width_unit": width_unit,
+        "height_unit": height_unit,
+        "physical_width_mm": physical_width_mm,
+        "physical_height_mm": physical_height_mm,
+    }
+
+
+def length_to_mm(value: float, unit: str | None) -> float | None:
+    if not unit or unit not in UNIT_TO_MM or value <= 0:
+        return None
+    return value * UNIT_TO_MM[unit]

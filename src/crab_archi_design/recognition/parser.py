@@ -12,7 +12,7 @@ from crab_archi_design.svg.safe_load import SvgLoadError, safe_load_svg
 from crab_archi_design.svg.shapes import build_shape_node
 from crab_archi_design.svg.style import collect_css_rules, inherited_style
 from crab_archi_design.svg.transform import Matrix, identity_matrix, multiply_matrix, parse_transform
-from crab_archi_design.svg.units import parse_viewbox, unit_scale_mm
+from crab_archi_design.svg.units import document_unit_scale, parse_viewbox, unit_scale_mm
 
 SHAPE_TAGS = {"rect", "circle", "ellipse", "line", "polyline", "polygon", "path", "text"}
 
@@ -27,6 +27,7 @@ def build_recognition_ir_v2(path: Path) -> dict[str, Any]:
         return ir
 
     viewbox = parse_viewbox(root.attrib.get("viewBox"), root.attrib.get("width"), root.attrib.get("height"))
+    unit_scale = document_unit_scale(root.attrib.get("width"), root.attrib.get("height"), viewbox)
     ir["status"] = "active"
     ir["document"].update(
         {
@@ -34,6 +35,7 @@ def build_recognition_ir_v2(path: Path) -> dict[str, Any]:
             "width_raw": root.attrib.get("width"),
             "height_raw": root.attrib.get("height"),
             "unit_scale_mm": unit_scale_mm(root.attrib.get("width"), viewbox),
+            **unit_scale,
         }
     )
     nodes: list[dict[str, Any]] = []
