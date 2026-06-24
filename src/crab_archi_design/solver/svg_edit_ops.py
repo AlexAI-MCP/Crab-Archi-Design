@@ -156,9 +156,16 @@ def edit_capability_report(
     else:
         opening_reason = "opening split requires line or open single-subpath M/L/H/V path"
     if opening_reason is None:
-        opening_reason = parent_reason or transform_reason
+        opening_reason = parent_reason
+    if opening_reason is None and tag == "path":
+        opening_reason = transform_reason
 
-    endpoint_reason = None if linear_endpoint_coords(element) is not None else "endpoint move requires line/polyline or open single-subpath M/L/H/V path with at least two points"
+    if linear_endpoint_coords(element) is not None:
+        endpoint_reason = None
+    elif tag == "path":
+        endpoint_reason = path_reason
+    else:
+        endpoint_reason = "endpoint move requires line/polyline or open single-subpath M/L/H/V path with at least two points"
     if endpoint_reason is None:
         endpoint_reason = transform_reason
 

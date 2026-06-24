@@ -968,7 +968,8 @@ def test_solver_same_layer_opening_skips_curved_path() -> None:
     assert paths[0].attrib["d"] == "M 10 20 C 40 10 80 30 110 20"
     assert summary["same_layer_opening_split_count"] == 0
     assert summary["opening_skips"][0]["action"] == "split_path_for_opening"
-    assert summary["opening_skips"][0]["reason"] == "requires direct child open single-subpath M/L/H/V path and 0 < start < end < 1"
+    assert summary["opening_skips"][0]["review_required"] is True
+    assert summary["opening_skips"][0]["reason"] == "unsupported path commands for CAD-like edit: C"
     capability = summary["edit_capability_summary"]["opening_split"]
     assert capability["supported_count"] == 0
     assert capability["review_required_count"] == 1
@@ -1175,7 +1176,8 @@ def test_solver_same_layer_endpoint_move_skips_curved_path() -> None:
     wall = next(element for element in root.iter() if element.attrib.get("id") == "curved-wall")
 
     assert summary["same_layer_endpoint_move_count"] == 0
-    assert summary["endpoint_move_skips"][0]["reason"] == "requires open single-subpath M/L/H/V path with at least two points"
+    assert summary["endpoint_move_skips"][0]["review_required"] is True
+    assert summary["endpoint_move_skips"][0]["reason"] == "unsupported path commands for CAD-like edit: C"
     assert wall.attrib["d"] == "M 10 20 C 40 10 80 30 110 20"
     assert "data-crab-action" not in wall.attrib
 
@@ -1223,6 +1225,46 @@ def test_solver_endpoint_move_converts_world_delta_through_group_transform() -> 
     assert mutation["after"] == {"x": 60.0, "y": 20.0}
     assert mutation["world_before"] == {"x": 100.0, "y": 40.0}
     assert mutation["world_after"] == {"x": 120.0, "y": 40.0}
+
+
+def test_solver_endpoint_move_skips_noninvertible_transform_before_mutation() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80">
+          <g id="collapsed" transform="scale(0 1)">
+            <line id="movable-wall" x1="10" y1="20" x2="50" y2="20" stroke="#111" stroke-width="4"/>
+          </g>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_endpoint_move_candidates": [
+            {
+                "operation": "move_line_endpoint",
+                "operation_id": "endpoint_move_001",
+                "target_element_index": 3,
+                "tag": "line",
+                "endpoint": "end",
+                "dx": 20,
+                "dy": 0,
+                "endpoint_move_priority": 900,
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_endpoint_moves=True, max_endpoint_moves=4)
+    wall = next(element for element in root.iter() if element.attrib.get("id") == "movable-wall")
+    skip = summary["endpoint_move_skips"][0]
+
+    assert summary["same_layer_endpoint_move_count"] == 0
+    assert summary["edit_capability_summary"]["endpoint_move"]["review_required_count"] == 1
+    assert skip["review_required"] is True
+    assert skip["reason"] == "requires invertible accumulated transform"
+    assert wall.attrib["x2"] == "50"
+    assert "data-crab-action" not in wall.attrib
 
 
 def test_solver_endpoint_move_converts_world_absolute_target_through_group_transform() -> None:

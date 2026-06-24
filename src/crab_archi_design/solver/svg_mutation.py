@@ -318,6 +318,30 @@ def edit_capability_summary(
     }
 
 
+def review_required_skip(
+    candidate: dict[str, Any],
+    element_index: int | None,
+    action: str,
+    capability_report: dict[str, Any],
+    operation_name: str,
+) -> dict[str, Any]:
+    operation_report = capability_report["operations"][operation_name]
+    return {
+        "action": action,
+        "operation": candidate.get("operation", action),
+        "status": "skipped",
+        "review_required": True,
+        "reason": operation_report["reason"],
+        "capability_status": operation_report["status"],
+        "target_element_index": element_index,
+        "tag": capability_report.get("tag"),
+        "id": capability_report.get("id"),
+        "supported_operations": capability_report.get("supported_operations", []),
+        "review_required_operations": capability_report.get("review_required_operations", []),
+        "geometry_mutated": False,
+    }
+
+
 def apply_endpoint_move_candidates(
     root: Element,
     plan: dict[str, Any],
@@ -325,11 +349,13 @@ def apply_endpoint_move_candidates(
     locked_indices: set[int] | None = None,
     excluded_indices: set[int] | None = None,
     element_map: dict[int, Element] | None = None,
+    parent_map: dict[int, Element | None] | None = None,
     transform_map: dict[int, Matrix] | None = None,
 ) -> dict[str, Any]:
     locked_indices = locked_indices or set()
     excluded_indices = excluded_indices or set()
     element_map = element_map or existing_elements_by_document_index(root)
+    parent_map = parent_map or parents_by_document_index(root)
     transform_map = transform_map or element_matrices_by_document_index(root)
     candidates = sorted(plan.get("same_layer_endpoint_move_candidates", []), key=endpoint_move_sort_key, reverse=True)
     applied: list[dict[str, Any]] = []
@@ -351,6 +377,10 @@ def apply_endpoint_move_candidates(
         element = element_map.get(element_index or -1)
         if element_index is None or element is None:
             skipped.append({"target_element_index": element_index, "operation": "move_line_endpoint", "reason": "target element not found"})
+            continue
+        capability = edit_capability_report(element, parent_map.get(element_index), transform_map.get(element_index))
+        if capability["operations"]["endpoint_move"]["status"] != "supported":
+            skipped.append(review_required_skip(candidate, element_index, "move_line_endpoint", capability, "endpoint_move"))
             continue
         result = move_line_endpoint(
             element,
@@ -409,6 +439,11 @@ def apply_opening_candidates(
         parent = parent_map.get(element_index or -1)
         if element_index is None or element is None or parent is None:
             skipped.append({"target_element_index": element_index, "reason": "target element or parent not found"})
+            continue
+        action = "split_path_for_opening" if local_tag(element) == "path" else "split_line_for_opening"
+        capability = edit_capability_report(element, parent, transform_map.get(element_index))
+        if capability["operations"]["opening_split"]["status"] != "supported":
+            skipped.append(review_required_skip(candidate, element_index, action, capability, "opening_split"))
             continue
         if local_tag(element) == "path":
             result = split_path_for_opening(
@@ -567,6 +602,7 @@ def apply_same_layer_geometry_patch(
         locked_indices=locked_indices,
         excluded_indices=opened_indices,
         element_map=element_map,
+        parent_map=parent_map,
         transform_map=transform_map,
     ) if apply_endpoint_moves else {
         "endpoint_move_candidate_count": len(plan.get("same_layer_endpoint_move_candidates", [])),
