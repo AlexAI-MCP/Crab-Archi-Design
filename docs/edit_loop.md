@@ -375,6 +375,19 @@ crab-archi-design --project-root projects apply-edit \
 
 This keeps the edit in the source SVG hierarchy: the target wall line is shortened, an after-segment is inserted beside it in the same parent, and the gap between them becomes the opening.
 
+To test CAD-like line endpoint grip edits from `same_layer_endpoint_move_candidates`, pass the endpoint-move flag through the engine adapter:
+
+```bash
+crab-archi-design --project-root projects apply-edit \
+  --project-id a801-802-opencrab-test \
+  --intent all \
+  --engine-adapter same-layer-svg-engine \
+  --engine-arg=--apply-endpoint-moves \
+  --skip-preview
+```
+
+This keeps the edit in the source SVG hierarchy: the target line element is retained, the selected endpoint is moved by explicit `x/y` or `dx/dy` values, and the original coordinates are stored in reversible `data-crab-original-*` attributes.
+
 For diagnostic end-to-end testing only, the built-in room-envelope redraw path can still be run with `--engine-adapter layout-svg-engine`:
 
 ```bash

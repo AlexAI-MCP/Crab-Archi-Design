@@ -710,6 +710,9 @@ def test_svg_patch_plan_targets_existing_mutable_elements(tmp_path: Path) -> Non
     assert plan["same_layer_opening_candidates"][0]["topology_evidence"] == "OpenCrab topology prior"
     assert plan["same_layer_opening_candidates"][0]["adjacency_edge_id"]
     assert plan["same_layer_opening_candidates"][0]["opening_priority"] > 0
+    assert plan["same_layer_endpoint_move_candidates"] == []
+    endpoint_template = next(item for item in plan["operation_templates"] if item["operation"] == "move_or_extend_existing_wall_segment")
+    assert endpoint_template["target"] == "same_layer_endpoint_move_candidates"
 
 
 def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
@@ -878,6 +881,90 @@ def test_solver_same_layer_opening_skips_locked_target() -> None:
     assert summary["locked_preservation"]["locked_geometry_unchanged"] is True
 
 
+def test_solver_same_layer_endpoint_move_updates_existing_line() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 60">
+          <line id="movable-wall" x1="10" y1="20" x2="110" y2="20" stroke="#111" stroke-width="4"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_endpoint_move_candidates": [
+            {
+                "operation": "move_line_endpoint",
+                "operation_id": "endpoint_move_001",
+                "target_element_index": 2,
+                "tag": "line",
+                "endpoint": "end",
+                "dx": 12,
+                "dy": -5,
+                "endpoint_move_priority": 900,
+                "program_cluster_id": "program_cluster_001",
+                "program_role": "greenery_lounge",
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_endpoint_moves=True, max_endpoint_moves=4)
+    wall = next(element for element in root.iter() if element.attrib.get("id") == "movable-wall")
+
+    assert summary["same_layer_endpoint_move_count"] == 1
+    assert summary["same_layer_geometry_mutation_count"] == 1
+    assert summary["program_cluster_mutation_count"] == 1
+    assert summary["endpoint_move_mutations"][0]["endpoint"] == "end"
+    assert wall.attrib["x2"] == "122"
+    assert wall.attrib["y2"] == "15"
+    assert wall.attrib["data-crab-original-x2"] == "110"
+    assert wall.attrib["data-crab-original-y2"] == "20"
+    assert wall.attrib["data-crab-action"] == "move_line_endpoint"
+
+
+def test_solver_same_layer_endpoint_move_skips_locked_target() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 60">
+          <line id="locked-wall" x1="10" y1="20" x2="110" y2="20" stroke="#111" stroke-width="4"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_endpoint_move_candidates": [
+            {
+                "operation": "move_line_endpoint",
+                "operation_id": "endpoint_move_001",
+                "target_element_index": 2,
+                "tag": "line",
+                "endpoint": "end",
+                "dx": 12,
+            }
+        ],
+        "locked_candidates": [
+            {
+                "element_index": 2,
+                "tag": "line",
+                "role_hint": "wall_candidate",
+                "reason": "inside protected no-go/lock/protect polygon",
+            }
+        ],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_endpoint_moves=True, max_endpoint_moves=4)
+    wall = next(element for element in root.iter() if element.attrib.get("id") == "locked-wall")
+
+    assert summary["same_layer_endpoint_move_count"] == 0
+    assert summary["locked_target_skip_count"] == 1
+    assert summary["locked_targets_not_selected"] is False
+    assert summary["endpoint_move_skips"][0]["operation"] == "move_line_endpoint"
+    assert wall.attrib["x2"] == "110"
+    assert "data-crab-action" not in wall.attrib
+
+
 def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -> None:
     source_svg = tmp_path / "same-layer.svg"
     source_svg.write_text(
@@ -942,6 +1029,7 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     assert report["checks"]["engine_quality_gates_pass"] is True
     assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["locked_geometry_unchanged"] is True
     assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["locked_targets_not_selected"] is True
+    assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["same_layer_endpoint_moves_applied_or_not_requested"] is True
     alternative = Path(report["copied_artifacts"]["svg"][0])
     alternative_text = alternative.read_text(encoding="utf-8")
     assert "crab_archi_design_same_layer_engine_candidate" in alternative_text

@@ -2347,6 +2347,7 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
         "program_anchors": program_anchors[:max_candidates],
         "same_layer_mutable_candidates": mutable_candidates[:max_candidates],
         "same_layer_opening_candidates": opening_candidates[:max_candidates],
+        "same_layer_endpoint_move_candidates": [],
         "locked_candidates": locked_candidates[:max_candidates],
         "operation_templates": [
             {
@@ -2356,8 +2357,8 @@ def build_svg_patch_plan(project_id: str, root: Path, max_candidates: int = 240)
             },
             {
                 "operation": "move_or_extend_existing_wall_segment",
-                "target": "same_layer_mutable_candidates",
-                "rule": "Move endpoints of existing line/polyline/path segments; do not create a full new zoning block.",
+                "target": "same_layer_endpoint_move_candidates",
+                "rule": "Move endpoints of existing line segments by explicit x/y or dx/dy values; do not create a full new zoning block.",
             },
             {
                 "operation": "split_line_for_opening",

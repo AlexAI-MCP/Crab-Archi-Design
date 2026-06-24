@@ -299,6 +299,133 @@ def opening_sort_key(candidate: dict[str, Any]) -> tuple[float, int]:
     return (float(candidate.get("opening_priority", candidate.get("patch_priority") or 0.0)), int(candidate.get("target_element_index") or 0))
 
 
+def endpoint_move_sort_key(candidate: dict[str, Any]) -> tuple[float, int]:
+    return (float(candidate.get("endpoint_move_priority", candidate.get("patch_priority") or 0.0)), int(candidate.get("target_element_index") or 0))
+
+
+def endpoint_target(coords: tuple[float, float, float, float], endpoint: str, candidate: dict[str, Any]) -> tuple[float, float] | None:
+    x1, y1, x2, y2 = coords
+    base_x, base_y = (x1, y1) if endpoint == "start" else (x2, y2)
+    has_absolute = candidate.get("x") is not None or candidate.get("y") is not None
+    if has_absolute:
+        return (svg_float(candidate.get("x", base_x)), svg_float(candidate.get("y", base_y)))
+    if candidate.get("dx") is None and candidate.get("dy") is None:
+        return None
+    return (base_x + svg_float(candidate.get("dx", 0.0)), base_y + svg_float(candidate.get("dy", 0.0)))
+
+
+def move_line_endpoint(element: Element, endpoint: str, candidate: dict[str, Any], operation_id: str = "endpoint_move") -> dict[str, Any]:
+    coords = line_points(element)
+    if coords is None or endpoint not in {"start", "end"}:
+        return {
+            "action": "move_line_endpoint",
+            "status": "skipped",
+            "reason": "requires line and endpoint=start|end",
+            "geometry_mutated": False,
+            "same_layer_endpoint_moved": False,
+        }
+    target = endpoint_target(coords, endpoint, candidate)
+    if target is None:
+        return {
+            "action": "move_line_endpoint",
+            "status": "skipped",
+            "reason": "requires absolute x/y or relative dx/dy target",
+            "geometry_mutated": False,
+            "same_layer_endpoint_moved": False,
+        }
+
+    target_x, target_y = target
+    source_x, source_y = (coords[0], coords[1]) if endpoint == "start" else (coords[2], coords[3])
+    if format_svg_number(source_x) == format_svg_number(target_x) and format_svg_number(source_y) == format_svg_number(target_y):
+        return {
+            "action": "move_line_endpoint",
+            "status": "skipped",
+            "reason": "endpoint target equals current coordinate",
+            "geometry_mutated": False,
+            "same_layer_endpoint_moved": False,
+        }
+
+    preserve_original_attrs(element, ["x1", "y1", "x2", "y2"])
+    if endpoint == "start":
+        element.set("x1", format_svg_number(target_x))
+        element.set("y1", format_svg_number(target_y))
+    else:
+        element.set("x2", format_svg_number(target_x))
+        element.set("y2", format_svg_number(target_y))
+
+    element.set("data-crab-action", "move_line_endpoint")
+    element.set("data-crab-same-layer-mutation", "same_layer_line_endpoint_move")
+    element.set("data-crab-endpoint-move-operation", operation_id)
+    element.set("data-crab-endpoint", endpoint)
+    element.set("data-crab-geometry-mutated", "true")
+    return {
+        "action": "move_line_endpoint",
+        "status": "applied",
+        "operation_id": operation_id,
+        "endpoint": endpoint,
+        "before": {"x": source_x, "y": source_y},
+        "after": {"x": target_x, "y": target_y},
+        "geometry_mutated": True,
+        "same_layer_endpoint_moved": True,
+    }
+
+
+def apply_endpoint_move_candidates(
+    root: Element,
+    plan: dict[str, Any],
+    max_endpoint_moves: int,
+    locked_indices: set[int] | None = None,
+    excluded_indices: set[int] | None = None,
+) -> dict[str, Any]:
+    locked_indices = locked_indices or set()
+    excluded_indices = excluded_indices or set()
+    element_map = existing_elements_by_document_index(root)
+    candidates = sorted(plan.get("same_layer_endpoint_move_candidates", []), key=endpoint_move_sort_key, reverse=True)
+    applied: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    locked_skips: list[dict[str, Any]] = []
+    moved_indices: set[int] = set()
+    for candidate in candidates:
+        if len(applied) >= max_endpoint_moves:
+            break
+        element_index = selected_candidate_index(candidate)
+        if element_index in locked_indices:
+            skip = locked_target_skip(candidate, element_index, "move_line_endpoint")
+            skipped.append(skip)
+            locked_skips.append(skip)
+            continue
+        if element_index in excluded_indices:
+            skipped.append({"target_element_index": element_index, "operation": "move_line_endpoint", "reason": "target element already mutated by earlier operation"})
+            continue
+        element = element_map.get(element_index or -1)
+        if element_index is None or element is None:
+            skipped.append({"target_element_index": element_index, "operation": "move_line_endpoint", "reason": "target element not found"})
+            continue
+        result = move_line_endpoint(
+            element,
+            str(candidate.get("endpoint") or "end"),
+            candidate,
+            operation_id=str(candidate.get("operation_id") or f"endpoint_move_{len(applied) + 1:03d}"),
+        )
+        result["target_element_index"] = element_index
+        result["program_cluster_id"] = candidate.get("program_cluster_id")
+        result["program_role"] = candidate.get("program_role")
+        result["endpoint_move_priority"] = candidate.get("endpoint_move_priority")
+        if result.get("status") == "applied":
+            applied.append(result)
+            moved_indices.add(element_index)
+        else:
+            skipped.append(result)
+    return {
+        "endpoint_move_candidate_count": len(candidates),
+        "same_layer_endpoint_move_count": len(applied),
+        "endpoint_moved_element_indices": sorted(moved_indices),
+        "endpoint_move_mutations": applied,
+        "endpoint_move_skips": skipped,
+        "locked_target_skips": locked_skips,
+    }
+
+
 def apply_opening_candidates(root: Element, plan: dict[str, Any], max_openings: int, locked_indices: set[int] | None = None) -> dict[str, Any]:
     locked_indices = locked_indices or set()
     element_map = existing_elements_by_document_index(root)
@@ -424,7 +551,15 @@ def patch_existing_element(element: Element, candidate: dict[str, Any], mutation
     }
 
 
-def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mutations: int, apply_openings: bool = False, max_openings: int = 4) -> dict[str, Any]:
+def apply_same_layer_geometry_patch(
+    root: Element,
+    plan: dict[str, Any],
+    max_mutations: int,
+    apply_openings: bool = False,
+    max_openings: int = 4,
+    apply_endpoint_moves: bool = False,
+    max_endpoint_moves: int = 4,
+) -> dict[str, Any]:
     root.set("data-crab-candidate", "crab_archi_design_same_layer_engine_candidate")
     root.set("data-crab-engine", "same-layer-svg-engine")
     root.set("data-crab-mutation-strategy", "same_layer_geometry_patch")
@@ -443,8 +578,23 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
         "locked_target_skips": [],
     }
     opened_indices = set(opening_summary["opened_element_indices"])
+    endpoint_summary = apply_endpoint_move_candidates(
+        root,
+        plan,
+        max_endpoint_moves,
+        locked_indices=locked_indices,
+        excluded_indices=opened_indices,
+    ) if apply_endpoint_moves else {
+        "endpoint_move_candidate_count": len(plan.get("same_layer_endpoint_move_candidates", [])),
+        "same_layer_endpoint_move_count": 0,
+        "endpoint_moved_element_indices": [],
+        "endpoint_move_mutations": [],
+        "endpoint_move_skips": [],
+        "locked_target_skips": [],
+    }
+    endpoint_moved_indices = set(endpoint_summary["endpoint_moved_element_indices"])
     selected, mutable_locked_skips = select_candidates(plan, max_mutations, locked_indices=locked_indices)
-    selected = [candidate for candidate in selected if selected_candidate_index(candidate) not in opened_indices]
+    selected = [candidate for candidate in selected if selected_candidate_index(candidate) not in opened_indices and selected_candidate_index(candidate) not in endpoint_moved_indices]
     mutated: list[dict[str, Any]] = []
     missing: list[int] = []
     for candidate in selected:
@@ -456,9 +606,10 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
         mutated.append(patch_existing_element(element, candidate, len(mutated) + 1))
 
     locked_report = locked_preservation_report(locked_before)
-    locked_target_skips = [*opening_summary["locked_target_skips"], *mutable_locked_skips]
+    locked_target_skips = [*opening_summary["locked_target_skips"], *endpoint_summary["locked_target_skips"], *mutable_locked_skips]
     removal_geometry_mutation_count = sum(1 for item in mutated if item.get("geometry_mutated"))
     opening_program_cluster_count = sum(1 for item in opening_summary["opening_mutations"] if item.get("program_cluster_id"))
+    endpoint_program_cluster_count = sum(1 for item in endpoint_summary["endpoint_move_mutations"] if item.get("program_cluster_id"))
     return {
         "mutation_strategy": "same_layer_geometry_patch",
         "patch_plan_status": plan.get("status"),
@@ -466,14 +617,17 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
         "selected_candidate_count": len(selected),
         "same_layer_mutation_count": len(mutated),
         "same_layer_removal_count": sum(1 for item in mutated if item.get("same_layer_removed")),
-        "same_layer_geometry_mutation_count": removal_geometry_mutation_count + opening_summary["same_layer_opening_split_count"],
+        "same_layer_geometry_mutation_count": removal_geometry_mutation_count + opening_summary["same_layer_opening_split_count"] + endpoint_summary["same_layer_endpoint_move_count"],
         "same_layer_opening_split_count": opening_summary["same_layer_opening_split_count"],
         "same_layer_segment_added_count": opening_summary["same_layer_segment_added_count"],
-        "program_cluster_mutation_count": sum(1 for item in mutated if item.get("program_cluster_id")) + opening_program_cluster_count,
+        "same_layer_endpoint_move_count": endpoint_summary["same_layer_endpoint_move_count"],
+        "program_cluster_mutation_count": sum(1 for item in mutated if item.get("program_cluster_id")) + opening_program_cluster_count + endpoint_program_cluster_count,
         "missing_element_indices": missing,
         "mutations": mutated,
         "opening_mutations": opening_summary["opening_mutations"],
         "opening_skips": opening_summary["opening_skips"],
+        "endpoint_move_mutations": endpoint_summary["endpoint_move_mutations"],
+        "endpoint_move_skips": endpoint_summary["endpoint_move_skips"],
         "locked_preservation": locked_report,
         "locked_target_skip_count": len(locked_target_skips),
         "locked_target_skips": locked_target_skips,

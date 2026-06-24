@@ -39,6 +39,8 @@ def main() -> None:
     parser.add_argument("--max-mutations", type=int, default=24)
     parser.add_argument("--apply-openings", action="store_true")
     parser.add_argument("--max-openings", type=int, default=4)
+    parser.add_argument("--apply-endpoint-moves", action="store_true")
+    parser.add_argument("--max-endpoint-moves", type=int, default=4)
     args, _ = parser.parse_known_args()
 
     solver_input_path = Path(os.environ["CRAB_ARCHI_SOLVER_INPUT"])
@@ -71,7 +73,15 @@ def main() -> None:
     root = tree.getroot()
     source_image_count = count_images(root)
     source_element_count = sum(1 for _ in root.iter())
-    summary = apply_same_layer_geometry_patch(root, patch_plan, max(1, args.max_mutations), apply_openings=args.apply_openings, max_openings=max(1, args.max_openings))
+    summary = apply_same_layer_geometry_patch(
+        root,
+        patch_plan,
+        max(1, args.max_mutations),
+        apply_openings=args.apply_openings,
+        max_openings=max(1, args.max_openings),
+        apply_endpoint_moves=args.apply_endpoint_moves,
+        max_endpoint_moves=max(1, args.max_endpoint_moves),
+    )
     output_svg = run_dir / "same_layer_engine_candidate.svg"
     tree.write(output_svg, encoding="utf-8", xml_declaration=True)
 
@@ -83,11 +93,12 @@ def main() -> None:
         "no_raster_overlay_added": output_image_count == source_image_count,
         "same_layer_patch_plan_available": True,
         "patch_plan_pass": patch_plan.get("status") == "pass",
-        "source_element_addresses_used": summary["selected_candidate_count"] > 0,
-        "existing_elements_mutated": summary["same_layer_mutation_count"] > 0,
+        "source_element_addresses_used": summary["selected_candidate_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
+        "existing_elements_mutated": summary["same_layer_mutation_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
         "existing_geometry_mutated": summary["same_layer_geometry_mutation_count"] > 0,
-        "same_layer_internal_partitions_removed": summary["same_layer_removal_count"] > 0 or summary["same_layer_opening_split_count"] > 0,
+        "same_layer_internal_partitions_removed": summary["same_layer_removal_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
         "same_layer_openings_applied_or_not_requested": (not args.apply_openings) or summary["same_layer_opening_split_count"] > 0,
+        "same_layer_endpoint_moves_applied_or_not_requested": (not args.apply_endpoint_moves) or summary["same_layer_endpoint_move_count"] > 0,
         "program_cluster_targets_used": summary["program_cluster_mutation_count"] > 0,
         "locked_geometry_unchanged": summary["locked_preservation"]["locked_geometry_unchanged"],
         "locked_targets_not_selected": summary["locked_targets_not_selected"],
