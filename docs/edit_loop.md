@@ -375,6 +375,8 @@ crab-archi-design --project-root projects apply-edit \
 
 This keeps the edit in the source SVG hierarchy: the target wall line or open single-subpath M/L/H/V path is shortened, an after-segment is inserted beside it in the same parent, and the gap between them becomes the opening. If a path sits under SVG transforms, the opening is measured in recognition/world length and converted back into local `d` coordinates before writing. Curved, arc, and closed paths stay unchanged and are reported as skips.
 
+The same-layer engine delegates these primitive CAD-like operations to `solver/svg_edit_ops.py`; `solver/svg_mutation.py` only selects patch-plan candidates, enforces locked targets, and reports mutation/QA summaries. This keeps future wall/path/polyline mutators testable without changing the higher-level OpenCrab/topology handoff.
+
 To test CAD-like line/polyline/path endpoint grip edits from `same_layer_endpoint_move_candidates`, pass the endpoint-move flag through the engine adapter. Candidate `x/y` and `dx/dy` values are interpreted in recognition/world coordinates; if the source element sits under SVG transforms, the same-layer engine converts the move back into that element's local attributes before writing the SVG. Path endpoint edits are limited to open single-subpath M/L/H/V paths; curved, arc, and closed paths stay unchanged and are reported as skips.
 
 ```bash

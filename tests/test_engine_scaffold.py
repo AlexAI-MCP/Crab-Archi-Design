@@ -3,6 +3,7 @@ from crab_archi_design.qa import gate_status
 from crab_archi_design.recognition import PARSER_VERSION, RECOGNITION_IR_SCHEMA, build_recognition_ir_v2, stable_node_id
 from crab_archi_design.recognition.ir import empty_recognition_ir
 from crab_archi_design.solver import SOLVER_INPUT_SCHEMA, SOLVER_OUTPUT_SCHEMA, build_endpoint_move_candidates, build_opening_candidates
+from crab_archi_design.solver.svg_edit_ops import split_line_for_opening, split_path_for_opening
 from crab_archi_design.svg import BBox, apply_inverse_linear, apply_inverse_matrix, apply_matrix, bbox_center, identity_matrix, inverse_matrix, multiply_matrix, point_in_polygon
 from crab_archi_design.svg.geometry import polygon_area, quantize_point
 from crab_archi_design.svg.transform import parse_transform
@@ -37,6 +38,40 @@ def test_svg_geometry_and_transform_helpers_are_deterministic() -> None:
     assert inverse_matrix(matrix) is not None
     assert apply_inverse_matrix(matrix, (16.0, 28.0)) == (3.0, 4.0)
     assert apply_inverse_linear(matrix, (10.0, 0.0)) == (5.0, 0.0)
+
+
+def test_svg_edit_ops_split_line_opening_is_same_parent_native_svg() -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring('<svg><line id="wall" x1="0" y1="10" x2="100" y2="10" stroke="#111"/></svg>')
+    wall = root[0]
+
+    result = split_line_for_opening(root, wall, 0.25, 0.5, operation_id="door_001")
+
+    assert result["status"] == "applied"
+    assert len(list(root)) == 2
+    assert root[0].attrib["x2"] == "25"
+    assert root[1].attrib["x1"] == "50"
+    assert root[1].attrib["id"] == "wall__crab_door_001_after"
+    assert all(child.attrib["data-crab-action"] == "split_line_for_opening" for child in root)
+
+
+def test_svg_edit_ops_split_path_opening_uses_world_length_under_transform() -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring('<svg><g transform="scale(2 1)"><path id="wall-path" d="M 0 0 L 100 0 L 100 100"/></g></svg>')
+    group = root[0]
+    path = group[0]
+    matrix = parse_transform(group.attrib["transform"])
+
+    result = split_path_for_opening(group, path, 0.5, 0.75, operation_id="door_001", transform_matrix=matrix)
+
+    assert result["status"] == "applied"
+    assert result["transform_aware"] is True
+    assert result["opening"] == {"x1": 75.0, "y1": 0.0, "x2": 100.0, "y2": 25.0}
+    assert result["world_opening"] == {"x1": 150.0, "y1": 0.0, "x2": 200.0, "y2": 25.0}
+    assert group[0].attrib["d"] == "M 0,0 L 75,0"
+    assert group[1].attrib["d"] == "M 100,25 L 100,100"
 
 
 def test_intent_and_gate_contracts() -> None:
