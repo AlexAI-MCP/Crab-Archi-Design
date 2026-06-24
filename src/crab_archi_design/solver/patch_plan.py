@@ -146,7 +146,7 @@ def build_endpoint_move_candidates(mutable_candidates: list[dict[str, Any]], top
     line_candidates = [
         item
         for item in mutable_candidates
-        if item.get("tag") in {"line", "polyline"}
+        if item.get("tag") in {"line", "polyline", "path"}
         and item.get("program_cluster_id")
         and max(normalize_bbox_dict(item.get("bbox"))["width"], normalize_bbox_dict(item.get("bbox"))["height"]) >= 12.0
     ]
@@ -181,7 +181,7 @@ def build_endpoint_move_candidates(mutable_candidates: list[dict[str, Any]], top
             "dx": dx,
             "dy": dy,
             "endpoint_move_priority": endpoint_move_candidate_priority(source, adjacency),
-            "reason": "Create a bounded same-layer endpoint move candidate on a recognized mutable line/polyline program boundary.",
+            "reason": "Create a bounded same-layer endpoint move candidate on a recognized mutable line/polyline/path program boundary.",
         }
         endpoint_candidates.append(candidate)
         if len(endpoint_candidates) >= max_candidates:

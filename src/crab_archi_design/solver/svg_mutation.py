@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 from xml.etree.ElementTree import Element
 
+from crab_archi_design.svg.path import TOKEN_RE, flatten_path_points, parse_path, path_is_closed
 from crab_archi_design.svg.transform import (
     Matrix,
     apply_inverse_linear,
@@ -112,11 +113,27 @@ def polyline_points(element: Element) -> list[tuple[float, float]]:
     return list(zip(values[0::2], values[1::2]))
 
 
+def editable_path_points(element: Element) -> list[tuple[float, float]]:
+    if local_tag(element) != "path" or "d" not in element.attrib:
+        return []
+    raw = element.attrib.get("d", "")
+    commands = {token.upper() for token in TOKEN_RE.findall(raw) if len(token) == 1 and token.isalpha()}
+    if not commands or commands - {"M", "L", "H", "V"}:
+        return []
+    parsed = parse_path(raw)
+    if path_is_closed(parsed) or len(parsed.subpaths) != 1:
+        return []
+    points = flatten_path_points(parsed)
+    return points if len(points) >= 2 else []
+
+
 def linear_endpoint_coords(element: Element) -> tuple[float, float, float, float] | None:
     line = line_points(element)
     if line is not None:
         return line
     points = polyline_points(element)
+    if len(points) < 2:
+        points = editable_path_points(element)
     if len(points) < 2:
         return None
     start = points[0]
@@ -126,6 +143,15 @@ def linear_endpoint_coords(element: Element) -> tuple[float, float, float, float
 
 def format_polyline_points(points: list[tuple[float, float]]) -> str:
     return " ".join(f"{format_svg_number(x)},{format_svg_number(y)}" for x, y in points)
+
+
+def format_path_points(points: list[tuple[float, float]]) -> str:
+    if not points:
+        return ""
+    start = points[0]
+    segments = [f"M {format_svg_number(start[0])},{format_svg_number(start[1])}"]
+    segments.extend(f"L {format_svg_number(x)},{format_svg_number(y)}" for x, y in points[1:])
+    return " ".join(segments)
 
 
 def interpolate_line_point(coords: tuple[float, float, float, float], ratio: float) -> tuple[float, float]:
@@ -398,10 +424,11 @@ def move_line_endpoint(
     tag = local_tag(element)
     coords = linear_endpoint_coords(element)
     if coords is None or endpoint not in {"start", "end"}:
+        reason = "requires open single-subpath M/L/H/V path with at least two points" if tag == "path" else "requires line/polyline/path and endpoint=start|end"
         return {
             "action": "move_line_endpoint",
             "status": "skipped",
-            "reason": "requires line/polyline and endpoint=start|end",
+            "reason": reason,
             "geometry_mutated": False,
             "same_layer_endpoint_moved": False,
         }
@@ -453,11 +480,27 @@ def move_line_endpoint(
         else:
             points[-1] = (target_x, target_y)
         element.set("points", format_polyline_points(points))
+    elif tag == "path":
+        points = editable_path_points(element)
+        if len(points) < 2:
+            return {
+                "action": "move_line_endpoint",
+                "status": "skipped",
+                "reason": "requires open single-subpath M/L/H/V path with at least two points",
+                "geometry_mutated": False,
+                "same_layer_endpoint_moved": False,
+            }
+        preserve_original_attr(element, "d")
+        if endpoint == "start":
+            points[0] = (target_x, target_y)
+        else:
+            points[-1] = (target_x, target_y)
+        element.set("d", format_path_points(points))
     else:
         return {
             "action": "move_line_endpoint",
             "status": "skipped",
-            "reason": "requires line/polyline target",
+            "reason": "requires line/polyline/path target",
             "geometry_mutated": False,
             "same_layer_endpoint_moved": False,
         }

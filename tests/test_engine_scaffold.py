@@ -172,6 +172,47 @@ def test_solver_patch_plan_builds_polyline_endpoint_move_candidates() -> None:
     assert moves[0]["connects_to_role"] == "hall_lobby"
 
 
+def test_solver_patch_plan_builds_path_endpoint_move_candidates() -> None:
+    candidates = [
+        {
+            "element_index": 32,
+            "tag": "path",
+            "bbox": {"x": 20, "y": 10, "width": 120, "height": 4},
+            "center": [80, 12],
+            "patch_priority": 680.0,
+            "program_cluster_id": "cluster_golf",
+            "program_role": "golf_screen",
+            "space_region_ids": ["space_golf"],
+        }
+    ]
+    topology = {
+        "nodes": [
+            {"id": "cluster_golf", "type": "program_cluster", "role": "golf_screen", "bbox": {"x": 10, "y": 0, "width": 140, "height": 80}},
+            {"id": "cluster_hall", "type": "program_cluster", "role": "hall_lobby", "bbox": {"x": 190, "y": 0, "width": 80, "height": 80}},
+        ],
+        "edges": [
+            {
+                "id": "edge_topology_004",
+                "type": "ontology_cluster_adjacency_target",
+                "source": "cluster_golf",
+                "target": "cluster_hall",
+                "left_role": "golf_screen",
+                "right_role": "hall_lobby",
+                "rationale": "golf connects back to the main hall",
+                "evidence": "OpenCrab topology prior",
+            }
+        ],
+    }
+
+    moves = build_endpoint_move_candidates(candidates, topology, 4)
+
+    assert moves[0]["operation"] == "move_line_endpoint"
+    assert moves[0]["tag"] == "path"
+    assert moves[0]["endpoint"] == "end"
+    assert moves[0]["dx"] > 0
+    assert moves[0]["connects_to_role"] == "hall_lobby"
+
+
 def test_recognition_ir_v2_applies_nested_transforms(tmp_path) -> None:
     source = tmp_path / "nested.svg"
     source.write_text(

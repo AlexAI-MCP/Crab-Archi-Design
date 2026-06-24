@@ -970,6 +970,82 @@ def test_solver_same_layer_endpoint_move_updates_existing_polyline() -> None:
     assert wall.attrib["data-crab-same-layer-mutation"] == "same_layer_polyline_endpoint_move"
 
 
+def test_solver_same_layer_endpoint_move_updates_existing_path() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 60">
+          <path id="movable-wall" d="M 10 20 L 50 20 L 110 20" fill="none" stroke="#111" stroke-width="4"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_endpoint_move_candidates": [
+            {
+                "operation": "move_line_endpoint",
+                "operation_id": "endpoint_move_001",
+                "target_element_index": 2,
+                "tag": "path",
+                "endpoint": "end",
+                "dx": 12,
+                "dy": -5,
+                "endpoint_move_priority": 900,
+                "program_cluster_id": "program_cluster_004",
+                "program_role": "golf_screen",
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_endpoint_moves=True, max_endpoint_moves=4)
+    wall = next(element for element in root.iter() if element.attrib.get("id") == "movable-wall")
+
+    assert summary["same_layer_endpoint_move_count"] == 1
+    assert summary["same_layer_geometry_mutation_count"] == 1
+    assert summary["program_cluster_mutation_count"] == 1
+    assert summary["endpoint_move_mutations"][0]["tag"] == "path"
+    assert summary["endpoint_move_mutations"][0]["endpoint"] == "end"
+    assert wall.attrib["d"] == "M 10,20 L 50,20 L 122,15"
+    assert wall.attrib["data-crab-original-d"] == "M 10 20 L 50 20 L 110 20"
+    assert wall.attrib["data-crab-action"] == "move_line_endpoint"
+    assert wall.attrib["data-crab-same-layer-mutation"] == "same_layer_path_endpoint_move"
+
+
+def test_solver_same_layer_endpoint_move_skips_curved_path() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 60">
+          <path id="curved-wall" d="M 10 20 C 40 10 80 30 110 20" fill="none" stroke="#111" stroke-width="4"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [],
+        "same_layer_endpoint_move_candidates": [
+            {
+                "operation": "move_line_endpoint",
+                "operation_id": "endpoint_move_001",
+                "target_element_index": 2,
+                "tag": "path",
+                "endpoint": "end",
+                "dx": 12,
+                "endpoint_move_priority": 900,
+            }
+        ],
+        "locked_candidates": [],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4, apply_endpoint_moves=True, max_endpoint_moves=4)
+    wall = next(element for element in root.iter() if element.attrib.get("id") == "curved-wall")
+
+    assert summary["same_layer_endpoint_move_count"] == 0
+    assert summary["endpoint_move_skips"][0]["reason"] == "requires open single-subpath M/L/H/V path with at least two points"
+    assert wall.attrib["d"] == "M 10 20 C 40 10 80 30 110 20"
+    assert "data-crab-action" not in wall.attrib
+
+
 def test_solver_endpoint_move_converts_world_delta_through_group_transform() -> None:
     root = ET.fromstring(
         """
