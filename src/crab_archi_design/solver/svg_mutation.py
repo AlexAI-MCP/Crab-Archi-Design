@@ -105,6 +105,89 @@ def selected_candidate_index(candidate: dict[str, Any]) -> int | None:
     return index if index > 0 else None
 
 
+def element_state(element: Element) -> dict[str, Any]:
+    return {
+        "tag": element.tag,
+        "attrib": dict(sorted(element.attrib.items())),
+        "text": element.text,
+        "tail": element.tail,
+        "children": [element_state(child) for child in list(element)],
+    }
+
+
+def capture_locked_element_states(root: Element, plan: dict[str, Any]) -> list[dict[str, Any]]:
+    element_map = existing_elements_by_document_index(root)
+    captured: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for candidate in plan.get("locked_candidates", []):
+        element_index = selected_candidate_index(candidate)
+        if element_index is None or element_index in seen:
+            continue
+        seen.add(element_index)
+        element = element_map.get(element_index)
+        if element is None:
+            captured.append(
+                {
+                    "element_index": element_index,
+                    "tag": candidate.get("tag"),
+                    "role_hint": candidate.get("role_hint"),
+                    "reason": "locked candidate element not found",
+                    "element": None,
+                    "state": None,
+                }
+            )
+            continue
+        captured.append(
+            {
+                "element_index": element_index,
+                "tag": local_tag(element),
+                "role_hint": candidate.get("role_hint"),
+                "reason": candidate.get("reason"),
+                "element": element,
+                "state": element_state(element),
+            }
+        )
+    return captured
+
+
+def locked_preservation_report(captured: list[dict[str, Any]]) -> dict[str, Any]:
+    missing: list[dict[str, Any]] = []
+    mutated: list[dict[str, Any]] = []
+    preserved_count = 0
+    for item in captured:
+        element = item.get("element")
+        if element is None:
+            missing.append(
+                {
+                    "element_index": item.get("element_index"),
+                    "tag": item.get("tag"),
+                    "role_hint": item.get("role_hint"),
+                    "reason": item.get("reason"),
+                }
+            )
+            continue
+        if element_state(element) == item.get("state"):
+            preserved_count += 1
+            continue
+        mutated.append(
+            {
+                "element_index": item.get("element_index"),
+                "tag": item.get("tag"),
+                "role_hint": item.get("role_hint"),
+                "reason": item.get("reason"),
+            }
+        )
+    return {
+        "locked_candidate_count": len(captured),
+        "locked_preserved_count": preserved_count,
+        "locked_missing_count": len(missing),
+        "locked_mutated_count": len(mutated),
+        "locked_missing": missing,
+        "locked_mutations": mutated,
+        "locked_geometry_unchanged": len(captured) == preserved_count and not missing and not mutated,
+    }
+
+
 def collapse_line_to_zero_length(element: Element) -> bool:
     if not {"x1", "y1", "x2", "y2"} <= set(element.attrib):
         return False
@@ -305,6 +388,7 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
     root.set("data-crab-overlay-elements-added", "0")
 
     element_map = existing_elements_by_document_index(root)
+    locked_before = capture_locked_element_states(root, plan)
     opening_summary = apply_opening_candidates(root, plan, max_openings) if apply_openings else {
         "opening_candidate_count": len(plan.get("same_layer_opening_candidates", [])),
         "same_layer_opening_split_count": 0,
@@ -325,6 +409,7 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
             continue
         mutated.append(patch_existing_element(element, candidate, len(mutated) + 1))
 
+    locked_report = locked_preservation_report(locked_before)
     removal_geometry_mutation_count = sum(1 for item in mutated if item.get("geometry_mutated"))
     opening_program_cluster_count = sum(1 for item in opening_summary["opening_mutations"] if item.get("program_cluster_id"))
     return {
@@ -342,4 +427,5 @@ def apply_same_layer_geometry_patch(root: Element, plan: dict[str, Any], max_mut
         "mutations": mutated,
         "opening_mutations": opening_summary["opening_mutations"],
         "opening_skips": opening_summary["opening_skips"],
+        "locked_preservation": locked_report,
     }

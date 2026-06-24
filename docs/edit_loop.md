@@ -360,7 +360,7 @@ crab-archi-design --project-root projects apply-edit \
   --skip-preview
 ```
 
-The same-layer engine consumes the latest `svg-patch-plan`, mutates existing SVG elements by source element index, collapses selected internal partition lines to zero length, and verifies that no overlay group, redraw layer, or raster image was added. It is the preferred built-in adapter for testing the production path before a full geometry trim/move solver is available.
+The same-layer engine consumes the latest `svg-patch-plan`, mutates existing SVG elements by source element index, collapses selected internal partition lines to zero length, and verifies that no overlay group, redraw layer, raster image, or locked/protected geometry mutation was added. It is the preferred built-in adapter for testing the production path before a full geometry trim/move solver is available.
 
 To test same-layer door-opening splits from the patch plan, pass the opening flag through the engine adapter:
 

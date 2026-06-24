@@ -735,19 +735,70 @@ def test_solver_same_layer_geometry_patch_collapses_existing_line() -> None:
                 "program_role": "greenery_lounge",
             }
         ],
+        "locked_candidates": [
+            {
+                "element_index": 2,
+                "tag": "rect",
+                "role_hint": "room_envelope_candidate",
+                "reason": "inside protected no-go/lock/protect polygon",
+            }
+        ],
     }
 
     summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4)
     partition = next(element for element in root.iter() if element.attrib.get("id") == "partition")
+    shell = next(element for element in root.iter() if element.attrib.get("id") == "shell")
 
     assert summary["mutation_strategy"] == "same_layer_geometry_patch"
     assert summary["same_layer_geometry_mutation_count"] == 1
     assert summary["same_layer_removal_count"] == 1
+    assert summary["locked_preservation"]["locked_candidate_count"] == 1
+    assert summary["locked_preservation"]["locked_geometry_unchanged"] is True
+    assert shell.attrib["x"] == "5"
+    assert shell.attrib["width"] == "90"
     assert partition.attrib["x2"] == partition.attrib["x1"]
     assert partition.attrib["y2"] == partition.attrib["y1"]
     assert partition.attrib["display"] == "none"
     assert partition.attrib["data-crab-original-x2"] == "80"
     assert partition.attrib["data-crab-program-role"] == "greenery_lounge"
+
+
+def test_solver_same_layer_geometry_patch_reports_locked_mutation_violation() -> None:
+    root = ET.fromstring(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 80">
+          <line id="protected-wall" x1="20" y1="40" x2="80" y2="40" stroke="#111" stroke-width="5"/>
+        </svg>
+        """
+    )
+    plan = {
+        "status": "pass",
+        "same_layer_mutable_candidates": [
+            {
+                "element_index": 2,
+                "tag": "line",
+                "role_hint": "wall_candidate",
+                "bbox": {"x": 20, "y": 40, "width": 60, "height": 0},
+                "patch_priority": 100,
+                "mutation_policy": "modify_or_remove_existing_element_only",
+            }
+        ],
+        "locked_candidates": [
+            {
+                "element_index": 2,
+                "tag": "line",
+                "role_hint": "wall_candidate",
+                "reason": "inside protected no-go/lock/protect polygon",
+            }
+        ],
+    }
+
+    summary = apply_same_layer_geometry_patch(root, plan, max_mutations=4)
+
+    assert summary["same_layer_removal_count"] == 1
+    assert summary["locked_preservation"]["locked_geometry_unchanged"] is False
+    assert summary["locked_preservation"]["locked_mutated_count"] == 1
+    assert summary["locked_preservation"]["locked_mutations"][0]["element_index"] == 2
 
 
 def test_solver_split_line_for_opening_creates_same_layer_segments() -> None:
@@ -841,6 +892,7 @@ def test_apply_edit_runs_same_layer_svg_engine_without_overlay(tmp_path: Path) -
     assert report["status"] == "pass"
     assert report["checks"]["engine_report_status_pass"] is True
     assert report["checks"]["engine_quality_gates_pass"] is True
+    assert report["engine_report_quality"]["gates"]["crab-archi-design-same-layer-engine-report-v1"]["locked_geometry_unchanged"] is True
     alternative = Path(report["copied_artifacts"]["svg"][0])
     alternative_text = alternative.read_text(encoding="utf-8")
     assert "crab_archi_design_same_layer_engine_candidate" in alternative_text
