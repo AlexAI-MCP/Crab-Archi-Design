@@ -5864,6 +5864,16 @@ def command_release_audit(args: argparse.Namespace) -> None:
         raise SystemExit(f"release-audit failed; report: {out}")
 
 
+def command_studio(args: argparse.Namespace) -> None:
+    from crab_archi_design.studio_server import serve
+
+    server = serve(Path(args.project_root), args.host, args.port, args.open)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()
+
+
 def command_doodle_editor(args: argparse.Namespace) -> None:
     candidates = [
         Path(__file__).resolve().parents[2] / "tools" / "doodle_editor.html",
@@ -6224,6 +6234,15 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "optional_args": ["--open"],
             "outputs": ["file:// URL printed to stdout"],
             "gates": ["doodle_editor_exists"],
+        },
+        {
+            "id": "studio",
+            "cli_subcommand": "studio",
+            "description": "Serve the localhost design studio: load source linework, mark protected zones, space adjustments, wall adjustments, and the natural-language request, then execute the same-layer production pipeline.",
+            "required_args": [],
+            "optional_args": ["--project-root", "--host", "--port", "--open"],
+            "outputs": ["http://127.0.0.1:<port>/ printed to stdout", "projects/<project>/studio/studio_run_###/studio_run_report.json"],
+            "gates": ["same_layer_engine_gates", "recognition_audit", "svg_patch_plan"],
         },
     ]
     return {
@@ -6630,6 +6649,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_editor = sub.add_parser("doodle-editor", help="Print or open the local SVG doodle editor.")
     p_editor.add_argument("--open", action="store_true")
     p_editor.set_defaults(func=command_doodle_editor)
+
+    p_studio = sub.add_parser("studio", help="Serve the localhost design studio for linework, constraints, wall/space adjustments, and requests.")
+    p_studio.add_argument("--host", default="127.0.0.1")
+    p_studio.add_argument("--port", type=int, default=8765)
+    p_studio.add_argument("--open", action="store_true")
+    p_studio.set_defaults(func=command_studio)
 
     p_review = sub.add_parser("review-panel", help="Generate a local before/after SVG review panel.")
     p_review.add_argument("--project-id", required=True)

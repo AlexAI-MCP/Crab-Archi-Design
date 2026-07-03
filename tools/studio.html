@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crab Archi Design Studio</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #05080d;
+      --panel: #0a1017;
+      --field: #101a25;
+      --ink: #eef6fb;
+      --muted: #8da1b2;
+      --label: #cbd9e5;
+      --line: #223141;
+      --accent: #17d6bf;
+      --accent-soft: rgba(23, 214, 191, 0.14);
+      --danger: #ff6b6b;
+      --shell: #38bdf8;
+      --nogo: #ff6b6b;
+      --lock: #f59e0b;
+      --mutable: #34d399;
+      --projectable: #a78bfa;
+      --open: #17d6bf;
+      --remove: #fb7185;
+      --move: #fbbf24;
+      --expand: #93c5fd;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); }
+    .app { display: grid; grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); min-height: 100vh; }
+    .sidebar { border-right: 1px solid var(--line); background: var(--panel); overflow-y: auto; height: 100vh; }
+    .brand { position: sticky; top: 0; z-index: 5; padding: 16px 18px; border-bottom: 1px solid var(--line);
+      background: rgba(10, 16, 23, 0.97); backdrop-filter: blur(12px); }
+    .brand h1 { font-size: 16px; margin: 0; font-weight: 800; }
+    .brand .subtle { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+    section { padding: 14px 18px; border-bottom: 1px solid var(--line); }
+    section h2 { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent);
+      margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+    section h2 .step { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--accent-soft);
+      color: var(--accent); align-items: center; justify-content: center; font-size: 11px; }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 11.5px; color: var(--label); margin-bottom: 4px; }
+    input[type="text"], input[type="number"], textarea, select {
+      width: 100%; background: var(--field); color: var(--ink); border: 1px solid var(--line);
+      border-radius: 6px; padding: 7px 9px; font-size: 13px; font-family: inherit; }
+    textarea { resize: vertical; min-height: 64px; }
+    input:focus, textarea:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    button { background: var(--field); color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+      padding: 7px 10px; font-size: 12.5px; cursor: pointer; font-family: inherit; }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); color: #052722; font-weight: 800; border-color: var(--accent); }
+    button.primary:disabled { opacity: .5; cursor: wait; }
+    .tools { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tools button { display: flex; align-items: center; gap: 6px; }
+    .tools button.active { border-color: var(--accent); background: var(--accent-soft); }
+    .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+    ul.strokes { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    ul.strokes li { display: flex; align-items: center; gap: 8px; font-size: 12px; background: var(--field);
+      border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+    ul.strokes li .name { flex: 1; }
+    ul.strokes li button { padding: 1px 7px; font-size: 11px; color: var(--danger); }
+    .status { font-size: 12px; color: var(--muted); white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; }
+    .status.ok { color: var(--mutable); }
+    .status.bad { color: var(--danger); }
+    .result-links { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; font-size: 12.5px; }
+    .result-links a { color: var(--accent); text-decoration: none; }
+    .result-links a:hover { text-decoration: underline; }
+    .gates { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+    .gate { font-size: 11px; border-radius: 999px; padding: 2px 9px; border: 1px solid var(--line); }
+    .gate.pass { color: var(--mutable); border-color: rgba(52, 211, 153, .4); }
+    .gate.fail { color: var(--danger); border-color: rgba(255, 107, 107, .4); }
+    .stage { position: relative; overflow: hidden; height: 100vh; background:
+      radial-gradient(circle at 30% 10%, rgba(23,214,191,.05), transparent 50%), var(--bg); }
+    .stage .toolbar { position: absolute; top: 12px; left: 12px; z-index: 4; display: flex; gap: 6px; }
+    .stage .camera { position: absolute; bottom: 10px; left: 12px; z-index: 4; font-size: 11px; color: var(--muted);
+      font-family: ui-monospace, Menlo, monospace; background: rgba(5,8,13,.7); padding: 3px 8px; border-radius: 6px; }
+    .canvas-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+    #stageSvg { width: 100%; height: 100%; touch-action: none; background: #f3f5f1; cursor: crosshair; }
+    #stageSvg.panning { cursor: grab; }
+    .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 14px; pointer-events: none; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>Crab Archi Design Studio</h1>
+      <div class="subtle">localhost · same-layer production engine · Codex/Claude 공용</div>
+    </div>
+
+    <section>
+      <h2><span class="step">1</span>선형 (원본 도면)</h2>
+      <div class="field"><label for="projectId">프로젝트 ID</label>
+        <input type="text" id="projectId" value="studio-demo" spellcheck="false"></div>
+      <div class="field"><label for="svgPath">SVG 파일 경로 (로컬 절대 경로)</label>
+        <div class="row"><input type="text" id="svgPath" placeholder="/path/to/drawing.svg" spellcheck="false">
+        <button id="loadSvgButton" style="flex:0 0 auto">불러오기</button></div></div>
+      <div class="row">
+        <div class="field"><label for="households">세대수</label><input type="number" id="households" value="900"></div>
+        <div class="field"><label for="scaleMm">스케일 (mm / world unit)</label><input type="number" id="scaleMm" step="any" placeholder="예: 84"></div>
+      </div>
+      <div class="field"><label for="standardsPath">면적 기준 파일 (CSV/XLSX, 선택)</label>
+        <input type="text" id="standardsPath" placeholder="/path/to/standards.csv" spellcheck="false"></div>
+      <div class="field"><label for="opencrabPath">OpenCrab MCP 결과 JSON (선택)</label>
+        <input type="text" id="opencrabPath" placeholder="/path/to/opencrab_result.json" spellcheck="false"></div>
+    </section>
+
+    <section>
+      <h2><span class="step">2</span>지켜야 할 부분</h2>
+      <div class="tools">
+        <button data-mode="community_shell" data-kind="polygon"><span class="dot" style="background:var(--shell)"></span>외곽 쉘</button>
+        <button data-mode="no_go_zone" data-kind="polygon"><span class="dot" style="background:var(--nogo)"></span>금지 구역</button>
+        <button data-mode="lock_boundary" data-kind="polygon"><span class="dot" style="background:var(--lock)"></span>잠금 경계</button>
+      </div>
+      <div class="hint">클릭으로 꼭짓점 추가, 더블클릭(또는 Enter)으로 폴리곤 완성. 주차·코어·기둥·램프 구역을 금지 구역으로 지정하세요.</div>
+    </section>
+
+    <section>
+      <h2><span class="step">3</span>공간 조정</h2>
+      <div class="tools">
+        <button data-mode="mutable_zone" data-kind="polygon"><span class="dot" style="background:var(--mutable)"></span>가변 구역</button>
+        <button data-mode="projectable_zone" data-kind="polygon"><span class="dot" style="background:var(--projectable)"></span>투영 구역</button>
+        <button data-mode="expand_program_feel" data-kind="freehand"><span class="dot" style="background:var(--expand)"></span>프로그램 확장</button>
+      </div>
+      <div class="hint">가변 구역 안의 벽만 변형 후보가 됩니다. 구역을 좁힐수록 편집이 정밀해집니다.</div>
+    </section>
+
+    <section>
+      <h2><span class="step">4</span>벽체 조정</h2>
+      <div class="tools">
+        <button data-mode="open_connection" data-kind="freehand"><span class="dot" style="background:var(--open)"></span>개구부 연결</button>
+        <button data-mode="remove_partition" data-kind="freehand"><span class="dot" style="background:var(--remove)"></span>칸막이 제거</button>
+        <button data-mode="move_wall" data-kind="freehand"><span class="dot" style="background:var(--move)"></span>벽 이동</button>
+      </div>
+      <div class="hint">벽을 가로질러 드래그하면 해당 위치가 편집 인텐트로 변환됩니다. 좌표는 LLM이 아니라 결정론 솔버가 계산합니다.</div>
+      <ul class="strokes" id="strokeList"></ul>
+    </section>
+
+    <section>
+      <h2><span class="step">5</span>요청사항 &amp; 실행</h2>
+      <div class="field"><label for="prompt">자연어 요청 (design intent)</label>
+        <textarea id="prompt" placeholder="예: 그리너리 라운지를 메인 홀 방향으로 개방하고, 주차·코어·기둥은 유지"></textarea></div>
+      <div class="row">
+        <button class="primary" id="runButton">파이프라인 실행</button>
+        <button id="clearButton" style="flex:0 0 auto">주석 초기화</button>
+      </div>
+      <div class="hint">첫 실행은 workflow-run(인식→토폴로지→감사→패치플랜→엔진), 이후는 revision-run으로 반복 수정합니다.</div>
+      <div class="status" id="runStatus">대기 중</div>
+      <div class="gates" id="gateChips"></div>
+      <div class="result-links" id="resultLinks"></div>
+    </section>
+  </aside>
+
+  <main class="stage">
+    <div class="toolbar">
+      <button id="zoomOut">−</button><button id="zoomIn">＋</button><button id="zoomFit">Fit</button>
+      <button id="panToggle">Pan (Space)</button><button id="cancelDraw">그리기 취소 (Esc)</button>
+    </div>
+    <div class="canvas-wrap">
+      <svg id="stageSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="empty" id="emptyHint">좌측에서 SVG 도면을 불러오면 여기에 표시됩니다</div>
+    </div>
+    <div class="camera" id="cameraStatus">viewBox —</div>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var MODE_COLOR = {
+    community_shell: "#38bdf8", no_go_zone: "#ff6b6b", lock_boundary: "#f59e0b",
+    mutable_zone: "#34d399", projectable_zone: "#a78bfa",
+    open_connection: "#17d6bf", remove_partition: "#fb7185", move_wall: "#fbbf24", expand_program_feel: "#93c5fd"
+  };
+  var MODE_LABEL = {
+    community_shell: "외곽 쉘", no_go_zone: "금지 구역", lock_boundary: "잠금 경계",
+    mutable_zone: "가변 구역", projectable_zone: "투영 구역",
+    open_connection: "개구부", remove_partition: "칸막이 제거", move_wall: "벽 이동", expand_program_feel: "프로그램 확장"
+  };
+  var state = {
+    svgPath: null, sourceViewBox: null, camera: null,
+    tool: null, toolKind: null, drawing: null, strokes: [],
+    panMode: false, spacePan: false, panning: null, seq: 0
+  };
+  var stage = document.getElementById("stageSvg");
+  var emptyHint = document.getElementById("emptyHint");
+  var cameraStatus = document.getElementById("cameraStatus");
+  var strokeList = document.getElementById("strokeList");
+  var runStatus = document.getElementById("runStatus");
+  var gateChips = document.getElementById("gateChips");
+  var resultLinks = document.getElementById("resultLinks");
+  var drawingLayer = null, sourceLayer = null;
+
+  function setStatus(text, cls) {
+    runStatus.textContent = text;
+    runStatus.className = "status" + (cls ? " " + cls : "");
+  }
+
+  function setCamera(vb) {
+    state.camera = vb;
+    stage.setAttribute("viewBox", vb.map(function (v) { return Math.round(v * 100) / 100; }).join(" "));
+    cameraStatus.textContent = "viewBox " + vb.map(function (v) { return Math.round(v); }).join(" ");
+  }
+
+  function fitCamera() { if (state.sourceViewBox) setCamera(state.sourceViewBox.slice()); }
+
+  function zoomBy(factor, cx, cy) {
+    if (!state.camera) return;
+    var c = state.camera, w = c[2] * factor, h = c[3] * factor;
+    var px = cx === undefined ? c[0] + c[2] / 2 : cx, py = cy === undefined ? c[1] + c[3] / 2 : cy;
+    var rx = (px - c[0]) / c[2], ry = (py - c[1]) / c[3];
+    setCamera([px - w * rx, py - h * ry, w, h]);
+  }
+
+  function clientToWorld(evt) {
+    var pt = stage.createSVGPoint();
+    pt.x = evt.clientX; pt.y = evt.clientY;
+    var m = stage.getScreenCTM();
+    if (!m) return null;
+    var world = pt.matrixTransform(m.inverse());
+    return [Math.round(world.x * 100) / 100, Math.round(world.y * 100) / 100];
+  }
+
+  function loadSvg() {
+    var path = document.getElementById("svgPath").value.trim();
+    if (!path) { setStatus("SVG 경로를 입력하세요", "bad"); return; }
+    setStatus("도면 불러오는 중…");
+    fetch("/api/load-svg", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path }) })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.status !== "ok") { setStatus(data.error || "불러오기 실패", "bad"); return; }
+        state.svgPath = data.path;
+        var doc = new DOMParser().parseFromString(data.content, "image/svg+xml");
+        var root = doc.documentElement;
+        if (root.nodeName.toLowerCase() !== "svg") { setStatus("SVG 파싱 실패", "bad"); return; }
+        var vb = (root.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number).filter(function (v) { return !isNaN(v); });
+        if (vb.length !== 4) {
+          var w = parseFloat(root.getAttribute("width")) || 1000, h = parseFloat(root.getAttribute("height")) || 700;
+          vb = [0, 0, w, h];
+        }
+        state.sourceViewBox = vb;
+        while (stage.firstChild) stage.removeChild(stage.firstChild);
+        sourceLayer = document.createElementNS(SVG_NS, "g");
+        Array.prototype.slice.call(root.childNodes).forEach(function (node) {
+          sourceLayer.appendChild(document.importNode(node, true));
+        });
+        drawingLayer = document.createElementNS(SVG_NS, "g");
+        stage.appendChild(sourceLayer);
+        stage.appendChild(drawingLayer);
+        emptyHint.style.display = "none";
+        state.strokes = []; renderStrokes();
+        fitCamera();
+        setStatus("도면 로드 완료: " + vb.join(" "), "ok");
+      })
+      .catch(function (err) { setStatus("서버 오류: " + err, "bad"); });
+  }
+
+  function strokeWidthWorld() {
+    return state.sourceViewBox ? Math.max(state.sourceViewBox[2], state.sourceViewBox[3]) / 300 : 4;
+  }
+
+  function renderStrokes() {
+    if (drawingLayer) while (drawingLayer.firstChild) drawingLayer.removeChild(drawingLayer.firstChild);
+    strokeList.innerHTML = "";
+    state.strokes.forEach(function (stroke, i) {
+      if (drawingLayer) {
+        var el = document.createElementNS(SVG_NS, stroke.kind === "polygon" ? "polygon" : "polyline");
+        el.setAttribute("points", stroke.points.map(function (p) { return p.join(","); }).join(" "));
+        el.setAttribute("fill", stroke.kind === "polygon" ? MODE_COLOR[stroke.mode] : "none");
+        el.setAttribute("fill-opacity", stroke.kind === "polygon" ? "0.10" : "0");
+        el.setAttribute("stroke", MODE_COLOR[stroke.mode]);
+        el.setAttribute("stroke-width", strokeWidthWorld());
+        el.setAttribute("stroke-opacity", "0.85");
+        el.setAttribute("stroke-linecap", "round");
+        el.setAttribute("stroke-linejoin", "round");
+        if (stroke.kind === "polygon") el.setAttribute("stroke-dasharray", strokeWidthWorld() * 2 + " " + strokeWidthWorld());
+        drawingLayer.appendChild(el);
+      }
+      var li = document.createElement("li");
+      var dot = document.createElement("span");
+      dot.className = "dot"; dot.style.background = MODE_COLOR[stroke.mode];
+      var name = document.createElement("span");
+      name.className = "name";
+      name.textContent = MODE_LABEL[stroke.mode] + " · " + stroke.points.length + "pt";
+      var del = document.createElement("button");
+      del.textContent = "삭제";
+      del.addEventListener("click", function () { state.strokes.splice(i, 1); renderStrokes(); });
+      li.appendChild(dot); li.appendChild(name); li.appendChild(del);
+      strokeList.appendChild(li);
+    });
+  }
+
+  function renderPreview() {
+    renderStrokes();
+    if (!state.drawing || !drawingLayer) return;
+    var el = document.createElementNS(SVG_NS, "polyline");
+    el.setAttribute("points", state.drawing.points.map(function (p) { return p.join(","); }).join(" "));
+    el.setAttribute("fill", "none");
+    el.setAttribute("stroke", MODE_COLOR[state.drawing.mode]);
+    el.setAttribute("stroke-width", strokeWidthWorld());
+    el.setAttribute("stroke-dasharray", strokeWidthWorld() + " " + strokeWidthWorld());
+    drawingLayer.appendChild(el);
+  }
+
+  function finishPolygon() {
+    if (state.drawing && state.drawing.kind === "polygon" && state.drawing.points.length >= 3) {
+      state.drawing.points.push(state.drawing.points[0].slice());
+      state.seq += 1;
+      state.strokes.push({ stroke_id: "studio_" + String(state.seq).padStart(3, "0"),
+        mode: state.drawing.mode, kind: "polygon", points: state.drawing.points });
+    }
+    state.drawing = null;
+    renderStrokes();
+  }
+
+  function cancelDrawing() { state.drawing = null; renderStrokes(); }
+
+  document.querySelectorAll(".tools button").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var active = btn.classList.contains("active");
+      document.querySelectorAll(".tools button").forEach(function (b) { b.classList.remove("active"); });
+      cancelDrawing();
+      if (active) { state.tool = null; state.toolKind = null; return; }
+      btn.classList.add("active");
+      state.tool = btn.getAttribute("data-mode");
+      state.toolKind = btn.getAttribute("data-kind");
+    });
+  });
+
+  stage.addEventListener("pointerdown", function (evt) {
+    if (state.panMode || state.spacePan || evt.button === 1) {
+      state.panning = { x: evt.clientX, y: evt.clientY, camera: state.camera.slice() };
+      stage.setPointerCapture(evt.pointerId);
+      return;
+    }
+    if (!state.tool || !state.sourceViewBox) return;
+    var p = clientToWorld(evt);
+    if (!p) return;
+    if (state.toolKind === "freehand") {
+      state.drawing = { mode: state.tool, kind: "freehand", points: [p] };
+      stage.setPointerCapture(evt.pointerId);
+    } else {
+      if (!state.drawing) state.drawing = { mode: state.tool, kind: "polygon", points: [] };
+      state.drawing.points.push(p);
+      renderPreview();
+    }
+  });
+
+  stage.addEventListener("pointermove", function (evt) {
+    if (state.panning) {
+      var m = stage.getScreenCTM();
+      if (!m) return;
+      var scale = state.camera[2] / stage.clientWidth;
+      var c = state.panning.camera;
+      setCamera([c[0] - (evt.clientX - state.panning.x) * scale, c[1] - (evt.clientY - state.panning.y) * scale, c[2], c[3]]);
+      return;
+    }
+    if (state.drawing && state.drawing.kind === "freehand" && evt.buttons) {
+      var p = clientToWorld(evt);
+      if (!p) return;
+      var last = state.drawing.points[state.drawing.points.length - 1];
+      if (Math.hypot(p[0] - last[0], p[1] - last[1]) > strokeWidthWorld() / 2) {
+        state.drawing.points.push(p);
+        renderPreview();
+      }
+    }
+  });
+
+  stage.addEventListener("pointerup", function () {
+    if (state.panning) { state.panning = null; return; }
+    if (state.drawing && state.drawing.kind === "freehand") {
+      if (state.drawing.points.length >= 2) {
+        state.seq += 1;
+        state.strokes.push({ stroke_id: "studio_" + String(state.seq).padStart(3, "0"),
+          mode: state.drawing.mode, kind: "freehand", points: state.drawing.points });
+      }
+      state.drawing = null;
+      renderStrokes();
+    }
+  });
+
+  stage.addEventListener("dblclick", function (evt) { evt.preventDefault(); finishPolygon(); });
+  stage.addEventListener("wheel", function (evt) {
+    if (!state.camera) return;
+    evt.preventDefault();
+    var p = clientToWorld(evt);
+    zoomBy(evt.deltaY > 0 ? 1.12 : 0.89, p ? p[0] : undefined, p ? p[1] : undefined);
+  }, { passive: false });
+
+  document.addEventListener("keydown", function (evt) {
+    var typing = /^(input|textarea|select)$/i.test((evt.target && evt.target.tagName) || "");
+    if (evt.code === "Space" && !typing) { state.spacePan = true; stage.classList.add("panning"); evt.preventDefault(); }
+    if (evt.key === "Enter" && !typing && state.drawing && state.drawing.kind === "polygon") finishPolygon();
+    if (evt.key === "Escape") cancelDrawing();
+  });
+  document.addEventListener("keyup", function (evt) {
+    if (evt.code === "Space") { state.spacePan = false; if (!state.panMode) stage.classList.remove("panning"); }
+  });
+
+  document.getElementById("zoomIn").addEventListener("click", function () { zoomBy(0.8); });
+  document.getElementById("zoomOut").addEventListener("click", function () { zoomBy(1.25); });
+  document.getElementById("zoomFit").addEventListener("click", fitCamera);
+  document.getElementById("panToggle").addEventListener("click", function () {
+    state.panMode = !state.panMode;
+    this.classList.toggle("active", state.panMode);
+    stage.classList.toggle("panning", state.panMode);
+  });
+  document.getElementById("cancelDraw").addEventListener("click", cancelDrawing);
+  document.getElementById("loadSvgButton").addEventListener("click", loadSvg);
+  document.getElementById("clearButton").addEventListener("click", function () {
+    state.strokes = []; cancelDrawing();
+  });
+
+  function artifactLink(label, path) {
+    if (!path) return null;
+    var a = document.createElement("a");
+    a.href = "/api/artifact?path=" + encodeURIComponent(path);
+    a.target = "_blank"; a.rel = "noopener";
+    a.textContent = label + " — " + path;
+    return a;
+  }
+
+  document.getElementById("runButton").addEventListener("click", function () {
+    var btn = this;
+    var payload = {
+      project_id: document.getElementById("projectId").value.trim(),
+      source_svg: state.svgPath || document.getElementById("svgPath").value.trim(),
+      prompt: document.getElementById("prompt").value.trim(),
+      households: parseInt(document.getElementById("households").value, 10) || null,
+      standards: document.getElementById("standardsPath").value.trim() ? [document.getElementById("standardsPath").value.trim()] : [],
+      opencrab_result_files: document.getElementById("opencrabPath").value.trim() ? [document.getElementById("opencrabPath").value.trim()] : [],
+      evidence_summary: document.getElementById("opencrabPath").value.trim() ? null :
+        "Studio operator confirmed precedent topology and protected zones for this run.",
+      viewBox: state.sourceViewBox,
+      strokes: state.strokes.map(function (s) { return { stroke_id: s.stroke_id, mode: s.mode, points: s.points }; }),
+      scale: document.getElementById("scaleMm").value ? {
+        mm_per_world: parseFloat(document.getElementById("scaleMm").value),
+        evidence: "Studio operator confirmed drawing scale."
+      } : {}
+    };
+    btn.disabled = true;
+    setStatus("파이프라인 실행 중… (인식→토폴로지→감사→패치플랜→엔진)");
+    gateChips.innerHTML = ""; resultLinks.innerHTML = "";
+    fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      .then(function (r) { return r.json(); })
+      .then(function (report) {
+        btn.disabled = false;
+        var result = report.result || {};
+        var ok = report.status === "pass";
+        setStatus((report.command_kind || "run") + " → " + (report.status || "unknown") +
+          (report.warnings && report.warnings.length ? "\n경고: " + report.warnings.join("; ") : "") +
+          (report.stderr_tail && report.stderr_tail.length ? "\n" + report.stderr_tail.join("\n") : ""),
+          ok ? "ok" : "bad");
+        var artifacts = result.latest_artifacts || {};
+        [["대안 SVG", artifacts.alternative_svg], ["리뷰 패널", artifacts.review_panel],
+         ["인식 감사", artifacts.recognition_audit], ["적용 리포트", artifacts.apply_report]]
+          .forEach(function (pair) {
+            var link = artifactLink(pair[0], pair[1]);
+            if (link) resultLinks.appendChild(link);
+          });
+        if (result.final_project_status) {
+          var chip = document.createElement("span");
+          chip.className = "gate " + (ok ? "pass" : "fail");
+          chip.textContent = "final: " + result.final_project_status;
+          gateChips.appendChild(chip);
+        }
+      })
+      .catch(function (err) { btn.disabled = false; setStatus("실행 실패: " + err, "bad"); });
+  });
+})();
+</script>
+</body>
+</html>
