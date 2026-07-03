@@ -75,8 +75,13 @@ crab-archi-design --project-root projects release-audit --project-id <id> \
 ## Localhost studio (human-in-the-loop annotation)
 
 ```bash
+./studio.sh              # easiest: bootstraps .venv if needed, opens browser
+# or explicitly:
 crab-archi-design studio --project-root projects --port 8765 --open
 ```
+
+Note: `--project-root` works both as a global flag (before `studio`) and as a
+subcommand flag (after `studio`).
 
 The studio serves `http://127.0.0.1:8765/` where an operator loads the source
 linework and marks, directly on the drawing: protected zones (community shell,

@@ -5867,7 +5867,8 @@ def command_release_audit(args: argparse.Namespace) -> None:
 def command_studio(args: argparse.Namespace) -> None:
     from crab_archi_design.studio_server import serve
 
-    server = serve(Path(args.project_root), args.host, args.port, args.open)
+    project_root = getattr(args, "studio_project_root", None) or args.project_root
+    server = serve(Path(project_root), args.host, args.port, args.open)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -6651,6 +6652,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_editor.set_defaults(func=command_doodle_editor)
 
     p_studio = sub.add_parser("studio", help="Serve the localhost design studio for linework, constraints, wall/space adjustments, and requests.")
+    p_studio.add_argument("--project-root", dest="studio_project_root", default=None, help="Project root for studio runs. Defaults to the global --project-root.")
     p_studio.add_argument("--host", default="127.0.0.1")
     p_studio.add_argument("--port", type=int, default=8765)
     p_studio.add_argument("--open", action="store_true")
