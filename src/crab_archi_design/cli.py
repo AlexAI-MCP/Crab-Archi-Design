@@ -4195,6 +4195,37 @@ def write_revision_report(project_id: str, root: Path, report: dict[str, Any]) -
     return out
 
 
+SAME_LAYER_ENGINE = "same-layer-svg-engine"
+
+
+def engine_requires_patch_plan(engine_adapter: str | None) -> bool:
+    return engine_adapter == SAME_LAYER_ENGINE
+
+
+def add_same_layer_preparation_steps(
+    add_step: Any,
+    add_skipped: Any,
+    root: Path,
+    project_id: str,
+    engine_adapter: str,
+    max_patch_candidates: int = 240,
+) -> None:
+    if not engine_requires_patch_plan(engine_adapter):
+        add_skipped("recognition-audit", f"Engine adapter {engine_adapter} does not require the same-layer mutation gate.")
+        add_skipped("svg-patch-plan", f"Engine adapter {engine_adapter} does not consume a same-layer patch plan.")
+        return
+    add_step(
+        "recognition-audit",
+        command_recognition_audit,
+        argparse.Namespace(project_root=str(root), project_id=project_id),
+    )
+    add_step(
+        "svg-patch-plan",
+        command_svg_patch_plan,
+        argparse.Namespace(project_root=str(root), project_id=project_id, max_candidates=max_patch_candidates),
+    )
+
+
 def command_workflow_run(args: argparse.Namespace) -> None:
     root = Path(args.project_root)
     steps: list[dict[str, Any]] = []
@@ -4368,6 +4399,33 @@ def command_workflow_run(args: argparse.Namespace) -> None:
 
     add_step("topology-build", command_topology_build, argparse.Namespace(project_root=str(root), project_id=project_id))
 
+    if args.scale_mm_per_world is not None or (args.scale_known_mm is not None and args.scale_known_world_length is not None):
+        add_step(
+            "scale-attach",
+            command_scale_attach,
+            argparse.Namespace(
+                project_root=str(root),
+                project_id=project_id,
+                mm_per_world=args.scale_mm_per_world,
+                known_mm=args.scale_known_mm,
+                known_world_length=args.scale_known_world_length,
+                confidence=args.scale_confidence,
+                source="workflow_run",
+                method="manual_known_dimension",
+                scale_id=None,
+                evidence=args.scale_evidence,
+                note=None,
+                metadata=[],
+                replace=args.replace_scale,
+            ),
+        )
+    elif load_scale_manifest(project_id, root):
+        add_skipped("scale-attach", "Existing scale manifest found.")
+    else:
+        add_skipped("scale-attach", "No explicit scale calibration supplied.")
+
+    add_same_layer_preparation_steps(add_step, add_skipped, root, project_id, engine_adapter)
+
     if args.prompt:
         add_step("prompt-edit", command_prompt_edit, argparse.Namespace(project_root=str(root), project_id=project_id, text=args.prompt))
     elif workflow_has_edit_intents(project_id, root):
@@ -4462,6 +4520,8 @@ def command_workflow_run(args: argparse.Namespace) -> None:
             ensure_ascii=False,
         )
     )
+    if getattr(args, "strict", False) and workflow_status != "pass":
+        raise SystemExit(f"workflow-run status {workflow_status} under --strict; report: {report_path}")
 
 
 def command_revision_run(args: argparse.Namespace) -> None:
@@ -4539,6 +4599,8 @@ def command_revision_run(args: argparse.Namespace) -> None:
         add_skipped("constraint-attach", "No constraint sketch supplied.")
 
     add_step("topology-build", command_topology_build, argparse.Namespace(project_root=str(root), project_id=project_id))
+
+    add_same_layer_preparation_steps(add_step, add_skipped, root, project_id, engine_adapter)
 
     created_intent = False
     if args.text:
@@ -4647,6 +4709,8 @@ def command_revision_run(args: argparse.Namespace) -> None:
             ensure_ascii=False,
         )
     )
+    if getattr(args, "strict", False) and revision_status != "pass":
+        raise SystemExit(f"revision-run status {revision_status} under --strict; report: {report_path}")
 
 
 def job_value_list(job: dict[str, Any], key: str) -> list[str]:
@@ -4656,6 +4720,16 @@ def job_value_list(job: dict[str, Any], key: str) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return [str(value)]
+
+
+def job_float(job: dict[str, Any], key: str) -> float | None:
+    value = job.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def job_bool(job: dict[str, Any], key: str, default: bool = False) -> bool:
@@ -4709,6 +4783,12 @@ def workflow_namespace_from_job(job: dict[str, Any], project_root: Path, path_ba
         evidence_metadata=job_value_list(job, "evidence_metadata"),
         constraint_sketch=job_path_value(job, "constraint_sketch", path_base),
         constraint_role=job.get("constraint_role"),
+        scale_mm_per_world=job_float(job, "scale_mm_per_world"),
+        scale_known_mm=job_float(job, "scale_known_mm"),
+        scale_known_world_length=job_float(job, "scale_known_world_length"),
+        scale_confidence=job_float(job, "scale_confidence") or 0.95,
+        scale_evidence=job.get("scale_evidence"),
+        replace_scale=job_bool(job, "replace_scale"),
         prompt=job.get("prompt"),
         sketch=job_path_value(job, "sketch", path_base),
         task=job.get("task"),
@@ -4751,6 +4831,12 @@ JOB_SPEC_ALLOWED_KEYS = {
     "evidence_metadata",
     "constraint_sketch",
     "constraint_role",
+    "scale_mm_per_world",
+    "scale_known_mm",
+    "scale_known_world_length",
+    "scale_confidence",
+    "scale_evidence",
+    "replace_scale",
     "prompt",
     "sketch",
     "task",
@@ -5044,6 +5130,10 @@ def command_create_job(args: argparse.Namespace) -> None:
     maybe_set_job_value(job, "evidence_metadata", args.evidence_metadata)
     maybe_set_job_value(job, "constraint_sketch", args.constraint_sketch)
     maybe_set_job_value(job, "constraint_role", args.constraint_role)
+    maybe_set_job_value(job, "scale_mm_per_world", args.scale_mm_per_world)
+    maybe_set_job_value(job, "scale_known_mm", args.scale_known_mm)
+    maybe_set_job_value(job, "scale_known_world_length", args.scale_known_world_length)
+    maybe_set_job_value(job, "scale_evidence", args.scale_evidence)
     maybe_set_job_value(job, "prompt", args.prompt)
     maybe_set_job_value(job, "sketch", args.sketch)
     maybe_set_job_value(job, "task", args.task)
@@ -6583,6 +6673,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_workflow.add_argument("--evidence-metadata", action="append", default=[])
     p_workflow.add_argument("--constraint-sketch")
     p_workflow.add_argument("--constraint-role")
+    p_workflow.add_argument("--scale-mm-per-world", type=float, help="Explicit architectural scale: millimeters per SVG world unit.")
+    p_workflow.add_argument("--scale-known-mm", type=float, help="Known real-world length in millimeters for scale calibration.")
+    p_workflow.add_argument("--scale-known-world-length", type=float, help="Measured source SVG world-coordinate length for --scale-known-mm.")
+    p_workflow.add_argument("--scale-confidence", type=float, default=0.95)
+    p_workflow.add_argument("--scale-evidence", help="Evidence note for the attached scale calibration.")
+    p_workflow.add_argument("--replace-scale", action="store_true")
     p_workflow.add_argument("--prompt")
     p_workflow.add_argument("--sketch", help="Optional edit sketch JSON for sketch-intent.")
     p_workflow.add_argument("--task", help="Optional design handoff task.")
@@ -6595,6 +6691,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_workflow.add_argument("--replace-evidence", action="store_true")
     p_workflow.add_argument("--replace-constraints", action="store_true")
     p_workflow.add_argument("--reinit", action="store_true")
+    p_workflow.add_argument("--strict", action="store_true", help="Exit non-zero unless the workflow status is pass.")
     p_workflow.set_defaults(func=command_workflow_run)
 
     p_revision = sub.add_parser("revision-run", help="Run an existing project's natural-language or doodle revision loop.")
@@ -6615,6 +6712,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_revision.add_argument("--skip-preview", action="store_true")
     p_revision.add_argument("--skip-apply", action="store_true")
     p_revision.add_argument("--skip-review-panel", action="store_true")
+    p_revision.add_argument("--strict", action="store_true", help="Exit non-zero unless the revision status is pass.")
     p_revision.set_defaults(func=command_revision_run)
 
     p_create_job = sub.add_parser("create-job", help="Create a JSON job spec for validate-job and run-job.")
@@ -6644,6 +6742,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_create_job.add_argument("--evidence-metadata", action="append", default=[])
     p_create_job.add_argument("--constraint-sketch")
     p_create_job.add_argument("--constraint-role")
+    p_create_job.add_argument("--scale-mm-per-world", type=float, help="Explicit architectural scale: millimeters per SVG world unit.")
+    p_create_job.add_argument("--scale-known-mm", type=float, help="Known real-world length in millimeters for scale calibration.")
+    p_create_job.add_argument("--scale-known-world-length", type=float, help="Measured source SVG world-coordinate length for --scale-known-mm.")
+    p_create_job.add_argument("--scale-evidence", help="Evidence note for the attached scale calibration.")
     p_create_job.add_argument("--prompt")
     p_create_job.add_argument("--sketch", help="Optional edit sketch JSON for sketch-intent.")
     p_create_job.add_argument("--task", help="Optional design handoff task.")
