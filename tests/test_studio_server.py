@@ -5,7 +5,7 @@ import threading
 import urllib.request
 from pathlib import Path
 
-from crab_archi_design.studio_server import serve, split_strokes
+from crab_archi_design.studio_server import serve, split_strokes, synthesize_default_constraints
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -49,6 +49,57 @@ def test_split_strokes_routes_constraint_and_edit_modes() -> None:
     assert [item["mode"] for item in constraints] == ["community_shell"]
     assert [item["mode"] for item in edits] == ["open_connection"]
     assert len(warnings) == 2
+
+
+def test_synthesize_default_constraints_fills_missing_zone_groups() -> None:
+    viewbox = [0.0, 0.0, 1000.0, 800.0]
+    added, notes = synthesize_default_constraints([], viewbox)
+    modes = [item["mode"] for item in added]
+    assert modes.count("community_shell") == 1
+    assert modes.count("mutable_zone") == 1
+    assert modes.count("no_go_zone") == 4
+    assert len(notes) == 3
+
+    shell_only = [{"mode": "community_shell", "points": [[0, 0], [10, 0], [10, 10]]}]
+    added, notes = synthesize_default_constraints(shell_only, viewbox)
+    modes = [item["mode"] for item in added]
+    assert "community_shell" not in modes
+    assert "mutable_zone" in modes
+    assert len(notes) == 2
+
+    complete = [
+        {"mode": "community_shell", "points": []},
+        {"mode": "mutable_zone", "points": []},
+        {"mode": "lock_boundary", "points": []},
+    ]
+    added, notes = synthesize_default_constraints(complete, viewbox)
+    assert added == [] and notes == []
+
+
+def test_studio_run_prompt_only_uses_auto_defaults(tmp_path: Path) -> None:
+    project_root = tmp_path / "projects"
+    server, base = start_server(project_root)
+    try:
+        report = post_json(
+            f"{base}/api/run",
+            {
+                "project_id": "prompt-only",
+                "source_svg": str(ROOT / "examples/original_sample.svg"),
+                "prompt": "Open the greenery lounge toward the main hall and keep parking/core locked.",
+                "households": 900,
+                "standards": [str(ROOT / "examples/area_standard_sample.csv")],
+                "opencrab_result_files": [str(ROOT / "examples/opencrab_mcp_result_sample.json")],
+                "viewBox": [0, 0, 1450, 1000],
+                "scale": {"mm_per_world": 30, "evidence": "Studio operator confirmed drawing scale."},
+                "strokes": [],
+            },
+        )
+        assert report["status"] == "pass", report
+        assert any("기본 쉘" in note for note in report["warnings"])
+        assert any("가변 구역" in note for note in report["warnings"])
+        assert report["constraint_sketch"] and Path(report["constraint_sketch"]).exists()
+    finally:
+        server.shutdown()
 
 
 def test_studio_server_health_load_and_run(tmp_path: Path) -> None:

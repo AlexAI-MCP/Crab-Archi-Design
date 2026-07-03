@@ -107,6 +107,54 @@ def split_strokes(strokes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], 
     return constraints, edits, warnings
 
 
+def synthesize_default_constraints(
+    constraints: list[dict[str, Any]], viewbox: list[float]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Prompt-first defaults: fill missing zone groups from the drawing extents.
+
+    Without user polygons the whole drawing frame becomes the shell, a 4%%-inset
+    interior becomes the mutable zone, and the border ring between them becomes
+    no-go — so edits stay in the interior and everything near the frame stays
+    untouched until the operator draws real zones.
+    """
+    modes = {item["mode"] for item in constraints}
+    have_shell = "community_shell" in modes
+    have_mutable = bool(modes & {"mutable_zone", "projectable_zone"})
+    have_protected = bool(modes & {"no_go_zone", "lock_boundary", "protect_zone"})
+    if have_shell and have_mutable and have_protected:
+        return [], []
+
+    x, y, w, h = (float(v) for v in viewbox)
+    inset = 0.04 * min(w, h)
+    x0, y0, x1, y1 = x, y, x + w, y + h
+    ix0, iy0, ix1, iy1 = x0 + inset, y0 + inset, x1 - inset, y1 - inset
+    added: list[dict[str, Any]] = []
+    notes: list[str] = []
+
+    def rect(px0: float, py0: float, px1: float, py1: float) -> list[list[float]]:
+        return [[px0, py0], [px1, py0], [px1, py1], [px0, py1], [px0, py0]]
+
+    if not have_shell:
+        added.append({"stroke_id": "auto_shell", "mode": "community_shell",
+                      "target_hint": "studio_auto_default_shell", "points": rect(x0, y0, x1, y1)})
+        notes.append("외곽 쉘 미지정 → 도면 전체 범위를 기본 쉘로 사용했습니다 (2단계에서 직접 그리면 더 정확해집니다).")
+    if not have_mutable:
+        added.append({"stroke_id": "auto_mutable", "mode": "mutable_zone",
+                      "target_hint": "studio_auto_default_interior", "points": rect(ix0, iy0, ix1, iy1)})
+        notes.append("가변 구역 미지정 → 도면 내부(4% 인셋)를 기본 가변 구역으로 사용했습니다.")
+    if not have_protected:
+        for side, pts in [
+            ("top", rect(x0, y0, x1, iy0)),
+            ("bottom", rect(x0, iy1, x1, y1)),
+            ("left", rect(x0, iy0, ix0, iy1)),
+            ("right", rect(ix1, iy0, x1, iy1)),
+        ]:
+            added.append({"stroke_id": f"auto_nogo_{side}", "mode": "no_go_zone",
+                          "target_hint": "studio_auto_default_border_ring", "points": pts})
+        notes.append("보호 구역 미지정 → 도면 가장자리 링을 기본 금지 구역으로 잠갔습니다 (주차·코어 등은 2단계에서 직접 지정을 권장).")
+    return added, notes
+
+
 def write_sketch(path: Path, strokes: list[dict[str, Any]], viewbox: list[float] | None) -> None:
     payload: dict[str, Any] = {
         "schema": SKETCH_SCHEMA,
@@ -163,6 +211,11 @@ def run_pipeline(state: StudioState, payload: dict[str, Any]) -> dict[str, Any]:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     viewbox = payload.get("viewBox") if isinstance(payload.get("viewBox"), list) else None
+    constraint_manifest_exists = (project_dir / "constraints" / "constraint_manifest.json").exists()
+    if viewbox and len(viewbox) == 4 and (constraints or not constraint_manifest_exists):
+        defaults, default_notes = synthesize_default_constraints(constraints, viewbox)
+        constraints.extend(defaults)
+        warnings.extend(default_notes)
     constraint_path: Path | None = None
     edit_path: Path | None = None
     if constraints:
