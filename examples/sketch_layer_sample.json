@@ -7,14 +7,14 @@
       "tool": "red_pen",
       "mode": "open_connection",
       "target_hint": "greenery_lounge_to_main_hall",
-      "points": [[2460, 1912], [2580, 1912], [2700, 1912], [2818, 1912]]
+      "points": [[370, 500], [400, 500], [430, 500], [460, 500]]
     },
     {
       "stroke_id": "s2",
       "tool": "blue_pen",
       "mode": "expand_program_feel",
       "target_hint": "fitness_gx",
-      "points": [[2330, 1998], [2678, 1998], [2678, 2288], [2384, 2288]]
+      "points": [[150, 450], [380, 450], [380, 820], [150, 820]]
     }
   ]
 }

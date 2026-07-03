@@ -68,9 +68,10 @@ GitHub Actions runs the same core contract used by local handoff:
 9. Validate the JSON job spec with `validate-job --strict`.
 10. Execute `run-job` from a JSON job spec for the SaaS/OAuth path.
 11. Execute `workflow-run` with sample SVG, standards, constraints, and OpenCrab MCP evidence.
-12. Execute `revision-run` on the same project to verify the repeat-edit path.
-13. Run `recognition-audit` when a target drawing needs a recognition-first gate before mutation.
-14. Run `export-package`, `verify-package --strict`, `doctor --strict`, and `release-audit --strict`.
+12. Execute the production `workflow-run --strict` and `revision-run --strict` path with `same-layer-svg-engine`, explicit scale calibration, program relabels, wall openings, and endpoint moves, then release-audit the result.
+13. Execute `revision-run` on the same project to verify the repeat-edit path.
+14. Run `recognition-audit` when a target drawing needs a recognition-first gate before mutation.
+15. Run `export-package`, `verify-package --strict`, `doctor --strict`, and `release-audit --strict`.
 
 The CI sample uses:
 
@@ -101,9 +102,15 @@ crab-archi-design workflow-run \
   --ontology-pack community_svg_topology_ontology_v2 \
   --opencrab-result-file /path/to/opencrab_mcp_result.json \
   --constraint-sketch examples/constraint_sketch_sample.json \
+  --scale-mm-per-world 30 \
+  --scale-evidence "User-confirmed grid dimension." \
   --prompt "Open the greenery lounge more toward the main hall and keep parking/core locked." \
-  --engine-adapter layout-svg-engine \
-  --skip-preview
+  --engine-adapter same-layer-svg-engine \
+  --engine-arg=--apply-program-relabels \
+  --engine-arg=--apply-openings \
+  --engine-arg=--apply-endpoint-moves \
+  --skip-preview \
+  --strict
 
 crab-archi-design revision-run \
   --project-id demo \
@@ -245,9 +252,9 @@ crab-archi-design qa --project-id demo
 
 `run-job` is the SaaS/OAuth/MCP worker entry point. It reads a validated `crab-archi-design-job-spec-v1` JSON file containing the source SVG path, standards, OpenCrab MCP result files, doodle constraints, natural-language prompt, engine adapter, and export/verification policy. It then runs `workflow-run`, `export-package`, `verify-package`, and `doctor`, and writes a `projects/<project>/jobs/job_run_###.json` report.
 
-`workflow-run` executes the normal project path in one command: init if needed, recognize source SVG, build Recognition IR v2 with source document indexes, attach standards, sync or attach evidence, attach constraints, build topology, create prompt/sketch intents, write the edit brief, status, design handoff, apply edit, review panel, final status, and a `projects/<project>/workflow/workflow_run_###.json` report.
+`workflow-run` executes the normal project path in one command: init if needed, recognize source SVG, build Recognition IR v2 with source document indexes, attach standards, sync or attach evidence, attach constraints, build topology, optionally attach an explicit scale calibration (`--scale-mm-per-world` or `--scale-known-mm` with `--scale-known-world-length`), create prompt/sketch intents, write the edit brief, status, design handoff, apply edit, review panel, final status, and a `projects/<project>/workflow/workflow_run_###.json` report. When the engine adapter is `same-layer-svg-engine`, workflow-run automatically runs `recognition-audit` and `svg-patch-plan` after topology, so the production mutation path never starts from a stale or missing patch plan. With `--strict`, workflow-run exits non-zero unless the final status is `pass`, which makes it usable as a CI gate.
 
-`revision-run` executes the repeat-edit path for an existing project. It can attach an updated constraint sketch, rebuild topology, convert natural language and/or doodle sketches into edit intents, regenerate the edit brief and handoff, run the engine, create a review panel, and write `projects/<project>/revisions/revision_run_###.json`.
+`revision-run` executes the repeat-edit path for an existing project. It can attach an updated constraint sketch, rebuild topology, convert natural language and/or doodle sketches into edit intents, regenerate the edit brief and handoff, run the engine, create a review panel, and write `projects/<project>/revisions/revision_run_###.json`. For `same-layer-svg-engine` projects it also re-runs `recognition-audit` and rebuilds the `svg-patch-plan` after topology, so every revision mutates against a fresh candidate plan. `--strict` exits non-zero unless the revision status is `pass`.
 
 `apply-edit` reads structured natural-language and doodle intents plus recognition, topology, evidence, standards, and constraints, writes a `solver_input.json`, runs the configured engine adapter, copies the resulting native SVG into `projects/<project>/alternatives/`, and writes an `apply_edit_report.json`. The report includes `candidate_quality`, which classifies apply checks and engine gates into hard constraints such as native-SVG-only output, shell/no-go/protected geometry preservation, and soft design quality checks such as coverage, aspect efficiency, program hierarchy, openings, and circulation detail.
 

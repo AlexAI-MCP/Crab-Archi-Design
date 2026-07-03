@@ -92,6 +92,43 @@ jobs:
             --engine-adapter layout-svg-engine \
             --skip-preview
 
+          crab-archi-design --project-root .ci-projects workflow-run \
+            --project-id ci-demo-production \
+            --source-svg examples/original_sample.svg \
+            --households 900 \
+            --standards examples/area_standard_sample.csv \
+            --ontology-pack community_svg_topology_ontology_v2 \
+            --opencrab-result-file examples/opencrab_mcp_result_sample.json \
+            --opencrab-source-tool opencrab_search_documents \
+            --constraint-sketch examples/constraint_sketch_sample.json \
+            --sketch examples/sketch_layer_sample.json \
+            --scale-mm-per-world 30 \
+            --scale-evidence "Sample plan: 1 SVG world unit equals 30 mm (user-confirmed grid dimension)." \
+            --prompt "Open the greenery lounge more toward the main hall and keep parking/core locked." \
+            --engine-adapter same-layer-svg-engine \
+            --engine-arg=--apply-program-relabels \
+            --engine-arg=--apply-openings \
+            --engine-arg=--apply-endpoint-moves \
+            --skip-preview \
+            --strict
+
+          crab-archi-design --project-root .ci-projects revision-run \
+            --project-id ci-demo-production \
+            --text "Tighten the golf and sauna adjacency while keeping screen golf inside the golf cluster." \
+            --engine-arg=--apply-program-relabels \
+            --engine-arg=--apply-openings \
+            --engine-arg=--apply-endpoint-moves \
+            --skip-preview \
+            --strict
+
+          crab-archi-design --project-root .ci-projects export-package \
+            --project-id ci-demo-production
+
+          crab-archi-design --project-root .ci-projects release-audit \
+            --project-id ci-demo-production \
+            --zip .ci-projects/ci-demo-production/exports/ci-demo-production_export_001.zip \
+            --strict
+
           crab-archi-design --project-root .ci-projects opencrab-request \
             --project-id ci-demo \
             --intent "Find OpenCrab precedent topology for greenery lounge, fitness, golf, wellness, hall, and support adjacency." \

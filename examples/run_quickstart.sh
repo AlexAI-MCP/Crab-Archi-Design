@@ -35,8 +35,14 @@ CREATE_STDOUT="$OUT_DIR/create_job.stdout"
   --opencrab-result-file examples/opencrab_mcp_result_sample.json \
   --opencrab-source-tool opencrab_search_documents \
   --constraint-sketch examples/constraint_sketch_sample.json \
+  --sketch examples/sketch_layer_sample.json \
+  --scale-mm-per-world 30 \
+  --scale-evidence "Sample plan: 1 SVG world unit equals 30 mm (user-confirmed grid dimension)." \
   --prompt "Improve the greenery lounge hierarchy while preserving protected geometry." \
-  --engine-adapter layout-svg-engine \
+  --engine-adapter same-layer-svg-engine \
+  --engine-arg=--apply-program-relabels \
+  --engine-arg=--apply-openings \
+  --engine-arg=--apply-endpoint-moves \
   --output "$JOB_PATH" \
   --validate \
   --validation-output-dir "$DIAGNOSTIC_DIR" \
@@ -59,6 +65,17 @@ RUN_STDOUT="$OUT_DIR/run_job.stdout"
   --strict | tee "$RUN_STDOUT"
 
 ZIP_PATH="$PROJECT_ROOT/$PROJECT_ID/exports/${PROJECT_ID}_export_001.zip"
+
+echo "==> Running same-layer revision loop"
+"${CRAB_ARCHI_CLI[@]}" --project-root "$PROJECT_ROOT" revision-run \
+  --project-id "$PROJECT_ID" \
+  --text "Tighten the golf and sauna adjacency while keeping screen golf inside the golf cluster." \
+  --sketch examples/sketch_layer_sample.json \
+  --engine-arg=--apply-program-relabels \
+  --engine-arg=--apply-openings \
+  --engine-arg=--apply-endpoint-moves \
+  --skip-preview \
+  --strict
 
 echo "==> Running release audit"
 AUDIT_STDOUT="$OUT_DIR/release_audit.stdout"

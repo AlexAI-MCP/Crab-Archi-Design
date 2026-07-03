@@ -3057,3 +3057,135 @@ def test_doodle_editor_command_prints_local_editor() -> None:
     lines = result.stdout.strip().splitlines()
     assert Path(lines[0]).name == "doodle_editor.html"
     assert lines[1].startswith("file://")
+
+
+def test_workflow_run_same_layer_production_path_passes_strict(tmp_path: Path) -> None:
+    result = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "workflow-run",
+        "--project-id",
+        "sl-prod",
+        "--source-svg",
+        str(ROOT / "examples/original_sample.svg"),
+        "--households",
+        "900",
+        "--standards",
+        str(ROOT / "examples/area_standard_sample.csv"),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        "--opencrab-result-file",
+        str(ROOT / "examples/opencrab_mcp_result_sample.json"),
+        "--opencrab-source-tool",
+        "opencrab_search_documents",
+        "--constraint-sketch",
+        str(ROOT / "examples/constraint_sketch_sample.json"),
+        "--sketch",
+        str(ROOT / "examples/sketch_layer_sample.json"),
+        "--scale-mm-per-world",
+        "30",
+        "--scale-evidence",
+        "Sample plan: 1 SVG world unit equals 30 mm (user-confirmed grid dimension).",
+        "--prompt",
+        "Open the greenery lounge more toward the main hall and keep parking/core locked.",
+        "--engine-adapter",
+        "same-layer-svg-engine",
+        "--engine-arg=--apply-program-relabels",
+        "--engine-arg=--apply-openings",
+        "--engine-arg=--apply-endpoint-moves",
+        "--skip-preview",
+        "--strict",
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    workflow_path = Path(result.stdout.splitlines()[0])
+    if not workflow_path.is_absolute():
+        workflow_path = tmp_path / workflow_path
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    assert workflow["status"] == "pass"
+    assert workflow["final_project_status"]["overall_status"] == "complete_candidate_ready"
+    step_status = {step["name"]: step["status"] for step in workflow["steps"]}
+    assert step_status["scale-attach"] == "pass"
+    assert step_status["recognition-audit"] == "pass"
+    assert step_status["svg-patch-plan"] == "pass"
+    assert step_status["apply-edit"] == "pass"
+
+    project_dir = tmp_path / "projects" / "sl-prod"
+    plan = json.loads(sorted((project_dir / "patch_plans").glob("svg_patch_plan_*.json"))[-1].read_text(encoding="utf-8"))
+    assert plan["status"] == "pass"
+    assert plan["metrics"]["opening_candidate_count"] > 0
+    assert plan["metrics"]["endpoint_move_candidate_count"] > 0
+    assert plan["metrics"]["program_cluster_count"] > 0
+    assert plan["metrics"]["scale_calibration_status"] == "active"
+
+    engine_reports = sorted((project_dir / "runs").glob("*/same_layer_engine_report.json"))
+    engine = json.loads(engine_reports[-1].read_text(encoding="utf-8"))
+    assert engine["status"] == "pass"
+    summary = engine["summary"]
+    assert summary["same_layer_opening_split_count"] > 0
+    assert summary["same_layer_endpoint_move_count"] > 0
+    assert summary["program_relabel_count"] > 0
+    assert summary["intent_role_coverage"]["coverage_ratio"] == 1.0
+
+    alternative = Path(workflow["latest_artifacts"]["alternative_svg"])
+    if not alternative.is_absolute():
+        alternative = tmp_path / alternative
+    candidate = alternative.read_text(encoding="utf-8")
+    assert "data-crab-action" in candidate
+    assert "<image" not in candidate
+
+
+def test_workflow_run_skips_same_layer_gates_for_diagnostic_engines(tmp_path: Path) -> None:
+    source_svg = tmp_path / "original.svg"
+    source_svg.write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 80'><rect x='8' y='8' width='104' height='64'/><text x='16' y='20'>fitness</text></svg>",
+        encoding="utf-8",
+    )
+    standards = tmp_path / "standards.csv"
+    standards.write_text("households,program,area\n900,fitness,70\n", encoding="utf-8")
+    constraint = tmp_path / "constraint.json"
+    constraint.write_text(
+        json.dumps(
+            {
+                "coordinate_space": "source_svg_viewbox",
+                "strokes": [{"stroke_id": "shell", "mode": "community_shell", "target_hint": "community_shell", "points": [[0, 0], [120, 0], [120, 80], [0, 80]]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    opencrab_result = tmp_path / "opencrab.json"
+    opencrab_result.write_text(
+        json.dumps({"status": "ok", "query": "fitness topology", "evidence": [{"id": "e1", "text": "Fitness evidence.", "source": "OpenCrab"}]}),
+        encoding="utf-8",
+    )
+    result = run_cli(
+        "--project-root",
+        "projects",
+        "workflow-run",
+        "--project-id",
+        "diag",
+        "--source-svg",
+        str(source_svg),
+        "--households",
+        "900",
+        "--standards",
+        str(standards),
+        "--ontology-pack",
+        "community_svg_topology_ontology_v2",
+        "--opencrab-result-file",
+        str(opencrab_result),
+        "--constraint-sketch",
+        str(constraint),
+        "--prompt",
+        "Improve the fitness connection.",
+        "--engine-adapter",
+        "reference-svg-engine",
+        "--skip-preview",
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    workflow = json.loads((tmp_path / result.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    step_status = {step["name"]: step["status"] for step in workflow["steps"]}
+    assert step_status["recognition-audit"] == "skipped"
+    assert step_status["svg-patch-plan"] == "skipped"
+    assert workflow["status"] == "pass"
