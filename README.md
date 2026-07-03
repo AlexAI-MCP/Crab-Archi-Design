@@ -192,6 +192,11 @@ crab-archi-design sketch-intent \
 
 crab-archi-design doodle-editor
 
+crab-archi-design studio \
+  --project-root projects \
+  --port 8765 \
+  --open
+
 crab-archi-design edit-brief \
   --project-id demo \
   --intent all
@@ -298,6 +303,8 @@ Engine adapter execution is allowlisted by default. Built-in aliases for `refere
 
 `constraint-attach` writes `projects/<project>/constraints/constraint_manifest.json`. Use it for community shell, parking/core/column/ramp no-go edges, lock boundaries, mutable zones, and projectable zones. `qa` and `apply-edit` require an active constraint manifest before a final SVG alternative can pass.
 
+`studio` serves the localhost design studio at `http://127.0.0.1:<port>/`. An operator loads the original linework and marks, directly on the drawing: protected geometry (community shell, no-go, lock boundaries), space adjustments (mutable/projectable zones, program expansion), wall adjustments (openings, partition removals, wall moves), and the natural-language request, then runs the same-layer production pipeline with one button. The server converts annotations into constraint/edit sketch JSON, executes `workflow-run` (first run) or `revision-run` (repeat edits), and writes `projects/<project>/studio/studio_run_###/studio_run_report.json`. The same HTTP API (`/api/load-svg`, `/api/run`, `/api/artifact`, `/api/status`) is agent-drivable, so Codex or Claude Code can operate the identical surface headlessly. The server binds to 127.0.0.1 only.
+
 `doodle-editor` prints the local SVG doodle editor path and `file://` URL. The editor loads a source SVG from your machine, records vector strokes in source viewBox coordinates, and downloads sketch JSON for `sketch-intent`.
 
 `edit-brief` summarizes natural-language and doodle intents before SVG mutation. It writes JSON and Markdown briefs, checks OpenCrab evidence, and flags doodle strokes outside the source SVG viewBox.
@@ -327,6 +334,10 @@ Engine adapter execution is allowlisted by default. Built-in aliases for `refere
 `crab-archi-design-mcp` starts a dependency-free stdio JSON-RPC bridge. It supports MCP `initialize`, `tools/list`, and `tools/call`, then maps tool calls back to the tested CLI commands.
 
 For the full revision loop, see [docs/edit_loop.md](docs/edit_loop.md).
+
+## Agent Runtimes (Codex, Claude Code, MCP clients)
+
+The framework is agent-runtime-neutral. [AGENTS.md](AGENTS.md) is the operating contract read by Codex CLI and other agents: hard rules, canonical commands, artifact paths, and the definition of done. [docs/codex_integration.md](docs/codex_integration.md) covers the three wiring options — exec mode via `mcp-manifest`, the stdio MCP server via `mcp-config` + `codex mcp add`, and the localhost studio HTTP API shared between human annotators and headless agents.
 
 ## Repository Scope
 
