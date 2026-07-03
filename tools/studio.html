@@ -458,7 +458,11 @@
         btn.disabled = false;
         var result = report.result || {};
         var ok = report.status === "pass";
+        var blockingText = (report.blocking && report.blocking.length)
+          ? "\n\n막힌 이유:\n" + report.blocking.map(function (b) { return "• " + b; }).join("\n")
+          : "";
         setStatus((report.command_kind || "run") + " → " + (report.status || "unknown") +
+          blockingText +
           (report.warnings && report.warnings.length ? "\n경고: " + report.warnings.join("; ") : "") +
           (report.stderr_tail && report.stderr_tail.length ? "\n" + report.stderr_tail.join("\n") : ""),
           ok ? "ok" : "bad");

@@ -226,6 +226,7 @@ def run_pipeline(state: StudioState, payload: dict[str, Any]) -> dict[str, Any]:
 
     completed = subprocess.run(cmd, capture_output=True, text=True, cwd=str(state.repo_root), timeout=1800)
     result = parse_cli_json(completed.stdout) or {}
+    blocking = collect_blocking_issues(project_dir, result)
     report = {
         "schema": STUDIO_SCHEMA,
         "project_id": project_id,
@@ -233,6 +234,7 @@ def run_pipeline(state: StudioState, payload: dict[str, Any]) -> dict[str, Any]:
         "returncode": completed.returncode,
         "status": result.get("status") or ("error" if completed.returncode != 0 else "unknown"),
         "result": result,
+        "blocking": blocking,
         "warnings": warnings,
         "constraint_sketch": str(constraint_path) if constraint_path else None,
         "edit_sketch": str(edit_path) if edit_path else None,
@@ -242,6 +244,62 @@ def run_pipeline(state: StudioState, payload: dict[str, Any]) -> dict[str, Any]:
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return report
+
+
+GATE_HINTS = {
+    "community_shell_confirmed": "외곽 쉘 폴리곤이 없습니다 — 2단계에서 '외곽 쉘'로 커뮤니티 경계를 그려주세요.",
+    "protected_zone_confirmed": "보호 구역이 없습니다 — 2단계에서 '금지 구역'(주차·코어·기둥·램프) 폴리곤을 그려주세요.",
+    "mutable_zone_confirmed": "가변 구역이 없습니다 — 3단계에서 '가변 구역' 폴리곤을 그려야 그 안의 벽이 변형 후보가 됩니다.",
+    "mutable_zone_found": "가변 구역이 없습니다 — 3단계에서 '가변 구역' 폴리곤을 그려야 그 안의 벽이 변형 후보가 됩니다.",
+    "protected_zone_found": "보호 구역이 없습니다 — 2단계에서 '금지 구역'(주차·코어·기둥·램프) 폴리곤을 그려주세요.",
+    "same_layer_mutable_candidates_found": "가변 구역 안에서 변형 가능한 벽을 찾지 못했습니다 — 가변 구역이 내부 칸막이를 포함하도록 조정하세요.",
+    "program_anchors_found": "가변 구역 안에 프로그램 라벨이 없습니다 — 라벨이 있는 실을 포함하도록 가변 구역을 넓히세요.",
+    "recognition_audit_pass": "인식 감사가 통과되지 않았습니다 — 위 항목을 먼저 해결하세요.",
+    "standards_manifest_active": "면적 기준 파일이 없습니다 — 1단계에서 CSV 경로를 지정하세요.",
+    "constraint_manifest_active": "제약 매니페스트가 없습니다 — 2·3단계 폴리곤을 최소 1개 이상 그려주세요.",
+    "column_candidates_detected": "기둥 후보가 인식되지 않았습니다 — 도면 스케일과 기둥 표기를 확인하세요.",
+}
+
+
+def collect_blocking_issues(project_dir: Path, result: dict[str, Any]) -> list[str]:
+    """Read the latest audit/patch-plan/apply artifacts and explain what blocked a pass."""
+    issues: list[str] = []
+    seen: set[str] = set()
+
+    def add_gate(key: str, source: str) -> None:
+        message = GATE_HINTS.get(key, f"{source}: {key}")
+        if message not in seen:
+            seen.add(message)
+            issues.append(message)
+
+    def load_latest(pattern: str) -> dict[str, Any] | None:
+        candidates = sorted(project_dir.glob(pattern), key=lambda item: (item.stat().st_mtime, item.name))
+        if not candidates:
+            return None
+        try:
+            return json.loads(candidates[-1].read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    if result.get("status") in (None, "pass"):
+        return issues
+    audit = load_latest("audits/recognition_audit_*.json")
+    if audit and audit.get("status") != "pass":
+        gates = audit.get("gates", {})
+        for key in audit.get("hard_gate_keys", gates.keys()):
+            if not gates.get(key):
+                add_gate(key, "recognition-audit")
+    plan = load_latest("patch_plans/svg_patch_plan_*.json")
+    if plan and plan.get("status") != "pass":
+        for key, value in plan.get("gates", {}).items():
+            if not value:
+                add_gate(key, "svg-patch-plan")
+    apply_report = load_latest("runs/apply_edit_*/apply_edit_report.json")
+    if apply_report and apply_report.get("status") != "pass":
+        for key, value in apply_report.get("checks", {}).items():
+            if not value and key in GATE_HINTS:
+                add_gate(key, "apply-edit")
+    return issues
 
 
 def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
