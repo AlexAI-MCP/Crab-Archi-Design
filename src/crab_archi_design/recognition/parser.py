@@ -46,8 +46,9 @@ def build_recognition_ir_v2(path: Path) -> dict[str, Any]:
     document_indices = {id(element): index for index, element in enumerate(root.iter(), start=1)}
     walk_svg(root, identity_matrix(), [], {}, nodes, raster_nodes, ir["warnings"], id_index, css_rules, document_indices)
     drawing_area = max(1.0, viewbox.width * viewbox.height)
+    max_dim = max(viewbox.width, viewbox.height)
     for node in nodes:
-        role_hint, confidence = classify_node(node, drawing_area)
+        role_hint, confidence = classify_node(node, drawing_area, max_dim)
         node["role_hint"] = role_hint
         node["role_confidence"] = confidence
     attach_physical_metrics(nodes, ir["document"])
