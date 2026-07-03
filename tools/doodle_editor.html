@@ -7,16 +7,30 @@
   <link rel="icon" href="data:,">
   <style>
     :root {
-      color-scheme: light;
-      --bg: #f7f7f4;
-      --panel: #ffffff;
-      --ink: #171717;
-      --muted: #666b72;
-      --line: #d9ddd8;
-      --accent: #0f766e;
-      --danger: #dc2626;
-      --shadow: 0 12px 30px rgba(31, 41, 55, 0.12);
+      color-scheme: dark;
+      --bg: #05080d;
+      --panel: #0a1017;
+      --panel-2: #0d151e;
+      --field: #101a25;
+      --field-hover: #162332;
+      --ink: #eef6fb;
+      --muted: #8da1b2;
+      --label: #cbd9e5;
+      --line: #223141;
+      --line-strong: #365068;
+      --accent: #17d6bf;
+      --accent-soft: rgba(23, 214, 191, 0.14);
+      --danger: #ff6b6b;
+      --canvas-bg: #f3f5f1;
+      --canvas-edge: #d2d9cf;
+      --stage-grid: rgba(65, 235, 214, 0.1);
+      --stage-grid-major: rgba(65, 235, 214, 0.18);
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.58);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    html {
+      background: var(--bg);
     }
 
     * {
@@ -26,43 +40,90 @@
     body {
       margin: 0;
       min-height: 100vh;
-      background: var(--bg);
+      background: linear-gradient(180deg, #05080d 0%, #081018 100%);
       color: var(--ink);
+      text-rendering: geometricPrecision;
     }
 
     .app {
       display: grid;
-      grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+      grid-template-columns: minmax(330px, 392px) minmax(0, 1fr);
       min-height: 100vh;
     }
 
     .sidebar {
       border-right: 1px solid var(--line);
-      background: var(--panel);
-      padding: 18px;
+      background:
+        linear-gradient(180deg, rgba(23, 214, 191, 0.04), transparent 220px),
+        linear-gradient(180deg, var(--panel) 0%, #070d14 100%);
+      padding: 0 0 18px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 0;
       min-width: 0;
+      overflow: auto;
+    }
+
+    .sidebar::-webkit-scrollbar,
+    .canvas-wrap::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    .sidebar::-webkit-scrollbar-thumb,
+    .canvas-wrap::-webkit-scrollbar-thumb {
+      background: #243647;
+      border: 2px solid var(--panel);
+      border-radius: 999px;
+    }
+
+    .sidebar > .field,
+    .sidebar > .row,
+    .sidebar > .toolbar,
+    .sidebar > .hint,
+    .sidebar > .status {
+      margin-left: 18px;
+      margin-right: 18px;
     }
 
     .brand {
       display: flex;
       flex-direction: column;
       gap: 3px;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      padding: 18px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(23, 214, 191, 0.11), transparent 64%),
+        rgba(10, 16, 23, 0.96);
+      backdrop-filter: blur(16px);
+    }
+
+    .brand::after {
+      content: "";
+      position: absolute;
+      right: 18px;
+      bottom: -1px;
+      left: 18px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
     }
 
     h1 {
-      font-size: 19px;
+      font-size: 18px;
       line-height: 1.2;
       margin: 0;
       letter-spacing: 0;
+      font-weight: 800;
     }
 
     .subtle {
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       line-height: 1.4;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
     .field {
@@ -70,11 +131,31 @@
       gap: 7px;
     }
 
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 16px 18px 8px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .section-title::before {
+      content: "";
+      width: 4px;
+      height: 17px;
+      background: var(--accent);
+      box-shadow: 0 0 14px rgba(23, 214, 191, 0.72);
+    }
+
     label {
-      color: #343841;
-      font-size: 12px;
+      color: var(--label);
+      font-size: 11px;
       font-weight: 700;
       letter-spacing: 0;
+      text-transform: uppercase;
     }
 
     input,
@@ -90,52 +171,103 @@
     textarea {
       width: 100%;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
+      border-radius: 4px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
+        var(--field);
       color: var(--ink);
-      padding: 9px 10px;
-      min-height: 38px;
+      padding: 8px 10px;
+      min-height: 36px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    }
+
+    input[type="file"]::file-selector-button {
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: #223244;
+      color: var(--ink);
+      margin-right: 10px;
+      padding: 5px 9px;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus,
+    button:focus-visible {
+      outline: 2px solid rgba(23, 169, 154, 0.58);
+      outline-offset: 2px;
     }
 
     textarea {
       resize: vertical;
-      min-height: 180px;
+      min-height: 124px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px;
+      line-height: 1.45;
+    }
+
+    #naturalLanguage {
+      min-height: 88px;
+      font-family: inherit;
+      font-size: 13px;
       line-height: 1.45;
     }
 
     .row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 9px;
     }
 
     .toolbar {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
+      gap: 7px;
+    }
+
+    .toolbar.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .toolbar.four {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .toolbar.five {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
     }
 
     button {
       border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
+      border-radius: 4px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent),
+        var(--field);
       color: var(--ink);
-      min-height: 38px;
+      min-height: 36px;
       cursor: pointer;
       font-weight: 700;
+      font-size: 12px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
     }
 
     button:hover {
-      border-color: #9aa39c;
-      background: #f5f7f4;
+      border-color: #5a7186;
+      background: var(--field-hover);
+    }
+
+    button.is-active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+      box-shadow: inset 0 0 0 1px rgba(23, 214, 191, 0.24), 0 0 18px rgba(23, 214, 191, 0.18);
     }
 
     button.primary {
       background: var(--accent);
       border-color: var(--accent);
-      color: #fff;
+      color: #06110f;
+      box-shadow: 0 0 22px rgba(23, 214, 191, 0.22);
     }
 
     button.danger {
@@ -144,13 +276,45 @@
 
     .status {
       display: grid;
-      gap: 6px;
-      padding: 11px;
+      grid-template-columns: 1fr;
+      gap: 5px;
+      padding: 12px;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fafbf9;
-      font-size: 12px;
+      border-radius: 4px;
+      background:
+        linear-gradient(180deg, rgba(23, 214, 191, 0.055), transparent),
+        rgba(16, 26, 37, 0.88);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
       color: var(--muted);
+    }
+
+    .status div {
+      border-left: 2px solid rgba(23, 214, 191, 0.44);
+      padding-left: 8px;
+      min-height: 17px;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+      padding: 10px 11px;
+      border: 1px dashed rgba(141, 161, 178, 0.3);
+      border-radius: 4px;
+      background: rgba(16, 26, 37, 0.44);
+    }
+
+    .kbd {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-bottom-color: #52697c;
+      border-radius: 3px;
+      background: #223244;
+      color: var(--ink);
+      padding: 0 5px;
+      font-size: 10px;
+      font-weight: 700;
     }
 
     .stage {
@@ -158,15 +322,61 @@
       overflow: hidden;
       min-width: 0;
       background:
-        linear-gradient(90deg, rgba(15, 118, 110, 0.08) 1px, transparent 1px),
-        linear-gradient(0deg, rgba(15, 118, 110, 0.08) 1px, transparent 1px),
-        #fcfcfb;
-      background-size: 32px 32px;
+        linear-gradient(90deg, var(--stage-grid) 1px, transparent 1px),
+        linear-gradient(0deg, var(--stage-grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--stage-grid-major) 1px, transparent 1px),
+        linear-gradient(0deg, var(--stage-grid-major) 1px, transparent 1px),
+        var(--bg);
+      background-size: 32px 32px, 32px 32px, 160px 160px, 160px 160px;
+    }
+
+    .viewport-chrome {
+      position: absolute;
+      top: 16px;
+      right: 18px;
+      left: 18px;
+      z-index: 4;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 38px;
+      padding: 0 12px;
+      border: 1px solid rgba(54, 80, 104, 0.82);
+      border-radius: 4px;
+      background: rgba(8, 15, 23, 0.86);
+      box-shadow: 0 14px 42px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(14px);
+      pointer-events: none;
+    }
+
+    .viewport-title,
+    .viewport-tools {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--label);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .viewport-tools {
+      color: var(--muted);
+    }
+
+    .viewport-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 14px rgba(23, 214, 191, 0.8);
     }
 
     .canvas-wrap {
       position: absolute;
-      inset: 18px;
+      inset: 68px 18px 18px;
       display: grid;
       place-items: center;
       overflow: auto;
@@ -177,11 +387,28 @@
       width: min(100%, 1480px);
       min-width: 900px;
       aspect-ratio: 1.414 / 1;
-      background: #fff;
-      border: 1px solid var(--line);
-      border-radius: 8px;
+      background: var(--canvas-bg);
+      border: 1px solid var(--canvas-edge);
+      border-radius: 2px;
       box-shadow: var(--shadow);
       overflow: hidden;
+    }
+
+    .drawing-shell::before {
+      content: "";
+      position: absolute;
+      inset: 8px;
+      z-index: 2;
+      border: 1px solid rgba(8, 15, 23, 0.1);
+      pointer-events: none;
+    }
+
+    .drawing-shell.pan-mode #overlay {
+      cursor: grab;
+    }
+
+    .drawing-shell.is-panning #overlay {
+      cursor: grabbing;
     }
 
     #svgHost,
@@ -196,11 +423,13 @@
       width: 100%;
       height: 100%;
       display: block;
+      background: var(--canvas-bg);
     }
 
     #overlay {
       cursor: crosshair;
       touch-action: none;
+      z-index: 3;
     }
 
     .empty {
@@ -213,6 +442,12 @@
       text-align: center;
       padding: 28px;
       pointer-events: none;
+      z-index: 4;
+      background:
+        linear-gradient(90deg, rgba(5, 8, 13, 0.04) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(5, 8, 13, 0.04) 1px, transparent 1px),
+        var(--canvas-bg);
+      background-size: 24px 24px;
     }
 
     .hidden {
@@ -234,7 +469,13 @@
       }
 
       .canvas-wrap {
-        inset: 10px;
+        inset: 58px 10px 10px;
+      }
+
+      .viewport-chrome {
+        top: 10px;
+        right: 10px;
+        left: 10px;
       }
     }
   </style>
@@ -247,14 +488,30 @@
         <div class="subtle">ViewBox Sketch</div>
       </div>
 
+      <div class="section-title">Input</div>
       <div class="field">
-        <label for="svgFile">Source SVG</label>
+        <label for="svgFile">Source</label>
         <input id="svgFile" type="file" accept=".svg,image/svg+xml">
       </div>
 
+      <div class="field">
+        <label for="naturalLanguage">Prompt</label>
+        <textarea id="naturalLanguage" spellcheck="false" placeholder="예: 빨간 삭제선은 기존 벽체 제거, 파란 선은 새 벽체, 그리너리 라운지를 중앙 홀 쪽으로 확장하고 코어/기둥/주차는 유지"></textarea>
+      </div>
+
+      <div class="section-title">Viewport</div>
+      <div class="toolbar five">
+        <button id="zoomInButton" type="button">Z+</button>
+        <button id="zoomOutButton" type="button">Z-</button>
+        <button id="fitButton" type="button">Fit</button>
+        <button id="zoom100Button" type="button">100%</button>
+        <button id="panButton" type="button">Pan</button>
+      </div>
+
+      <div class="section-title">Draw</div>
       <div class="row">
         <div class="field">
-          <label for="mode">Mode</label>
+          <label for="mode">Operation</label>
           <select id="mode">
             <option value="open_connection">open_connection</option>
             <option value="add_partition">add_partition</option>
@@ -270,7 +527,21 @@
           </select>
         </div>
         <div class="field">
-          <label for="strokeWidth">Width</label>
+          <label for="drawType">Geometry</label>
+          <select id="drawType">
+            <option value="freehand" selected>freehand curve</option>
+            <option value="straight_line">straight line</option>
+            <option value="smooth_curve">smooth curve</option>
+            <option value="distance">distance</option>
+            <option value="space_polygon">space by points</option>
+            <option value="area_polygon">area by points</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="strokeWidth">Line Wt</label>
           <select id="strokeWidth">
             <option value="3">3</option>
             <option value="5" selected>5</option>
@@ -278,13 +549,27 @@
             <option value="12">12</option>
           </select>
         </div>
+        <div class="field">
+          <label for="scaleMm">Scale mm/u</label>
+          <input id="scaleMm" type="text" value="" placeholder="optional">
+        </div>
       </div>
 
       <div class="field">
-        <label for="targetHint">Target hint</label>
+        <label for="targetHint">Target</label>
         <input id="targetHint" type="text" value="greenery_lounge_to_main_hall">
       </div>
 
+      <div class="toolbar two">
+        <button id="finishSpaceButton" type="button">Finish Space</button>
+        <button id="cancelActiveButton" type="button">Cancel Active</button>
+      </div>
+
+      <div class="hint">
+        Point spaces: choose <strong>space by points</strong> or <strong>area by points</strong>, click each corner, then press <span class="kbd">Finish Space</span>. JSON points remain in source SVG coordinates.
+      </div>
+
+      <div class="section-title">Actions</div>
       <div class="toolbar">
         <button id="undoButton" type="button">Undo</button>
         <button id="clearButton" class="danger" type="button">Clear</button>
@@ -297,13 +582,17 @@
         <button id="importButton" type="button">Import JSON</button>
       </div>
 
+      <div class="section-title">Status</div>
       <div class="status">
         <div id="fileStatus">No SVG loaded</div>
         <div id="viewBoxStatus">viewBox: -</div>
+        <div id="cameraStatus">camera: -</div>
         <div id="strokeStatus">strokes: 0</div>
         <div id="pointStatus">point: -</div>
+        <div id="measurementStatus">measurement: -</div>
       </div>
 
+      <div class="section-title">Output</div>
       <div class="field">
         <label for="jsonOut">Sketch JSON</label>
         <textarea id="jsonOut" spellcheck="false"></textarea>
@@ -311,6 +600,10 @@
     </aside>
 
     <section class="stage">
+      <div class="viewport-chrome">
+        <div class="viewport-title"><span class="viewport-dot"></span>MODEL SPACE</div>
+        <div class="viewport-tools"><span>SVG VIEWBOX</span><span>DOODLE JSON</span></div>
+      </div>
       <div class="canvas-wrap">
         <div class="drawing-shell" id="drawingShell">
           <div id="svgHost"></div>
@@ -326,16 +619,28 @@
     const importFile = document.getElementById("importFile");
     const importButton = document.getElementById("importButton");
     const mode = document.getElementById("mode");
+    const drawType = document.getElementById("drawType");
     const strokeWidth = document.getElementById("strokeWidth");
     const targetHint = document.getElementById("targetHint");
+    const naturalLanguage = document.getElementById("naturalLanguage");
+    const scaleMm = document.getElementById("scaleMm");
+    const zoomInButton = document.getElementById("zoomInButton");
+    const zoomOutButton = document.getElementById("zoomOutButton");
+    const fitButton = document.getElementById("fitButton");
+    const zoom100Button = document.getElementById("zoom100Button");
+    const panButton = document.getElementById("panButton");
+    const finishSpaceButton = document.getElementById("finishSpaceButton");
+    const cancelActiveButton = document.getElementById("cancelActiveButton");
     const undoButton = document.getElementById("undoButton");
     const clearButton = document.getElementById("clearButton");
     const downloadButton = document.getElementById("downloadButton");
     const copyButton = document.getElementById("copyButton");
     const fileStatus = document.getElementById("fileStatus");
     const viewBoxStatus = document.getElementById("viewBoxStatus");
+    const cameraStatus = document.getElementById("cameraStatus");
     const strokeStatus = document.getElementById("strokeStatus");
     const pointStatus = document.getElementById("pointStatus");
+    const measurementStatus = document.getElementById("measurementStatus");
     const jsonOut = document.getElementById("jsonOut");
     const svgHost = document.getElementById("svgHost");
     const overlay = document.getElementById("overlay");
@@ -353,16 +658,25 @@
       mutable_zone: "#0f766e",
       projectable_zone: "#7c3aed",
       lock_boundary: "#c026d3",
-      keep_zone: "#4b5563"
+      keep_zone: "#4b5563",
+      measure_distance: "#111827",
+      measure_area: "#0891b2"
     };
 
     const state = {
       sourceName: null,
-      viewBox: [0, 0, 1000, 707],
+      sourceViewBox: [0, 0, 1000, 707],
+      cameraViewBox: [0, 0, 1000, 707],
+      sourceSvgElement: null,
       strokes: [],
       activeStroke: null,
-      activePolyline: null,
-      drawing: false
+      activeElement: null,
+      drawing: false,
+      panMode: false,
+      spacePan: false,
+      panning: false,
+      panStartClient: null,
+      panStartViewBox: null
     };
 
     function parseViewBox(svgElement) {
@@ -378,37 +692,251 @@
       return [0, 0, width, height];
     }
 
-    function setViewBox(viewBox) {
-      state.viewBox = viewBox;
-      const value = viewBox.join(" ");
+    function viewBoxText(viewBox) {
+      return viewBox.map((value) => Number(value.toFixed ? value.toFixed(2) : value)).join(" ");
+    }
+
+    function setSourceViewBox(viewBox) {
+      state.sourceViewBox = viewBox;
+      drawingShell.style.aspectRatio = `${viewBox[2]} / ${viewBox[3]}`;
+      viewBoxStatus.textContent = `viewBox: ${viewBoxText(viewBox)}`;
+      setCameraViewBox(viewBox);
+    }
+
+    function setCameraViewBox(viewBox) {
+      state.cameraViewBox = viewBox;
+      const value = viewBoxText(viewBox);
       overlay.setAttribute("viewBox", value);
       overlay.setAttribute("preserveAspectRatio", "xMidYMid meet");
-      drawingShell.style.aspectRatio = `${viewBox[2]} / ${viewBox[3]}`;
-      viewBoxStatus.textContent = `viewBox: ${value}`;
+      if (state.sourceSvgElement) {
+        state.sourceSvgElement.setAttribute("viewBox", value);
+      }
+      cameraStatus.textContent = `camera: ${value}`;
+    }
+
+    function clampCamera(viewBox) {
+      const [sx, sy, sw, sh] = state.sourceViewBox;
+      let [x, y, width, height] = viewBox;
+      const minWidth = sw / 80;
+      const minHeight = sh / 80;
+      const maxWidth = sw * 2;
+      const maxHeight = sh * 2;
+      width = Math.min(Math.max(width, minWidth), maxWidth);
+      height = Math.min(Math.max(height, minHeight), maxHeight);
+      if (width <= sw) {
+        x = Math.min(Math.max(x, sx), sx + sw - width);
+      } else {
+        x = sx - (width - sw) / 2;
+      }
+      if (height <= sh) {
+        y = Math.min(Math.max(y, sy), sy + sh - height);
+      } else {
+        y = sy - (height - sh) / 2;
+      }
+      return [x, y, width, height];
+    }
+
+    function zoomBy(factor, center) {
+      if (!state.sourceName) {
+        return;
+      }
+      const [x, y, width, height] = state.cameraViewBox;
+      const cx = center ? center[0] : x + width / 2;
+      const cy = center ? center[1] : y + height / 2;
+      const nextWidth = width * factor;
+      const nextHeight = height * factor;
+      const rx = (cx - x) / width;
+      const ry = (cy - y) / height;
+      setCameraViewBox(clampCamera([cx - nextWidth * rx, cy - nextHeight * ry, nextWidth, nextHeight]));
+      refreshJson();
+    }
+
+    function fitDrawing() {
+      setCameraViewBox(state.sourceViewBox);
+      refreshJson();
+    }
+
+    function isTypingTarget(target) {
+      return target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+    }
+
+    function updatePanClass() {
+      const active = state.panMode || state.spacePan || state.panning;
+      drawingShell.classList.toggle("pan-mode", active);
+      drawingShell.classList.toggle("is-panning", state.panning);
+      panButton.classList.toggle("is-active", state.panMode);
+    }
+
+    function setPanMode(enabled) {
+      state.panMode = enabled;
+      if (enabled) {
+        cancelActive();
+      }
+      updatePanClass();
+    }
+
+    function beginPan(event) {
+      if (!state.sourceName) {
+        return false;
+      }
+      event.preventDefault();
+      overlay.setPointerCapture(event.pointerId);
+      state.panning = true;
+      state.drawing = false;
+      state.panStartClient = [event.clientX, event.clientY];
+      state.panStartViewBox = [...state.cameraViewBox];
+      updatePanClass();
+      return true;
+    }
+
+    function movePan(event) {
+      if (!state.panning || !state.panStartClient || !state.panStartViewBox) {
+        return false;
+      }
+      event.preventDefault();
+      const rect = overlay.getBoundingClientRect();
+      const [startClientX, startClientY] = state.panStartClient;
+      const [startX, startY, startWidth, startHeight] = state.panStartViewBox;
+      const dx = (event.clientX - startClientX) * startWidth / rect.width;
+      const dy = (event.clientY - startClientY) * startHeight / rect.height;
+      setCameraViewBox(clampCamera([startX - dx, startY - dy, startWidth, startHeight]));
+      refreshJson();
+      return true;
+    }
+
+    function endPan(event) {
+      if (!state.panning) {
+        return false;
+      }
+      event.preventDefault();
+      state.panning = false;
+      state.panStartClient = null;
+      state.panStartViewBox = null;
+      updatePanClass();
+      refreshJson();
+      return true;
     }
 
     function nextStrokeId() {
       return `s${String(state.strokes.length + 1).padStart(3, "0")}`;
     }
 
+    function currentShape() {
+      return drawType.value;
+    }
+
+    function effectiveMode() {
+      if (drawType.value === "distance") {
+        return "measure_distance";
+      }
+      if (drawType.value === "area_polygon") {
+        return "measure_area";
+      }
+      return mode.value;
+    }
+
+    function scaleValue() {
+      const value = Number(scaleMm.value);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    }
+
+    function polylineLength(points, closed = false) {
+      let total = 0;
+      for (let index = 1; index < points.length; index += 1) {
+        total += Math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1]);
+      }
+      if (closed && points.length > 2) {
+        const first = points[0];
+        const last = points[points.length - 1];
+        total += Math.hypot(first[0] - last[0], first[1] - last[1]);
+      }
+      return total;
+    }
+
+    function polygonArea(points) {
+      if (points.length < 3) {
+        return 0;
+      }
+      let sum = 0;
+      for (let index = 0; index < points.length; index += 1) {
+        const current = points[index];
+        const next = points[(index + 1) % points.length];
+        sum += current[0] * next[1] - next[0] * current[1];
+      }
+      return Math.abs(sum) / 2;
+    }
+
+    function measurementForStroke(stroke) {
+      const points = stroke.points || [];
+      const closed = Boolean(stroke.closed || stroke.shape === "space_polygon" || stroke.shape === "area_polygon");
+      const scale = scaleValue();
+      if (closed && points.length > 2) {
+        const area = polygonArea(points);
+        const perimeter = polylineLength(points, true);
+        const result = {
+          type: "area",
+          area_svg_units2: Number(area.toFixed(2)),
+          perimeter_svg_units: Number(perimeter.toFixed(2))
+        };
+        if (scale) {
+          result.area_m2 = Number((area * scale * scale / 1000000).toFixed(3));
+          result.perimeter_m = Number((perimeter * scale / 1000).toFixed(3));
+        }
+        return result;
+      }
+      if (points.length > 1) {
+        const length = polylineLength(points, false);
+        const result = {
+          type: "length",
+          length_svg_units: Number(length.toFixed(2))
+        };
+        if (scale) {
+          result.length_m = Number((length * scale / 1000).toFixed(3));
+        }
+        return result;
+      }
+      return null;
+    }
+
+    function formatMeasurement(measurement) {
+      if (!measurement) {
+        return "measurement: -";
+      }
+      if (measurement.type === "area") {
+        const metric = measurement.area_m2 !== undefined ? ` / ${measurement.area_m2} m2` : "";
+        return `area: ${measurement.area_svg_units2} u2${metric}, perimeter: ${measurement.perimeter_svg_units} u`;
+      }
+      const metric = measurement.length_m !== undefined ? ` / ${measurement.length_m} m` : "";
+      return `length: ${measurement.length_svg_units} u${metric}`;
+    }
+
     function sketchJson() {
+      const scale = scaleValue();
       return {
         schema: "crab-archi-design-sketch-layer-v1",
         coordinate_space: "source_svg_viewbox",
         source_svg_name: state.sourceName,
-        viewBox: state.viewBox,
+        natural_language: naturalLanguage.value.trim(),
+        viewBox: state.sourceViewBox,
+        camera_viewBox: state.cameraViewBox,
+        scale: scale ? { mm_per_svg_unit: scale } : null,
         strokes: state.strokes.map((stroke) => ({
           stroke_id: stroke.stroke_id,
           mode: stroke.mode,
+          shape: stroke.shape || "freehand",
           target_hint: stroke.target_hint,
           width: stroke.width,
-          points: stroke.points
+          closed: Boolean(stroke.closed),
+          points: stroke.points,
+          measurement: stroke.measurement || measurementForStroke(stroke)
         }))
       };
     }
 
     function refreshJson() {
       strokeStatus.textContent = `strokes: ${state.strokes.length}`;
+      const latest = state.activeStroke || state.strokes[state.strokes.length - 1];
+      measurementStatus.textContent = formatMeasurement(latest ? measurementForStroke(latest) : null);
       jsonOut.value = JSON.stringify(sketchJson(), null, 2);
     }
 
@@ -416,32 +944,87 @@
       return `${point[0].toFixed(2)},${point[1].toFixed(2)}`;
     }
 
-    function updatePolyline(polyline, points) {
-      polyline.setAttribute("points", points.map(pointToString).join(" "));
+    function smoothPathD(points) {
+      if (!points.length) {
+        return "";
+      }
+      if (points.length === 1) {
+        return `M ${pointToString(points[0])}`;
+      }
+      if (points.length === 2) {
+        return `M ${pointToString(points[0])} L ${pointToString(points[1])}`;
+      }
+      let d = `M ${pointToString(points[0])}`;
+      for (let index = 1; index < points.length - 1; index += 1) {
+        const current = points[index];
+        const next = points[index + 1];
+        const midpoint = [(current[0] + next[0]) / 2, (current[1] + next[1]) / 2];
+        d += ` Q ${pointToString(current)} ${pointToString(midpoint)}`;
+      }
+      d += ` L ${pointToString(points[points.length - 1])}`;
+      return d;
     }
 
     function strokeColor(strokeMode) {
       return modeColors[strokeMode] || "#111827";
     }
 
-    function createPolyline(stroke) {
-      const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-      polyline.setAttribute("fill", "none");
-      polyline.setAttribute("stroke", strokeColor(stroke.mode));
-      polyline.setAttribute("stroke-width", String(stroke.width));
-      polyline.setAttribute("stroke-linecap", "round");
-      polyline.setAttribute("stroke-linejoin", "round");
-      polyline.setAttribute("opacity", "0.92");
-      polyline.dataset.strokeId = stroke.stroke_id;
-      updatePolyline(polyline, stroke.points);
-      overlay.appendChild(polyline);
-      return polyline;
+    function createStrokeElement(stroke) {
+      const shape = stroke.shape || "freehand";
+      let element;
+      if (shape === "straight_line" || shape === "distance") {
+        element = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        const start = stroke.points[0] || [0, 0];
+        const end = stroke.points[1] || start;
+        element.setAttribute("x1", start[0]);
+        element.setAttribute("y1", start[1]);
+        element.setAttribute("x2", end[0]);
+        element.setAttribute("y2", end[1]);
+      } else if (shape === "smooth_curve") {
+        element = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        element.setAttribute("d", smoothPathD(stroke.points));
+      } else if (shape === "space_polygon" || shape === "area_polygon") {
+        const tagName = stroke.closed && stroke.points.length > 2 ? "polygon" : "polyline";
+        element = document.createElementNS("http://www.w3.org/2000/svg", tagName);
+        element.setAttribute("points", stroke.points.map(pointToString).join(" "));
+        if (stroke.closed && stroke.points.length > 2) {
+          element.setAttribute("fill", strokeColor(stroke.mode));
+          element.setAttribute("fill-opacity", "0.12");
+        }
+      } else {
+        element = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        element.setAttribute("points", stroke.points.map(pointToString).join(" "));
+      }
+      if (!element.hasAttribute("fill")) {
+        element.setAttribute("fill", "none");
+      }
+      element.setAttribute("stroke", strokeColor(stroke.mode));
+      element.setAttribute("stroke-width", String(stroke.width));
+      element.setAttribute("stroke-linecap", "round");
+      element.setAttribute("stroke-linejoin", "round");
+      element.setAttribute("opacity", "0.92");
+      element.dataset.strokeId = stroke.stroke_id;
+      overlay.appendChild(element);
+      return element;
+    }
+
+    function updateActiveElement() {
+      if (!state.activeStroke) {
+        return;
+      }
+      if (state.activeElement) {
+        state.activeElement.remove();
+      }
+      state.activeElement = createStrokeElement(state.activeStroke);
     }
 
     function redrawStrokes() {
       overlay.replaceChildren();
       for (const stroke of state.strokes) {
-        createPolyline(stroke);
+        createStrokeElement(stroke);
+      }
+      if (state.activeStroke) {
+        state.activeElement = createStrokeElement(state.activeStroke);
       }
     }
 
@@ -467,12 +1050,56 @@
         return;
       }
       points.push(point);
-      updatePolyline(state.activePolyline, points);
+      updateActiveElement();
       pointStatus.textContent = `point: ${point[0].toFixed(1)}, ${point[1].toFixed(1)}`;
+      refreshJson();
+    }
+
+    function updateLineEnd(point) {
+      if (!state.activeStroke) {
+        return;
+      }
+      state.activeStroke.points[1] = point;
+      updateActiveElement();
+      pointStatus.textContent = `point: ${point[0].toFixed(1)}, ${point[1].toFixed(1)}`;
+      refreshJson();
+    }
+
+    function startStroke(point) {
+      const shape = currentShape();
+      const lineLike = shape === "straight_line" || shape === "distance";
+      state.activeStroke = {
+        stroke_id: nextStrokeId(),
+        mode: effectiveMode(),
+        shape,
+        target_hint: targetHint.value.trim(),
+        width: Number(strokeWidth.value),
+        closed: false,
+        points: lineLike ? [point, point] : [point]
+      };
+      state.activeElement = createStrokeElement(state.activeStroke);
+    }
+
+    function addPolygonPoint(point) {
+      if (!state.activeStroke) {
+        startStroke(point);
+      } else {
+        state.activeStroke.points.push(point);
+        updateActiveElement();
+      }
+      pointStatus.textContent = `point: ${point[0].toFixed(1)}, ${point[1].toFixed(1)}`;
+      refreshJson();
     }
 
     function beginStroke(event) {
       if (!state.sourceName) {
+        return;
+      }
+      if (state.panMode || state.spacePan || event.button === 1 || event.button === 2) {
+        beginPan(event);
+        return;
+      }
+      if (event.button !== 0) {
         return;
       }
       const point = clientPoint(event);
@@ -480,20 +1107,19 @@
         return;
       }
       event.preventDefault();
+      if (currentShape() === "space_polygon" || currentShape() === "area_polygon") {
+        addPolygonPoint(point);
+        return;
+      }
       overlay.setPointerCapture(event.pointerId);
       state.drawing = true;
-      state.activeStroke = {
-        stroke_id: nextStrokeId(),
-        mode: mode.value,
-        target_hint: targetHint.value.trim(),
-        width: Number(strokeWidth.value),
-        points: []
-      };
-      state.activePolyline = createPolyline(state.activeStroke);
-      appendPoint(point);
+      startStroke(point);
     }
 
     function moveStroke(event) {
+      if (movePan(event)) {
+        return;
+      }
       const point = clientPoint(event);
       if (point) {
         pointStatus.textContent = `point: ${point[0].toFixed(1)}, ${point[1].toFixed(1)}`;
@@ -502,22 +1128,60 @@
         return;
       }
       event.preventDefault();
-      appendPoint(point);
+      if (state.activeStroke && (state.activeStroke.shape === "straight_line" || state.activeStroke.shape === "distance")) {
+        updateLineEnd(point);
+      } else {
+        appendPoint(point);
+      }
     }
 
     function endStroke(event) {
+      if (endPan(event)) {
+        return;
+      }
       if (!state.drawing || !state.activeStroke) {
         return;
       }
       event.preventDefault();
-      if (state.activeStroke.points.length > 1) {
+      const points = state.activeStroke.points;
+      const valid = points.length > 1 && polylineLength(points, false) > 1;
+      if (valid) {
+        state.activeStroke.measurement = measurementForStroke(state.activeStroke);
         state.strokes.push(state.activeStroke);
-      } else if (state.activePolyline) {
-        state.activePolyline.remove();
+      } else if (state.activeElement) {
+        state.activeElement.remove();
       }
       state.drawing = false;
       state.activeStroke = null;
-      state.activePolyline = null;
+      state.activeElement = null;
+      refreshJson();
+    }
+
+    function finishSpace() {
+      if (!state.activeStroke || !(state.activeStroke.shape === "space_polygon" || state.activeStroke.shape === "area_polygon")) {
+        return;
+      }
+      if (state.activeStroke.points.length > 2) {
+        state.activeStroke.closed = true;
+        state.activeStroke.measurement = measurementForStroke(state.activeStroke);
+        state.strokes.push(state.activeStroke);
+      }
+      if (state.activeElement) {
+        state.activeElement.remove();
+      }
+      state.activeStroke = null;
+      state.activeElement = null;
+      redrawStrokes();
+      refreshJson();
+    }
+
+    function cancelActive() {
+      state.drawing = false;
+      if (state.activeElement) {
+        state.activeElement.remove();
+      }
+      state.activeStroke = null;
+      state.activeElement = null;
       refreshJson();
     }
 
@@ -533,11 +1197,15 @@
       sourceSvg.removeAttribute("height");
       sourceSvg.setAttribute("width", "100%");
       sourceSvg.setAttribute("height", "100%");
+      sourceSvg.setAttribute("viewBox", viewBoxText(viewBox));
       sourceSvg.setAttribute("preserveAspectRatio", "xMidYMid meet");
       svgHost.replaceChildren(document.importNode(sourceSvg, true));
+      state.sourceSvgElement = svgHost.querySelector("svg");
       state.sourceName = file.name;
       state.strokes = [];
-      setViewBox(viewBox);
+      state.activeStroke = null;
+      state.activeElement = null;
+      setSourceViewBox(viewBox);
       redrawStrokes();
       emptyState.classList.add("hidden");
       fileStatus.textContent = file.name;
@@ -546,15 +1214,28 @@
 
     function importSketch(data) {
       if (Array.isArray(data.viewBox) && data.viewBox.length === 4) {
-        setViewBox(data.viewBox.map(Number));
+        state.sourceViewBox = data.viewBox.map(Number);
+        viewBoxStatus.textContent = `viewBox: ${viewBoxText(state.sourceViewBox)}`;
+      }
+      if (Array.isArray(data.camera_viewBox) && data.camera_viewBox.length === 4) {
+        setCameraViewBox(data.camera_viewBox.map(Number));
+      } else {
+        setCameraViewBox(state.sourceViewBox);
+      }
+      naturalLanguage.value = data.natural_language || "";
+      if (data.scale && data.scale.mm_per_svg_unit) {
+        scaleMm.value = String(data.scale.mm_per_svg_unit);
       }
       state.sourceName = data.source_svg_name || state.sourceName;
       state.strokes = (data.strokes || []).map((stroke, index) => ({
         stroke_id: stroke.stroke_id || `s${String(index + 1).padStart(3, "0")}`,
         mode: stroke.mode || stroke.tool || "mark_up",
+        shape: stroke.shape || "freehand",
         target_hint: stroke.target_hint || "",
         width: Number(stroke.width || 5),
-        points: (stroke.points || []).map((point) => [Number(point[0]), Number(point[1])])
+        closed: Boolean(stroke.closed),
+        points: (stroke.points || []).map((point) => [Number(point[0]), Number(point[1])]),
+        measurement: stroke.measurement || null
       })).filter((stroke) => stroke.points.length > 1);
       redrawStrokes();
       refreshJson();
@@ -602,11 +1283,22 @@
 
     clearButton.addEventListener("click", () => {
       state.strokes = [];
+      cancelActive();
       redrawStrokes();
       refreshJson();
     });
 
     downloadButton.addEventListener("click", downloadJson);
+    finishSpaceButton.addEventListener("click", finishSpace);
+    cancelActiveButton.addEventListener("click", cancelActive);
+    zoomInButton.addEventListener("click", () => zoomBy(0.82));
+    zoomOutButton.addEventListener("click", () => zoomBy(1.22));
+    fitButton.addEventListener("click", fitDrawing);
+    zoom100Button.addEventListener("click", fitDrawing);
+    panButton.addEventListener("click", () => setPanMode(!state.panMode));
+    naturalLanguage.addEventListener("input", refreshJson);
+    scaleMm.addEventListener("input", refreshJson);
+    drawType.addEventListener("change", cancelActive);
     copyButton.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(jsonOut.value);
@@ -624,6 +1316,39 @@
     overlay.addEventListener("pointermove", moveStroke);
     overlay.addEventListener("pointerup", endStroke);
     overlay.addEventListener("pointercancel", endStroke);
+    overlay.addEventListener("contextmenu", (event) => event.preventDefault());
+    overlay.addEventListener("dblclick", finishSpace);
+    overlay.addEventListener("wheel", (event) => {
+      if (!state.sourceName) {
+        return;
+      }
+      event.preventDefault();
+      zoomBy(event.deltaY < 0 ? 0.86 : 1.16, clientPoint(event));
+    }, { passive: false });
+    window.addEventListener("keydown", (event) => {
+      if (event.code === "Space" && !isTypingTarget(event.target)) {
+        event.preventDefault();
+        state.spacePan = true;
+        updatePanClass();
+      }
+      if (event.key === "Escape") {
+        cancelActive();
+        if (state.panMode) {
+          setPanMode(false);
+        }
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        state.strokes.pop();
+        redrawStrokes();
+        refreshJson();
+      }
+    });
+    window.addEventListener("keyup", (event) => {
+      if (event.code === "Space") {
+        state.spacePan = false;
+        updatePanClass();
+      }
+    });
     refreshJson();
   </script>
 </body>
