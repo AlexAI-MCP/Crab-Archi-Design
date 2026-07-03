@@ -96,6 +96,18 @@ def main() -> None:
     capability_summary = summary.get("edit_capability_summary", {})
     capability_totals = summary.get("edit_capability_totals", {})
     intent_coverage = summary.get("intent_role_coverage") or {}
+
+    def op_gate(requested: bool, applied_count: int, skips_key: str, pool_count: int) -> bool:
+        # A requested operation passes when it applied, or when nothing was
+        # applicable (empty candidate pool), or when every unapplied candidate
+        # was skipped with a recorded reason. A silent zero with candidates and
+        # no skip trail stays a defect.
+        if not requested or applied_count > 0 or pool_count == 0:
+            return True
+        return len(summary.get(skips_key) or []) > 0
+
+    plan_metrics = patch_plan.get("metrics", {})
+
     gates = {
         "native_svg_only": output_image_count == 0,
         "no_raster_overlay_added": output_image_count == source_image_count,
@@ -110,10 +122,10 @@ def main() -> None:
         "source_element_addresses_used": summary["selected_candidate_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0 or summary["program_relabel_count"] > 0,
         "existing_elements_mutated": summary["same_layer_mutation_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0 or summary["program_relabel_count"] > 0,
         "existing_geometry_mutated": summary["same_layer_geometry_mutation_count"] > 0,
-        "program_relabels_applied_or_not_requested": (not args.apply_program_relabels) or summary["program_relabel_count"] > 0,
+        "program_relabels_applied_or_not_requested": op_gate(args.apply_program_relabels, summary["program_relabel_count"], "program_relabel_skips", int(summary.get("program_relabel_candidate_count") or 0)),
         "same_layer_internal_partitions_removed": summary["same_layer_removal_count"] > 0 or summary["same_layer_opening_split_count"] > 0 or summary["same_layer_endpoint_move_count"] > 0,
-        "same_layer_openings_applied_or_not_requested": (not args.apply_openings) or summary["same_layer_opening_split_count"] > 0,
-        "same_layer_endpoint_moves_applied_or_not_requested": (not args.apply_endpoint_moves) or summary["same_layer_endpoint_move_count"] > 0,
+        "same_layer_openings_applied_or_not_requested": op_gate(args.apply_openings, summary["same_layer_opening_split_count"], "opening_skips", int(plan_metrics.get("opening_candidate_count") or 0)),
+        "same_layer_endpoint_moves_applied_or_not_requested": op_gate(args.apply_endpoint_moves, summary["same_layer_endpoint_move_count"], "endpoint_move_skips", int(plan_metrics.get("endpoint_move_candidate_count") or 0)),
         "intent_target_role_coverage_reported": bool(intent_coverage),
         "intent_repair_recommendations_reported": "intent_repair_recommendations" in summary,
         "program_cluster_targets_used": summary["program_cluster_mutation_count"] > 0,

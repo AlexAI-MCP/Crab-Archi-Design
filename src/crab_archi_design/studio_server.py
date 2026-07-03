@@ -107,15 +107,21 @@ def split_strokes(strokes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], 
     return constraints, edits, warnings
 
 
+def scale_polygon_about_centroid(points: list[list[float]], factor: float) -> list[list[float]]:
+    cx = sum(p[0] for p in points) / len(points)
+    cy = sum(p[1] for p in points) / len(points)
+    return [[round(cx + (p[0] - cx) * factor, 2), round(cy + (p[1] - cy) * factor, 2)] for p in points]
+
+
 def synthesize_default_constraints(
     constraints: list[dict[str, Any]], viewbox: list[float]
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Prompt-first defaults: fill missing zone groups from the drawing extents.
+    """Shell-first defaults: the shell interior is editable, everything else is protected.
 
-    Without user polygons the whole drawing frame becomes the shell, a 4%%-inset
-    interior becomes the mutable zone, and the border ring between them becomes
-    no-go — so edits stay in the interior and everything near the frame stays
-    untouched until the operator draws real zones.
+    The operator draws (at most) the community shell. The mutable zone is derived
+    as the shell interior (slightly inset), and the ring between the drawing frame
+    and the shell becomes no-go — so topology and assets inside the shell are the
+    only mutation targets. With no shell at all, the whole drawing frame is used.
     """
     modes = {item["mode"] for item in constraints}
     have_shell = "community_shell" in modes
@@ -125,33 +131,54 @@ def synthesize_default_constraints(
         return [], []
 
     x, y, w, h = (float(v) for v in viewbox)
-    inset = 0.04 * min(w, h)
     x0, y0, x1, y1 = x, y, x + w, y + h
-    ix0, iy0, ix1, iy1 = x0 + inset, y0 + inset, x1 - inset, y1 - inset
     added: list[dict[str, Any]] = []
     notes: list[str] = []
 
     def rect(px0: float, py0: float, px1: float, py1: float) -> list[list[float]]:
         return [[px0, py0], [px1, py0], [px1, py1], [px0, py1], [px0, py0]]
 
+    shell_points: list[list[float]] | None = None
+    for item in constraints:
+        if item["mode"] == "community_shell" and len(item.get("points") or []) >= 4:
+            shell_points = [[float(p[0]), float(p[1])] for p in item["points"]]
+            break
+
     if not have_shell:
+        shell_points = rect(x0, y0, x1, y1)
         added.append({"stroke_id": "auto_shell", "mode": "community_shell",
-                      "target_hint": "studio_auto_default_shell", "points": rect(x0, y0, x1, y1)})
-        notes.append("외곽 쉘 미지정 → 도면 전체 범위를 기본 쉘로 사용했습니다 (2단계에서 직접 그리면 더 정확해집니다).")
-    if not have_mutable:
+                      "target_hint": "studio_auto_default_shell", "points": shell_points})
+        notes.append("외곽 쉘 미지정 → 도면 전체 범위를 쉘로 사용했습니다 (쉘을 직접 그리면 편집 범위가 정확해집니다).")
+
+    if not have_mutable and shell_points:
+        interior = scale_polygon_about_centroid(shell_points, 0.96)
         added.append({"stroke_id": "auto_mutable", "mode": "mutable_zone",
-                      "target_hint": "studio_auto_default_interior", "points": rect(ix0, iy0, ix1, iy1)})
-        notes.append("가변 구역 미지정 → 도면 내부(4% 인셋)를 기본 가변 구역으로 사용했습니다.")
-    if not have_protected:
-        for side, pts in [
-            ("top", rect(x0, y0, x1, iy0)),
-            ("bottom", rect(x0, iy1, x1, y1)),
-            ("left", rect(x0, iy0, ix0, iy1)),
-            ("right", rect(ix1, iy0, x1, iy1)),
-        ]:
+                      "target_hint": "studio_interior_mutable", "points": interior})
+        notes.append("쉘 내부가 편집 가능 영역으로 설정되었습니다 — 이 안의 토폴로지와 요소만 변형 대상입니다.")
+
+    if not have_protected and shell_points:
+        xs = [p[0] for p in shell_points]
+        ys = [p[1] for p in shell_points]
+        bx0, by0, bx1, by1 = min(xs), min(ys), max(xs), max(ys)
+        strips = [
+            ("top", rect(x0, y0, x1, by0)) if by0 > y0 else None,
+            ("bottom", rect(x0, by1, x1, y1)) if by1 < y1 else None,
+            ("left", rect(x0, by0, bx0, by1)) if bx0 > x0 else None,
+            ("right", rect(bx1, by0, x1, by1)) if bx1 < x1 else None,
+        ]
+        strips = [item for item in strips if item]
+        if not strips:
+            edge = 0.04 * min(w, h)
+            strips = [
+                ("top", rect(x0, y0, x1, y0 + edge)),
+                ("bottom", rect(x0, y1 - edge, x1, y1)),
+                ("left", rect(x0, y0 + edge, x0 + edge, y1 - edge)),
+                ("right", rect(x1 - edge, y0 + edge, x1, y1 - edge)),
+            ]
+        for side, pts in strips:
             added.append({"stroke_id": f"auto_nogo_{side}", "mode": "no_go_zone",
-                          "target_hint": "studio_auto_default_border_ring", "points": pts})
-        notes.append("보호 구역 미지정 → 도면 가장자리 링을 기본 금지 구역으로 잠갔습니다 (주차·코어 등은 2단계에서 직접 지정을 권장).")
+                          "target_hint": "studio_border_no_go", "points": pts})
+        notes.append("쉘 바깥 영역은 자동으로 보호(금지) 구역으로 잠갔습니다.")
     return added, notes
 
 

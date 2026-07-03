@@ -60,12 +60,16 @@ def test_synthesize_default_constraints_fills_missing_zone_groups() -> None:
     assert modes.count("no_go_zone") == 4
     assert len(notes) == 3
 
-    shell_only = [{"mode": "community_shell", "points": [[0, 0], [10, 0], [10, 10]]}]
+    shell_only = [{"mode": "community_shell", "points": [[100, 100], [900, 100], [900, 700], [100, 700], [100, 100]]}]
     added, notes = synthesize_default_constraints(shell_only, viewbox)
     modes = [item["mode"] for item in added]
     assert "community_shell" not in modes
     assert "mutable_zone" in modes
+    assert modes.count("no_go_zone") == 4
     assert len(notes) == 2
+    interior = next(item for item in added if item["mode"] == "mutable_zone")
+    xs = [p[0] for p in interior["points"]]
+    assert min(xs) > 100 and max(xs) < 900  # interior is inset inside the drawn shell
 
     complete = [
         {"mode": "community_shell", "points": []},
@@ -95,8 +99,8 @@ def test_studio_run_prompt_only_uses_auto_defaults(tmp_path: Path) -> None:
             },
         )
         assert report["status"] == "pass", report
-        assert any("기본 쉘" in note for note in report["warnings"])
-        assert any("가변 구역" in note for note in report["warnings"])
+        assert any("쉘로 사용" in note for note in report["warnings"])
+        assert any("편집 가능 영역" in note for note in report["warnings"])
         assert report["constraint_sketch"] and Path(report["constraint_sketch"]).exists()
     finally:
         server.shutdown()

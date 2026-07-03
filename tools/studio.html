@@ -118,45 +118,25 @@
     </section>
 
     <section>
-      <h2><span class="step">2</span>지켜야 할 부분 <span class="opt">선택</span></h2>
+      <h2><span class="step">2</span>외곽 쉘 <span class="opt">선택</span></h2>
       <div class="tools">
-        <button data-mode="community_shell" data-kind="polygon"><span class="dot" style="background:var(--shell)"></span>외곽 쉘</button>
-        <button data-mode="no_go_zone" data-kind="polygon"><span class="dot" style="background:var(--nogo)"></span>금지 구역</button>
-        <button data-mode="lock_boundary" data-kind="polygon"><span class="dot" style="background:var(--lock)"></span>잠금 경계</button>
+        <button data-mode="community_shell" data-kind="polygon"><span class="dot" style="background:var(--shell)"></span>외곽 쉘 그리기</button>
       </div>
-      <div class="hint">클릭으로 꼭짓점 추가, 더블클릭·Enter·도구 전환으로 폴리곤 완성. 안 그리면 도면 가장자리 링이 자동으로 금지 구역이 됩니다 — 주차·코어는 직접 지정을 권장.</div>
-    </section>
-
-    <section>
-      <h2><span class="step">3</span>공간 조정 <span class="opt">선택</span></h2>
-      <div class="tools">
-        <button data-mode="mutable_zone" data-kind="polygon"><span class="dot" style="background:var(--mutable)"></span>가변 구역</button>
-        <button data-mode="projectable_zone" data-kind="polygon"><span class="dot" style="background:var(--projectable)"></span>투영 구역</button>
-        <button data-mode="expand_program_feel" data-kind="freehand"><span class="dot" style="background:var(--expand)"></span>프로그램 확장</button>
-      </div>
-      <div class="hint">가변 구역 안의 벽만 변형 후보가 됩니다. 안 그리면 도면 내부 전체(4% 인셋)가 기본 가변 구역이 됩니다.</div>
-    </section>
-
-    <section>
-      <h2><span class="step">4</span>벽체 조정 <span class="opt">선택</span></h2>
-      <div class="tools">
-        <button data-mode="open_connection" data-kind="freehand"><span class="dot" style="background:var(--open)"></span>개구부 연결</button>
-        <button data-mode="remove_partition" data-kind="freehand"><span class="dot" style="background:var(--remove)"></span>칸막이 제거</button>
-        <button data-mode="move_wall" data-kind="freehand"><span class="dot" style="background:var(--move)"></span>벽 이동</button>
-      </div>
-      <div class="hint">벽을 가로질러 드래그하면 해당 위치가 편집 인텐트로 변환됩니다. 좌표는 LLM이 아니라 결정론 솔버가 계산합니다.</div>
+      <div class="hint">커뮤니티 경계를 폴리곤으로 클릭 (더블클릭·Enter·도구 재클릭으로 완성).
+        <b>쉘 내부의 토폴로지와 요소만 수정 대상</b>이 되고 쉘 바깥은 자동으로 보호됩니다.
+        안 그리면 도면 전체가 쉘로 간주됩니다. 나머지 설계 지시는 모두 아래 자연어 요청으로 전달하세요.</div>
       <ul class="strokes" id="strokeList"></ul>
     </section>
 
     <section>
-      <h2><span class="step">5</span>요청사항 &amp; 실행 <span class="req">필수</span></h2>
+      <h2><span class="step">3</span>요청사항 &amp; 실행 <span class="req">필수</span></h2>
       <div class="field"><label for="prompt">자연어 요청 (design intent)</label>
-        <textarea id="prompt" placeholder="예: 그리너리 라운지를 메인 홀 방향으로 개방하고, 주차·코어·기둥은 유지"></textarea></div>
+        <textarea id="prompt" placeholder="예: 그리너리 라운지를 메인 홀 방향으로 개방하고, 피트니스와 GX를 하나의 존으로 통합. 주차·코어·기둥은 유지"></textarea></div>
       <div class="row">
         <button class="primary" id="runButton">파이프라인 실행</button>
         <button id="clearButton" style="flex:0 0 auto">주석 초기화</button>
       </div>
-      <div class="hint">프롬프트만으로 바로 실행됩니다 — 구역 미지정 시 자동 기본값(쉘=도면 전체, 가변=내부, 금지=가장자리)이 적용되고 결과에 표시됩니다. 첫 실행은 workflow-run, 이후는 revision-run.</div>
+      <div class="hint">자연어 요청이 개구부·칸막이 제거·프로그램 재배치 인텐트로 변환되고, 좌표는 결정론 솔버가 계산합니다. 첫 실행은 workflow-run, 이후는 revision-run으로 반복 수정.</div>
       <div class="status" id="runStatus">대기 중</div>
       <div class="gates" id="gateChips"></div>
       <div class="result-links" id="resultLinks"></div>

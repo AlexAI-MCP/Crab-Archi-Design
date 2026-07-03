@@ -83,13 +83,15 @@ crab-archi-design studio --project-root projects --port 8765 --open
 Note: `--project-root` works both as a global flag (before `studio`) and as a
 subcommand flag (after `studio`).
 
-The studio serves `http://127.0.0.1:8765/` where an operator loads the source
-linework and marks, directly on the drawing: protected zones (community shell,
-no-go, lock), space adjustments (mutable/projectable zones, program expansion),
-wall adjustments (openings, partition removals, wall moves), and the
-natural-language request. `POST /api/run` converts those annotations into
+The studio serves `http://127.0.0.1:8765/` and is prompt-first: the operator
+loads the source linework, optionally draws a single community-shell polygon,
+and states the request in natural language. The shell interior is derived as
+the editable (mutable) zone and everything outside is auto-protected; with no
+shell the whole drawing frame is used. `POST /api/run` converts this into
 constraint/edit sketch JSON and executes the same tested pipeline above. Run
-reports land in `projects/<id>/studio/studio_run_###/`.
+reports land in `projects/<id>/studio/studio_run_###/`. The HTTP API still
+accepts the full stroke vocabulary below for headless agents that want
+fine-grained zones.
 
 Agents may drive the same API headlessly:
 
