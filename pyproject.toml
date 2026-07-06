@@ -22,6 +22,8 @@ Documentation = "https://opencrab.sh/dashboard"
 [project.scripts]
 crab-archi-design = "crab_archi_design.cli:main"
 crab-archi-design-mcp = "crab_archi_design.mcp_server:main"
+crab-archi-design-canvas = "crab_archi_design.canvas_server:main"
+crab-archi-design-canvas-mcp = "crab_archi_design.canvas_mcp:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

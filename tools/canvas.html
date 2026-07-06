@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Crab Archi Design — Live Canvas</title>
+<style>
+  :root { --bg:#14171c; --panel:#1d2129; --line:#2c313b; --text:#e6e9ef; --dim:#8a93a3; --accent:#4da3ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system, "Apple SD Gothic Neo", sans-serif; background:var(--bg); color:var(--text); display:flex; flex-direction:column; height:100vh; }
+  header { display:flex; gap:8px; align-items:center; padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header input[type=text] { background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:6px; padding:6px 8px; }
+  #svgPath { width:340px; } #prompt { flex:1; min-width:220px; }
+  button { background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:6px; padding:6px 10px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.active { background:var(--accent); color:#08121f; border-color:var(--accent); }
+  select { background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:6px; padding:6px; }
+  main { flex:1; display:flex; min-height:0; }
+  #viewport { flex:1; position:relative; overflow:hidden; background:#fff; }
+  #stage svg, #overlay { position:absolute; inset:0; width:100%; height:100%; }
+  #overlay { pointer-events:none; }
+  aside { width:280px; background:var(--panel); border-left:1px solid var(--line); padding:10px; overflow-y:auto; font-size:13px; }
+  aside h3 { margin:6px 0; font-size:12px; text-transform:uppercase; color:var(--dim); }
+  #log { white-space:pre-wrap; color:var(--dim); font-size:12px; }
+  footer { padding:4px 12px; background:var(--panel); border-top:1px solid var(--line); color:var(--dim); font-size:12px; display:flex; justify-content:space-between; }
+  .sel { outline:2px dashed var(--accent); outline-offset:1px; }
+  .toolbar-group { display:flex; gap:4px; align-items:center; padding-right:8px; border-right:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <div class="toolbar-group">
+    <input id="svgPath" type="text" placeholder="SVG 파일 절대 경로">
+    <button id="btnOpen">열기</button>
+    <button id="btnSave">저장</button>
+    <button id="btnUndo">↩ 실행취소</button>
+  </div>
+  <div class="toolbar-group" id="tools">
+    <button data-tool="select" class="active">선택</button>
+    <button data-tool="line">직선</button>
+    <button data-tool="polyline">폴리라인</button>
+    <button data-tool="curve">곡선</button>
+    <button data-tool="rect">사각형</button>
+    <button data-tool="ellipse">원</button>
+    <button data-tool="text">텍스트</button>
+    <button data-tool="zone">구역</button>
+    <button data-tool="copy">복사</button>
+    <button data-tool="stylecopy">스타일복사</button>
+  </div>
+  <div class="toolbar-group">
+    <select id="zoneMode">
+      <option value="community_shell">외곽 쉘</option>
+      <option value="no_go_zone">금지 구역</option>
+      <option value="protect_zone">보호 구역</option>
+      <option value="lock_boundary">고정 경계</option>
+      <option value="mutable_zone">가변 구역</option>
+      <option value="projectable_zone">확장 가능</option>
+    </select>
+    <input id="strokeColor" type="color" value="#d62728" title="선 색">
+    <input id="strokeWidth" type="number" value="2" min="0.5" step="0.5" style="width:56px" title="선 두께">
+    <button id="btnDelete">삭제</button>
+  </div>
+  <input id="prompt" type="text" placeholder="자연어 설계 요청 (재생성 파이프라인에 전달)">
+  <button id="btnRegen">재생성</button>
+</header>
+<main>
+  <div id="viewport"><div id="stage"></div><svg id="overlay"></svg></div>
+  <aside>
+    <h3>선택</h3><div id="selInfo">없음</div>
+    <h3>구역</h3><div id="zoneList">없음</div>
+    <h3>로그</h3><div id="log"></div>
+  </aside>
+</main>
+<footer><span id="status">서버 연결 중…</span><span id="hint">MCP: crab-archi-design-canvas-mcp · 더블클릭/Enter로 다점 도형 완료 · Esc 취소</span></footer>
+<script>
+const S = { rev:-1, tool:'select', pts:[], selected:[], styleSource:null, copySource:null, drawing:false };
+const $ = id => document.getElementById(id);
+const log = m => { $('log').textContent = (m + "\n" + $('log').textContent).slice(0, 4000); };
+
+async function api(route, body, method) {
+  const opt = body !== undefined ? { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) } : { method: method||'GET' };
+  const res = await fetch(route, opt);
+  return res.json();
+}
+const op = (name, params) => api('/api/op', { op:name, params }).then(r => { if (r.status==='error') log('오류: '+r.error); poll(true); return r; });
+
+async function poll(force) {
+  try {
+    const doc = await api('/api/doc?rev=' + (force ? -1 : S.rev));
+    if (doc.status === 'ok') {
+      S.rev = doc.revision;
+      $('stage').innerHTML = doc.svg;
+      const svg = $('stage').querySelector('svg');
+      if (svg) { svg.removeAttribute('width'); svg.removeAttribute('height');
+        $('overlay').setAttribute('viewBox', svg.getAttribute('viewBox') || '0 0 1000 1000');
+        $('overlay').setAttribute('preserveAspectRatio', svg.getAttribute('preserveAspectRatio') || 'xMidYMid meet'); }
+      $('status').textContent = `rev ${doc.revision} · 요소 ${doc.element_count} · ${doc.source_path||'(파일 미지정)'}`;
+      refreshZones(); restoreSelection();
+    } else if (doc.status === 'empty') { $('status').textContent = 'SVG를 열어주세요'; }
+  } catch (e) { $('status').textContent = '서버 연결 끊김'; }
+}
+setInterval(() => { if (!S.drawing) poll(); }, 1500);
+poll();
+
+async function refreshZones() {
+  const z = await api('/api/zones');
+  $('zoneList').innerHTML = (z.zones||[]).map(x => `${x.mode} <small>(${x.cid})</small>`).join('<br>') || '없음';
+}
+
+function svgPoint(evt) {
+  const svg = $('stage').querySelector('svg'); if (!svg) return null;
+  const pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
+  const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+  return [Math.round(p.x*100)/100, Math.round(p.y*100)/100];
+}
+const style = () => ({ stroke: $('strokeColor').value, 'stroke-width': $('strokeWidth').value, fill: 'none' });
+
+function restoreSelection() {
+  S.selected = S.selected.filter(cid => {
+    const el = $('stage').querySelector(`[data-cid="${cid}"]`);
+    if (el) el.classList.add('sel');
+    return !!el;
+  });
+  $('selInfo').textContent = S.selected.join(', ') || '없음';
+}
+function select(cid, additive) {
+  if (!additive) { S.selected = []; $('stage').querySelectorAll('.sel').forEach(e=>e.classList.remove('sel')); }
+  if (cid && !S.selected.includes(cid)) S.selected.push(cid);
+  restoreSelection();
+}
+
+// preview overlay
+function preview() {
+  const o = $('overlay'); o.innerHTML = '';
+  if (S.pts.length < 1) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const el = document.createElementNS(ns, 'polyline');
+  el.setAttribute('points', S.pts.map(p=>p.join(',')).join(' '));
+  el.setAttribute('stroke', $('strokeColor').value); el.setAttribute('fill','none');
+  el.setAttribute('stroke-width', $('strokeWidth').value); el.setAttribute('stroke-dasharray','6 4');
+  o.appendChild(el);
+}
+function resetDraw() { S.pts = []; S.drawing = false; preview(); }
+
+$('viewport').addEventListener('click', async evt => {
+  const p = svgPoint(evt); if (!p) return;
+  const t = S.tool;
+  if (t === 'select') {
+    const hit = evt.target.closest('[data-cid]');
+    select(hit ? hit.getAttribute('data-cid') : null, evt.shiftKey);
+  } else if (t === 'copy') {
+    const hit = evt.target.closest('[data-cid]');
+    if (!S.copySource) { if (hit) { S.copySource = { cid:hit.getAttribute('data-cid'), p }; log('복사 원본 선택 — 붙여넣을 위치 클릭'); } }
+    else { await op('copy_element', { cid:S.copySource.cid, dx:p[0]-S.copySource.p[0], dy:p[1]-S.copySource.p[1] }); S.copySource = null; }
+  } else if (t === 'stylecopy') {
+    const hit = evt.target.closest('[data-cid]'); if (!hit) return;
+    const cid = hit.getAttribute('data-cid');
+    if (!S.styleSource) { S.styleSource = cid; log('스타일 원본: '+cid+' — 적용할 요소 클릭'); }
+    else { await op('copy_style', { source_cid:S.styleSource, target_cids:[cid] }); S.styleSource = null; }
+  } else if (t === 'text') {
+    const text = window.prompt('텍스트'); if (text) await op('add_text', { x:p[0], y:p[1], text, style:{ fill:$('strokeColor').value } });
+  } else if (t === 'line' || t === 'rect' || t === 'ellipse') {
+    S.pts.push(p); S.drawing = true; preview();
+    if (S.pts.length === 2) {
+      const [a,b] = S.pts; resetDraw();
+      if (t==='line') await op('draw_line', { x1:a[0], y1:a[1], x2:b[0], y2:b[1], style:style() });
+      if (t==='rect') await op('draw_rect', { x:Math.min(a[0],b[0]), y:Math.min(a[1],b[1]), width:Math.abs(b[0]-a[0]), height:Math.abs(b[1]-a[1]), style:style() });
+      if (t==='ellipse') await op('draw_ellipse', { cx:a[0], cy:a[1], rx:Math.hypot(b[0]-a[0], b[1]-a[1]), style:style() });
+    }
+  } else if (t === 'polyline' || t === 'curve' || t === 'zone') {
+    S.pts.push(p); S.drawing = true; preview();
+  }
+});
+
+async function finishMulti() {
+  const t = S.tool, pts = S.pts.slice(); resetDraw();
+  if (pts.length < 2) return;
+  if (t === 'polyline') await op('draw_polyline', { points:pts, style:style() });
+  else if (t === 'curve' && pts.length >= 3) await op('draw_curve', { points:pts, style:style() });
+  else if (t === 'zone' && pts.length >= 3) await op('set_zone', { mode:$('zoneMode').value, points:pts });
+}
+$('viewport').addEventListener('dblclick', finishMulti);
+document.addEventListener('keydown', evt => {
+  if (evt.key === 'Enter' && S.drawing) finishMulti();
+  if (evt.key === 'Escape') { resetDraw(); S.styleSource = S.copySource = null; }
+  if ((evt.key === 'Delete' || evt.key === 'Backspace') && S.selected.length && S.tool === 'select'
+      && document.activeElement.tagName !== 'INPUT') {
+    op('delete_elements', { cids:S.selected.slice() }); S.selected = [];
+  }
+});
+
+document.querySelectorAll('#tools button').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('#tools button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active'); S.tool = btn.dataset.tool; resetDraw();
+}));
+
+$('btnOpen').onclick = async () => {
+  const r = await api('/api/open', { path: $('svgPath').value.trim() });
+  if (r.status === 'error') log('오류: ' + r.error); else { log('로드됨: ' + $('svgPath').value); poll(true); }
+};
+$('btnSave').onclick = async () => { const r = await api('/api/save', {}); log(r.status==='ok' ? '저장됨: '+r.saved : '오류: '+r.error); };
+$('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r.status==='error') log('오류: '+r.error); poll(true); };
+$('btnDelete').onclick = () => { if (S.selected.length) { op('delete_elements', { cids:S.selected.slice() }); S.selected = []; } };
+$('btnRegen').onclick = async () => {
+  const prompt = $('prompt').value.trim(); if (!prompt) { log('재생성: 프롬프트를 입력하세요'); return; }
+  log('재생성 실행 중… (수 분 걸릴 수 있음)'); $('btnRegen').disabled = true;
+  try {
+    const r = await api('/api/regenerate', { prompt });
+    log('재생성 결과: ' + (r.status||'unknown') + (r.report && r.report.blocking && r.report.blocking.length ? "\n- " + r.report.blocking.join("\n- ") : ''));
+  } catch (e) { log('재생성 오류: ' + e); }
+  $('btnRegen').disabled = false; poll(true);
+};
+</script>
+</body>
+</html>

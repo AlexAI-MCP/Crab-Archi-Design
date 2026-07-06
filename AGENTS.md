@@ -8,14 +8,15 @@ you are Codex CLI, Claude Code, or any other agent runtime.
 
 1. **LLMs never write SVG coordinates.** You author `DesignIntent` / `EditIntent`
    JSON and natural-language prompts. The deterministic solver and the
-   `same-layer-svg-engine` compute all geometry.
+   built-in SVG engines compute all geometry.
 2. **OpenCrab MCP evidence is required** before any design alternative.
    Attach it with `opencrab-sync` (result JSON) or `evidence-attach`.
 3. **Protected geometry is inviolable**: parking, columns, cores, ramps, stairs,
    egress, and the community outer shell. The engine enforces
    `locked_geometry_unchanged`; do not try to work around a failed gate.
-4. **Native SVG only.** No raster overlays, no zoning-overlay redraw layers.
-   Final candidates mutate existing source SVG elements in place.
+4. **Native SVG only.** No raster overlays and no unverified zoning overlays.
+   Same-layer candidates mutate existing source SVG elements in place; studio
+   redraw candidates must use the built-in standalone redraw engine.
 5. **Do not commit proprietary drawings or project outputs.** `projects/`,
    `*.svg` (except tracked examples), and exports are gitignored by policy.
 
@@ -86,12 +87,14 @@ subcommand flag (after `studio`).
 The studio serves `http://127.0.0.1:8765/` and is prompt-first: the operator
 loads the source linework, optionally draws a single community-shell polygon,
 and states the request in natural language. The shell interior is derived as
-the editable (mutable) zone and everything outside is auto-protected; with no
-shell the whole drawing frame is used. `POST /api/run` converts this into
-constraint/edit sketch JSON and executes the same tested pipeline above. Run
-reports land in `projects/<id>/studio/studio_run_###/`. The HTTP API still
-accepts the full stroke vocabulary below for headless agents that want
-fine-grained zones.
+the redraw target and everything outside is auto-protected; with no shell the
+whole drawing frame is used. The default studio engine is
+`layout-svg-engine --standalone-redraw`, so the source SVG is recognition and
+constraint evidence rather than copied candidate linework. `POST /api/run`
+converts this into constraint/edit sketch JSON and executes the same tested
+pipeline above. Run reports land in `projects/<id>/studio/studio_run_###/`.
+The HTTP API still accepts the full stroke vocabulary below for headless agents
+that want fine-grained zones.
 
 Agents may drive the same API headlessly:
 

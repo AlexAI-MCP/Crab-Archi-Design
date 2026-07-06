@@ -62,8 +62,11 @@ allowlisted deterministic engines are the only executable path from MCP.
 crab-archi-design studio --project-root projects --port 8765 --open
 ```
 
-A human marks linework annotations in the browser; Codex can drive the identical
-HTTP API headlessly (`/api/load-svg`, `/api/run`, `/api/artifact`,
+A human marks the source SVG, optionally draws one community-shell polygon, and
+states the request in natural language. The studio defaults to
+`layout-svg-engine --standalone-redraw`, so candidates are clean native SVG
+redraws rather than brittle source-line patch attempts. Codex can drive the
+identical HTTP API headlessly (`/api/load-svg`, `/api/run`, `/api/artifact`,
 `/api/status` — see AGENTS.md for stroke modes). Both produce
 `projects/<id>/studio/studio_run_###/studio_run_report.json` plus the standard
 workflow artifacts, so a human annotation session and an agent revision loop

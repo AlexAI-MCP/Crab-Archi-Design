@@ -66,6 +66,10 @@ def parse_viewbox(raw: Any) -> list[float]:
     return [0.0, 0.0, 1000.0, 700.0]
 
 
+def viewbox_text(viewbox: list[float]) -> str:
+    return " ".join(f"{value:.3f}".rstrip("0").rstrip(".") for value in viewbox)
+
+
 def count_images(root: ET.Element) -> int:
     return sum(1 for element in root.iter() if local_tag(element) == "image")
 
@@ -316,18 +320,82 @@ def no_go_boxes(items: list[dict[str, Any]]) -> list[tuple[float, float, float, 
     return boxes
 
 
+def bbox_from_mapping(bbox: Any) -> tuple[float, float, float, float] | None:
+    if not isinstance(bbox, dict):
+        return None
+    try:
+        x = float(bbox["x"])
+        y = float(bbox["y"])
+        width = float(bbox.get("width", bbox.get("w")))
+        height = float(bbox.get("height", bbox.get("h")))
+    except (KeyError, TypeError, ValueError):
+        return None
+    box = (x, y, width, height)
+    return box if bbox_area(box) > 0 else None
+
+
+def column_boxes_from_v2_nodes(nodes: Any) -> list[tuple[float, float, float, float]]:
+    boxes = []
+    if not isinstance(nodes, list):
+        return boxes
+    for node in nodes:
+        if not isinstance(node, dict) or str(node.get("role_hint") or "").lower() != "column":
+            continue
+        box = bbox_from_mapping(node.get("bbox"))
+        if box:
+            boxes.append(box)
+    return boxes
+
+
+def recognition_ir_v2_column_boxes(project_dir: Path | None) -> list[tuple[float, float, float, float]]:
+    if project_dir is None:
+        return []
+    path = project_dir / "recognition" / "recognition_ir_v2.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return column_boxes_from_v2_nodes(data.get("nodes"))
+
+
 def recognized_column_boxes(solver_input: dict[str, Any]) -> list[tuple[float, float, float, float]]:
     boxes = []
     geometry = (solver_input.get("recognition_manifest") or {}).get("geometry_candidates", {})
     for item in geometry.get("column_candidates", []):
-        bbox = item.get("bbox", {})
-        try:
-            box = (float(bbox["x"]), float(bbox["y"]), float(bbox["width"]), float(bbox["height"]))
-        except (KeyError, TypeError, ValueError):
-            continue
-        if bbox_area(box) > 0:
+        box = bbox_from_mapping(item.get("bbox"))
+        if box:
             boxes.append(box)
-    return boxes[:300]
+    boxes.extend(column_boxes_from_v2_nodes((solver_input.get("recognition_ir_v2") or {}).get("nodes")))
+    project_dir_raw = os.environ.get("CRAB_ARCHI_PROJECT_DIR")
+    project_dir = Path(project_dir_raw).expanduser() if project_dir_raw else None
+    boxes.extend(recognition_ir_v2_column_boxes(project_dir))
+    deduped: list[tuple[float, float, float, float]] = []
+    seen: set[tuple[float, float, float, float]] = set()
+    for box in boxes:
+        key = tuple(round(value, 3) for value in box)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(box)
+    return deduped
+
+
+def box_center(box: tuple[float, float, float, float]) -> tuple[float, float]:
+    return box[0] + box[2] * 0.5, box[1] + box[3] * 0.5
+
+
+def filter_column_boxes_for_layout(
+    boxes: list[tuple[float, float, float, float]],
+    shell_points: list[tuple[float, float]],
+    layout: tuple[float, float, float, float],
+) -> list[tuple[float, float, float, float]]:
+    if shell_points:
+        filtered = [box for box in boxes if point_in_polygon(box_center(box), shell_points)]
+    else:
+        filtered = [box for box in boxes if bboxes_intersect(box, layout)]
+    return filtered[:300]
 
 
 def avoid_no_go(layout: tuple[float, float, float, float], protected_boxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
@@ -794,23 +862,24 @@ def add_redesign_cleanup_mask(
     }
 
 
-def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any]:
+def draw_layout(root: ET.Element, solver_input: dict[str, Any], *, standalone_redraw: bool = False) -> dict[str, Any]:
     viewbox = parse_viewbox(root.attrib.get("viewBox"))
     min_x, min_y, width, height = viewbox
     items = (solver_input.get("constraint_manifest") or {}).get("constraint_items", [])
     shell_points, shell_box = box_from_constraint_items(items, {"community_shell"})
     mutable_points, mutable_box = box_from_constraint_items(items, {"mutable", "projectable"})
     protected_boxes = no_go_boxes(items)
-    column_boxes = recognized_column_boxes(solver_input)
-    base_box = mutable_box or shell_box or (min_x, min_y, width, height)
+    all_column_boxes = recognized_column_boxes(solver_input)
+    base_box = shell_box if standalone_redraw and shell_box else mutable_box or shell_box or (min_x, min_y, width, height)
     margin = max(min(base_box[2], base_box[3]) * 0.035, 2.0)
     layout_boundary_polygons = []
-    if mutable_points:
+    if mutable_points and not standalone_redraw:
         layout_boundary_polygons.append(mutable_points)
     if shell_points:
         layout_boundary_polygons.append(shell_points)
     initial_layout_box = inset_box(base_box, margin)
     layout, layout_repair = find_shell_aware_layout_box(initial_layout_box, layout_boundary_polygons, protected_boxes)
+    column_boxes = filter_column_boxes_for_layout(all_column_boxes, shell_points, layout)
     program_areas = program_areas_from_standards(solver_input)
     rooms, room_plan_meta = choose_room_plan(layout, program_areas, shell_points, protected_boxes)
     room_boxes = [room_box(item) for item in rooms]
@@ -838,18 +907,36 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
         {
             "id": "crab_archi_design_layout_engine_candidate",
             "data-engine": "layout-svg-engine",
+            "data-redraw-strategy": "standalone_redraw" if standalone_redraw else "source_masked_layer",
             "data-generated-at": now(),
             "clip-path": f"url(#{source_id})",
         },
     )
     wall = max(width, height) * 0.0024
     x, y, w, h = layout
-    if mutable_points:
-        cleanup_mask = add_redesign_cleanup_mask(group, mutable_points, layout, "mutable_zone")
+    if standalone_redraw and shell_points:
+        cleanup_mask = add_redesign_cleanup_mask(group, shell_points, layout, "standalone_shell_canvas")
+    elif mutable_points:
+        cleanup_mask = add_redesign_cleanup_mask(
+            group,
+            mutable_points,
+            layout,
+            "mutable_zone",
+        )
     elif shell_points:
-        cleanup_mask = add_redesign_cleanup_mask(group, shell_points, layout, "community_shell")
+        cleanup_mask = add_redesign_cleanup_mask(
+            group,
+            shell_points,
+            layout,
+            "community_shell",
+        )
     else:
-        cleanup_mask = add_redesign_cleanup_mask(group, [], layout, "layout_box")
+        cleanup_mask = add_redesign_cleanup_mask(
+            group,
+            [],
+            layout,
+            "standalone_layout_canvas" if standalone_redraw else "layout_box",
+        )
     ET.SubElement(
         group,
         qname("rect"),
@@ -943,6 +1030,7 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
     large_roles = {"greenery_lounge", "fitness_gx", "golf_screen"}
     return {
         "viewBox": viewbox,
+        "redraw_strategy": "standalone_redraw" if standalone_redraw else "source_masked_layer",
         "shell_found": shell_box is not None,
         "mutable_zone_used": mutable_box is not None,
         "base_box": {"x": base_box[0], "y": base_box[1], "width": base_box[2], "height": base_box[3]},
@@ -958,6 +1046,7 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
         "shell_area": shell_area,
         "shell_coverage_ratio": shell_coverage_ratio,
         "protected_box_count": len(protected_boxes),
+        "recognized_column_total_count": len(all_column_boxes),
         "recognized_column_count": len(column_boxes),
         "no_go_intrusions": no_go_intrusions,
         "room_shell_violations": shell_violations,
@@ -974,11 +1063,32 @@ def draw_layout(root: ET.Element, solver_input: dict[str, Any]) -> dict[str, Any
     }
 
 
+def make_standalone_svg(source_root: ET.Element) -> ET.Element:
+    viewbox = parse_viewbox(source_root.attrib.get("viewBox"))
+    root = ET.Element(
+        qname("svg"),
+        {
+            "viewBox": viewbox_text(viewbox),
+            "data-crab-archi-design": "standalone-redraw",
+            "data-engine": "layout-svg-engine",
+            "data-redraw-strategy": "standalone_redraw",
+            "data-source-viewbox": viewbox_text(viewbox),
+        },
+    )
+    title = ET.SubElement(root, qname("title"))
+    title.text = "Crab Archi Design standalone redrawn community plan"
+    return root
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-preview", action="store_true")
+    parser.add_argument(
+        "--standalone-redraw",
+        action="store_true",
+        help="Create a clean CAD-style SVG candidate instead of copying source linework and masking it.",
+    )
     args, _ = parser.parse_known_args()
-    _ = args
 
     solver_input_path = Path(os.environ["CRAB_ARCHI_SOLVER_INPUT"])
     run_dir = Path(os.environ["CRAB_ARCHI_RUN_DIR"])
@@ -986,10 +1096,18 @@ def main() -> None:
     source_svg = Path(os.environ.get("CRAB_ARCHI_SOURCE_SVG") or solver_input["manifest"]["source_svg"]).expanduser()
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    tree = ET.parse(source_svg)
-    root = tree.getroot()
-    source_image_count = count_images(root)
-    summary = draw_layout(root, solver_input)
+    source_tree = ET.parse(source_svg)
+    source_root = source_tree.getroot()
+    source_image_count = count_images(source_root)
+    if args.standalone_redraw:
+        root = make_standalone_svg(source_root)
+        tree = ET.ElementTree(root)
+        source_image_count_for_gate = 0
+    else:
+        tree = source_tree
+        root = source_root
+        source_image_count_for_gate = source_image_count
+    summary = draw_layout(root, solver_input, standalone_redraw=args.standalone_redraw)
     output_svg = run_dir / "layout_engine_candidate.svg"
     tree.write(output_svg, encoding="utf-8", xml_declaration=True)
 
@@ -1003,6 +1121,7 @@ def main() -> None:
         "status": "pass",
         "engine": "layout-svg-engine",
         "reference_only": False,
+        "standalone_redraw": args.standalone_redraw,
         "source_svg": str(source_svg),
         "solver_input": str(solver_input_path),
         "output_svg": str(output_svg),
@@ -1010,7 +1129,7 @@ def main() -> None:
         "quality": {
             "gates": {
                 "native_svg_only": output_image_count == 0,
-                "no_raster_overlay_added": output_image_count == source_image_count,
+                "no_raster_overlay_added": output_image_count == source_image_count_for_gate,
                 "layout_layer_added": True,
                 "community_shell_found": summary["shell_found"],
                 "mutable_zone_or_shell_used": summary["mutable_zone_used"] or summary["shell_found"],

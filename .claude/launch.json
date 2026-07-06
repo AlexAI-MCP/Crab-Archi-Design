@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "canvas",
+      "runtimeExecutable": ".venv/bin/crab-archi-design-canvas",
+      "runtimeArgs": ["--port", "8772", "--svg", "examples/original_sample.svg"],
+      "port": 8772
+    }
+  ]
+}

@@ -194,6 +194,10 @@ crab-archi-design doodle-editor
 
 ./studio.sh          # one-command studio launcher (installs .venv on first run)
 
+./canvas.sh 8770 examples/original_sample.svg   # live SVG CAD canvas + agent MCP
+# then: claude mcp add crab-canvas -- .venv/bin/crab-archi-design-canvas-mcp --port 8770
+# see docs/live_canvas.md
+
 crab-archi-design studio \
   --project-root projects \
   --port 8765 \
@@ -281,7 +285,7 @@ The low-level CAD-like primitive edits used by this adapter live in `solver/svg_
 
 Engine adapter execution is allowlisted by default. Built-in aliases for `reference-svg-engine`, `layout-svg-engine`, and `same-layer-svg-engine` may run directly; custom local adapters are refused unless a trusted local CLI user explicitly passes `--allow-custom-engine`. MCP `raw_args` cannot enable that escape hatch, so OAuth/SaaS wrappers stay on the deterministic built-in engine path unless they deliberately write a trusted local job spec outside the MCP raw-argument channel.
 
-`layout-svg-engine` is retained as a diagnostic room-envelope adapter only. It reads the community shell, mutable zone, no-go constraints, recognized column candidates, standards rows, and OpenCrab-backed intent, then creates a native SVG redraw layer with a cleanup mask for the old mutable/internal layout, program rooms, partition walls, door openings, a corridor axis, interior glazing at the lounge/hall connection, labels, preserved shell/column markup, and no raster overlay. This overlay-style candidate is not the target production workflow for high-quality architectural drawings.
+`layout-svg-engine` is the built-in redraw adapter. By default it can create a standards-backed native SVG room-envelope candidate on top of the source drawing; with `--engine-arg=--standalone-redraw` it writes a clean CAD-style SVG candidate without copying source linework, using the source only for viewBox, recognition evidence, shell/no-go constraints, columns, standards rows, and OpenCrab-backed intent. The standalone path is the studio default because it avoids the brittle behavior of trying to patch poorly recognized legacy SVG walls one segment at a time.
 
 `reference-svg-engine` remains available as a diagnostic adapter. It consumes the same solver input and emits a native SVG candidate plus engine report, using only additive SVG elements and no raster overlay.
 
@@ -305,7 +309,7 @@ Engine adapter execution is allowlisted by default. Built-in aliases for `refere
 
 `constraint-attach` writes `projects/<project>/constraints/constraint_manifest.json`. Use it for community shell, parking/core/column/ramp no-go edges, lock boundaries, mutable zones, and projectable zones. `qa` and `apply-edit` require an active constraint manifest before a final SVG alternative can pass.
 
-`./studio.sh [port]` is the one-command way to open the studio: it finds or creates the local `.venv`, installs the package on first run, starts the server, and opens the browser. `studio` serves the localhost design studio at `http://127.0.0.1:<port>/`. The studio is prompt-first: the operator loads the original linework, optionally draws one community-shell polygon, and states the design request in natural language. The shell interior automatically becomes the editable zone (topology and assets inside it are the only mutation targets) and everything outside the shell is auto-protected; with no shell drawn, the whole drawing frame is used. Zone-derivation defaults are reported back in the run result. The server converts annotations into constraint/edit sketch JSON, executes `workflow-run` (first run) or `revision-run` (repeat edits), and writes `projects/<project>/studio/studio_run_###/studio_run_report.json`. The same HTTP API (`/api/load-svg`, `/api/run`, `/api/artifact`, `/api/status`) is agent-drivable, so Codex or Claude Code can operate the identical surface headlessly. The server binds to 127.0.0.1 only.
+`./studio.sh [port]` is the one-command way to open the studio: it finds or creates the local `.venv`, installs the package on first run, starts the server, and opens the browser. `studio` serves the localhost design studio at `http://127.0.0.1:<port>/`. The studio is prompt-first: the operator loads the original linework, optionally draws one community-shell polygon, and states the design request in natural language. The shell interior automatically becomes the redraw target and everything outside the shell is auto-protected; with no shell drawn, the whole drawing frame is used. Zone-derivation defaults are reported back in the run result. The default studio engine is `layout-svg-engine --standalone-redraw`, so the source SVG is used as evidence/constraint input and the candidate is newly drawn as native SVG rather than patched over the original. The server converts annotations into constraint/edit sketch JSON, executes `workflow-run` (first run) or `revision-run` (repeat edits), and writes `projects/<project>/studio/studio_run_###/studio_run_report.json`. The same HTTP API (`/api/load-svg`, `/api/run`, `/api/artifact`, `/api/status`) is agent-drivable, so Codex or Claude Code can operate the identical surface headlessly. The server binds to 127.0.0.1 only.
 
 `doodle-editor` prints the local SVG doodle editor path and `file://` URL. The editor loads a source SVG from your machine, records vector strokes in source viewBox coordinates, and downloads sketch JSON for `sketch-intent`.
 

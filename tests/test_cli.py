@@ -2239,6 +2239,30 @@ def test_apply_edit_runs_builtin_layout_engine(tmp_path: Path) -> None:
     assert engine_report["summary"]["plan_detail"]["door_opening_count"] >= 4
     assert engine_report["summary"]["plan_detail"]["corridor_axis_count"] >= 1
 
+    redraw = run_cli(
+        "--project-root",
+        str(tmp_path / "projects"),
+        "apply-edit",
+        "--project-id",
+        "demo",
+        "--engine-arg=--standalone-redraw",
+        "--skip-preview",
+        cwd=ROOT,
+    )
+    assert redraw.returncode == 0, redraw.stderr
+    redraw_report = json.loads(Path(redraw.stdout.splitlines()[0]).read_text(encoding="utf-8"))
+    assert redraw_report["status"] == "pass"
+    redraw_alternative = Path(redraw_report["copied_artifacts"]["svg"][0])
+    redraw_text = redraw_alternative.read_text(encoding="utf-8")
+    assert 'data-redraw-strategy="standalone_redraw"' in redraw_text
+    assert "작은도서관" not in redraw_text
+    assert "주민카페" not in redraw_text
+    assert 'data-program="greenery_lounge"' in redraw_text
+    redraw_engine_report = json.loads(Path(redraw_report["copied_artifacts"]["report"][0]).read_text(encoding="utf-8"))
+    assert redraw_engine_report["standalone_redraw"] is True
+    assert redraw_engine_report["summary"]["redraw_strategy"] == "standalone_redraw"
+    assert redraw_engine_report["summary"]["redesign_cleanup_mask"]["mask_source"] == "standalone_shell_canvas"
+
 
 def test_apply_edit_marks_review_required_when_columns_are_unrecognized(tmp_path: Path) -> None:
     source_svg = tmp_path / "no_columns.svg"

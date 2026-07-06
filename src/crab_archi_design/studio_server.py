@@ -6,7 +6,9 @@ lock), space adjustments (mutable/projectable zones, program expansion),
 wall adjustments (openings, partition removals), and the natural-language
 request. The server converts those annotations into the framework's constraint
 and edit sketch JSON, then executes the tested CLI workflow
-(`workflow-run` / `revision-run`) with the same-layer production engine.
+(`workflow-run` / `revision-run`). The default studio engine is the standalone
+layout redraw path, so the source SVG is used as recognition/constraint evidence
+rather than copied as the candidate's editable linework.
 
 The server binds to 127.0.0.1 only and is dependency-free (stdlib http.server).
 Artifact reads are restricted to the configured project root plus the source
@@ -252,10 +254,15 @@ def run_pipeline(state: StudioState, payload: dict[str, Any]) -> dict[str, Any]:
         edit_path = run_dir / "edit_sketch.json"
         write_sketch(edit_path, edits, viewbox)
 
-    engine = str(payload.get("engine_adapter") or "same-layer-svg-engine")
+    engine = str(payload.get("engine_adapter") or "layout-svg-engine")
     engine_args = payload.get("engine_args")
     if not isinstance(engine_args, list):
-        engine_args = ["--apply-program-relabels", "--apply-openings", "--apply-endpoint-moves"]
+        if engine == "same-layer-svg-engine":
+            engine_args = ["--apply-program-relabels", "--apply-openings", "--apply-endpoint-moves"]
+        elif engine == "layout-svg-engine":
+            engine_args = ["--standalone-redraw"]
+        else:
+            engine_args = []
 
     use_revision = manifest_exists and not payload.get("reinit")
     cmd = [*cli_command(), "--project-root", str(root)]
