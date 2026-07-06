@@ -64,45 +64,156 @@ def points_attr(points: list[list[float]]) -> str:
     return " ".join(f"{fmt(p[0])},{fmt(p[1])}" for p in points)
 
 
-def element_bbox(element: ET.Element) -> list[float] | None:
-    """Approximate bbox from geometry attributes (transforms ignored)."""
+IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+_TRANSFORM_RE = re.compile(r"(\w+)\s*\(([^)]*)\)")
+
+
+def compose(outer: tuple[float, ...], inner: tuple[float, ...]) -> tuple[float, ...]:
+    """Combined matrix C such that C(p) == outer(inner(p))."""
+    pa, pb, pc, pd, pe, pf = outer
+    ma, mb, mc, md, me, mf = inner
+    return (
+        pa * ma + pc * mb, pb * ma + pd * mb,
+        pa * mc + pc * md, pb * mc + pd * md,
+        pa * me + pc * mf + pe, pb * me + pd * mf + pf,
+    )
+
+
+def apply_matrix(m: tuple[float, ...], x: float, y: float) -> tuple[float, float]:
+    a, b, c, d, e, f = m
+    return (a * x + c * y + e, b * x + d * y + f)
+
+
+def parse_transform(raw: str | None) -> tuple[float, ...]:
+    """Parse an SVG transform attribute into a single (a,b,c,d,e,f) matrix."""
+    if not raw:
+        return IDENTITY
+    combined = IDENTITY
+    for name, args in _TRANSFORM_RE.findall(raw):
+        try:
+            nums = [float(v) for v in re.split(r"[,\s]+", args.strip()) if v]
+        except ValueError:
+            continue
+        if name == "translate" and nums:
+            tx = nums[0]
+            ty = nums[1] if len(nums) > 1 else 0.0
+            step = (1.0, 0.0, 0.0, 1.0, tx, ty)
+        elif name == "scale" and nums:
+            sx = nums[0]
+            sy = nums[1] if len(nums) > 1 else sx
+            step = (sx, 0.0, 0.0, sy, 0.0, 0.0)
+        elif name == "rotate" and nums:
+            import math
+            theta = math.radians(nums[0])
+            cos_t, sin_t = math.cos(theta), math.sin(theta)
+            if len(nums) >= 3:
+                cx, cy = nums[1], nums[2]
+                step = compose((1.0, 0.0, 0.0, 1.0, cx, cy),
+                               compose((cos_t, sin_t, -sin_t, cos_t, 0.0, 0.0),
+                                       (1.0, 0.0, 0.0, 1.0, -cx, -cy)))
+            else:
+                step = (cos_t, sin_t, -sin_t, cos_t, 0.0, 0.0)
+        elif name == "matrix" and len(nums) == 6:
+            step = tuple(nums)
+        elif name == "skewX" and nums:
+            import math
+            step = (1.0, 0.0, math.tan(math.radians(nums[0])), 1.0, 0.0, 0.0)
+        elif name == "skewY" and nums:
+            import math
+            step = (1.0, math.tan(math.radians(nums[0])), 0.0, 1.0, 0.0, 0.0)
+        else:
+            continue
+        combined = compose(combined, step)
+    return combined
+
+
+_PATH_CMD_RE = re.compile(r"([MmLlHhVvCcSsQqTtAaZz])([^MmLlHhVvCcSsQqTtAaZz]*)")
+# coordinate values consumed per repetition, and which indices are (x, y) pairs
+_PATH_ARITY = {
+    "M": 2, "L": 2, "T": 2, "C": 6, "S": 4, "Q": 4, "H": 1, "V": 1, "A": 7, "Z": 0,
+}
+
+
+def path_points(d: str) -> list[tuple[float, float]] | None:
+    """On-curve points of a path (control points included for C/S/Q as bbox hull).
+
+    Arc (A) segments contribute only their endpoints — flags and radii are
+    consumed but never misread as coordinates.
+    """
+    points: list[tuple[float, float]] = []
+    cx = cy = 0.0
+    start_x = start_y = 0.0
+    for cmd, args in _PATH_CMD_RE.findall(d or ""):
+        upper = cmd.upper()
+        relative = cmd.islower()
+        try:
+            nums = [float(v) for v in _NUM_RE.findall(args)]
+        except ValueError:
+            continue
+        arity = _PATH_ARITY[upper]
+        if upper == "Z":
+            cx, cy = start_x, start_y
+            continue
+        if arity == 0 or len(nums) < arity:
+            continue
+        for i in range(0, len(nums) - arity + 1, arity):
+            chunk = nums[i:i + arity]
+            if upper == "H":
+                cx = cx + chunk[0] if relative else chunk[0]
+            elif upper == "V":
+                cy = cy + chunk[0] if relative else chunk[0]
+            elif upper == "A":
+                ex, ey = chunk[5], chunk[6]
+                cx, cy = (cx + ex, cy + ey) if relative else (ex, ey)
+            else:
+                base_x, base_y = (cx, cy) if relative else (0.0, 0.0)
+                pairs = [(chunk[j] + base_x, chunk[j + 1] + base_y) for j in range(0, arity, 2)]
+                points.extend(pairs)
+                cx, cy = pairs[-1]
+                if upper == "M":
+                    start_x, start_y = cx, cy
+                continue
+            points.append((cx, cy))
+    return points or None
+
+
+def _attr_num(element: ET.Element, name: str, default: float = 0.0) -> float:
+    """Numeric attribute value, tolerating unit suffixes like '0.5px' or '2mm'."""
+    raw = element.get(name)
+    if raw is None:
+        return default
+    match = _NUM_RE.search(raw)
+    if match is None:
+        raise ValueError(f"non-numeric {name}={raw!r}")
+    return float(match.group(0))
+
+
+def local_points(element: ET.Element) -> list[tuple[float, float]] | None:
+    """Own-local-space defining points of a leaf element's geometry (pre-transform)."""
     tag = local_name(element)
     try:
         if tag == "line":
-            xs = [float(element.get("x1", 0)), float(element.get("x2", 0))]
-            ys = [float(element.get("y1", 0)), float(element.get("y2", 0))]
-        elif tag in {"polyline", "polygon"}:
+            return [(_attr_num(element, "x1"), _attr_num(element, "y1")),
+                    (_attr_num(element, "x2"), _attr_num(element, "y2"))]
+        if tag in {"polyline", "polygon"}:
             nums = [float(v) for v in _NUM_RE.findall(element.get("points", ""))]
-            xs, ys = nums[0::2], nums[1::2]
-        elif tag == "rect":
-            x, y = float(element.get("x", 0)), float(element.get("y", 0))
-            xs = [x, x + float(element.get("width", 0))]
-            ys = [y, y + float(element.get("height", 0))]
-        elif tag == "circle":
-            cx, cy, r = (float(element.get(k, 0)) for k in ("cx", "cy", "r"))
-            xs, ys = [cx - r, cx + r], [cy - r, cy + r]
-        elif tag == "ellipse":
-            cx, cy = float(element.get("cx", 0)), float(element.get("cy", 0))
-            rx, ry = float(element.get("rx", 0)), float(element.get("ry", 0))
-            xs, ys = [cx - rx, cx + rx], [cy - ry, cy + ry]
-        elif tag == "path":
-            nums = [float(v) for v in _NUM_RE.findall(element.get("d", ""))]
-            xs, ys = nums[0::2], nums[1::2]
-        elif tag == "text":
-            x, y = float(element.get("x", 0)), float(element.get("y", 0))
-            xs, ys = [x], [y]
-        elif tag in {"g", "use", "image"}:
-            boxes = [element_bbox(child) for child in element]
-            boxes = [b for b in boxes if b]
-            if not boxes:
-                return None
-            return [min(b[0] for b in boxes), min(b[1] for b in boxes),
-                    max(b[2] for b in boxes), max(b[3] for b in boxes)]
-        else:
-            return None
-        if not xs or not ys:
-            return None
-        return [round(min(xs), 2), round(min(ys), 2), round(max(xs), 2), round(max(ys), 2)]
+            return list(zip(nums[0::2], nums[1::2])) or None
+        if tag == "rect":
+            x, y = _attr_num(element, "x"), _attr_num(element, "y")
+            w, h = _attr_num(element, "width"), _attr_num(element, "height")
+            return [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]
+        if tag == "circle":
+            cx, cy, r = (_attr_num(element, k) for k in ("cx", "cy", "r"))
+            return [(cx - r, cy - r), (cx + r, cy - r), (cx - r, cy + r), (cx + r, cy + r)]
+        if tag == "ellipse":
+            cx, cy = _attr_num(element, "cx"), _attr_num(element, "cy")
+            rx, ry = _attr_num(element, "rx"), _attr_num(element, "ry")
+            return [(cx - rx, cy - ry), (cx + rx, cy - ry), (cx - rx, cy + ry), (cx + rx, cy + ry)]
+        if tag == "path":
+            return path_points(element.get("d", ""))
+        if tag == "text":
+            return [(_attr_num(element, "x"), _attr_num(element, "y"))]
+        return None
     except (ValueError, TypeError):
         return None
 
@@ -119,6 +230,10 @@ class CanvasDocument:
         self.revision = 0
         self._undo: list[str] = []
         self._cid_seq = 0
+        self._parent_map: dict[int, ET.Element] | None = None
+        self._parent_map_rev = -1
+        self._bbox_cache: dict[int, list[float] | None] = {}
+        self._bbox_cache_rev = -1
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -209,12 +324,52 @@ class CanvasDocument:
                 return element
         raise CanvasError(f"element not found: {cid}")
 
+    def _ensure_parent_map(self) -> dict[int, ET.Element]:
+        if self._parent_map is None or self._parent_map_rev != self.revision:
+            root = self.require_root()
+            parent_map: dict[int, ET.Element] = {}
+            for element in root.iter():
+                for child in element:
+                    parent_map[id(child)] = element
+            self._parent_map = parent_map
+            self._parent_map_rev = self.revision
+        return self._parent_map
+
     def parent_of(self, target: ET.Element) -> ET.Element | None:
-        for element in self.require_root().iter():
-            for child in element:
-                if child is target:
-                    return element
-        return None
+        return self._ensure_parent_map().get(id(target))
+
+    def _accumulated_transform(self, element: ET.Element) -> tuple[float, ...]:
+        root = self.require_root()
+        parent_map = self._ensure_parent_map()
+        combined = IDENTITY
+        node: ET.Element | None = element
+        while node is not None and node is not root:
+            combined = compose(parse_transform(node.get("transform")), combined)
+            node = parent_map.get(id(node))
+        return combined
+
+    def world_bbox(self, element: ET.Element) -> list[float] | None:
+        """Bounding box in the root SVG's coordinate space, honoring ancestor transforms."""
+        if self._bbox_cache_rev != self.revision:
+            self._bbox_cache = {}
+            self._bbox_cache_rev = self.revision
+        key = id(element)
+        if key in self._bbox_cache:
+            return self._bbox_cache[key]
+        points = local_points(element)
+        if points is not None:
+            matrix = self._accumulated_transform(element)
+            world = [apply_matrix(matrix, x, y) for x, y in points]
+            xs = [p[0] for p in world]
+            ys = [p[1] for p in world]
+            result = [round(min(xs), 2), round(min(ys), 2), round(max(xs), 2), round(max(ys), 2)]
+        else:
+            boxes = [self.world_bbox(child) for child in element if local_name(child) in GRAPHIC_TAGS]
+            boxes = [b for b in boxes if b]
+            result = ([min(b[0] for b in boxes), min(b[1] for b in boxes),
+                      max(b[2] for b in boxes), max(b[3] for b in boxes)] if boxes else None)
+        self._bbox_cache[key] = result
+        return result
 
     def describe(self, element: ET.Element) -> dict[str, Any]:
         text = "".join(element.itertext()).strip()
@@ -222,7 +377,7 @@ class CanvasDocument:
             "cid": element.get("data-cid"),
             "tag": local_name(element),
             "id": element.get("id"),
-            "bbox": element_bbox(element),
+            "bbox": self.world_bbox(element),
             "style": {k: element.get(k) for k in STYLE_ATTRS if element.get(k)},
         }
         if text:
@@ -381,15 +536,28 @@ class CanvasDocument:
     # ---- ops: editing ----------------------------------------------------
 
     def op_delete_elements(self, cids: list[str]) -> dict[str, Any]:
-        deleted = []
+        index: dict[str, ET.Element] = {}
+        for element in self.require_root().iter():
+            cid = element.get("data-cid")
+            if cid:
+                index[cid] = element
+        targets: list[tuple[str, ET.Element, ET.Element]] = []
+        skipped: list[str] = []
         for cid in cids:
-            element = self.find(cid)
-            parent = self.parent_of(element)
-            if parent is None:
-                raise CanvasError(f"cannot delete root-level element: {cid}")
+            element = index.get(cid)
+            parent = self.parent_of(element) if element is not None else None
+            if element is None or parent is None:
+                skipped.append(cid)
+            else:
+                targets.append((cid, element, parent))
+        if not targets:
+            raise CanvasError(f"no deletable elements among {len(cids)} cid(s)")
+        for cid, element, parent in targets:
             parent.remove(element)
-            deleted.append(cid)
-        return {"deleted": deleted}
+        result: dict[str, Any] = {"deleted": [cid for cid, _, _ in targets]}
+        if skipped:
+            result["skipped"] = skipped
+        return result
 
     def op_move_element(self, cid: str, dx: float, dy: float) -> dict[str, Any]:
         element = self.find(cid)

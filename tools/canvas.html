@@ -18,7 +18,9 @@
   #viewport { flex:1; position:relative; overflow:hidden; background:#fff; }
   #stage svg, #overlay { position:absolute; inset:0; width:100%; height:100%; }
   #overlay { pointer-events:none; }
-  aside { width:280px; background:var(--panel); border-left:1px solid var(--line); padding:10px; overflow-y:auto; font-size:13px; }
+  aside { width:240px; flex:none; background:var(--panel); border-left:1px solid var(--line); padding:10px; overflow-y:auto; font-size:13px; }
+  #viewport { min-width:200px; }
+  @media (max-width: 700px) { aside { display:none; } }
   aside h3 { margin:6px 0; font-size:12px; text-transform:uppercase; color:var(--dim); }
   #log { white-space:pre-wrap; color:var(--dim); font-size:12px; }
   footer { padding:4px 12px; background:var(--panel); border-top:1px solid var(--line); color:var(--dim); font-size:12px; display:flex; justify-content:space-between; }
@@ -33,9 +35,11 @@
     <button id="btnOpen">열기</button>
     <button id="btnSave">저장</button>
     <button id="btnUndo">↩ 실행취소</button>
+    <button id="btnFit">전체보기</button>
   </div>
   <div class="toolbar-group" id="tools">
     <button data-tool="select" class="active">선택</button>
+    <button data-tool="pan">팬</button>
     <button data-tool="line">직선</button>
     <button data-tool="polyline">폴리라인</button>
     <button data-tool="curve">곡선</button>
@@ -70,7 +74,7 @@
     <h3>로그</h3><div id="log"></div>
   </aside>
 </main>
-<footer><span id="status">서버 연결 중…</span><span id="hint">MCP: crab-archi-design-canvas-mcp · 더블클릭/Enter로 다점 도형 완료 · Esc 취소</span></footer>
+<footer><span id="status">서버 연결 중…</span><span id="hint">휠 줌 · Space/Alt+드래그 팬 · 더블클릭/Enter 다점 완료 · Esc 취소</span></footer>
 <script>
 const S = { rev:-1, tool:'select', pts:[], selected:[], styleSource:null, copySource:null, drawing:false };
 const $ = id => document.getElementById(id);
@@ -90,16 +94,61 @@ async function poll(force) {
       S.rev = doc.revision;
       $('stage').innerHTML = doc.svg;
       const svg = $('stage').querySelector('svg');
-      if (svg) { svg.removeAttribute('width'); svg.removeAttribute('height');
-        $('overlay').setAttribute('viewBox', svg.getAttribute('viewBox') || '0 0 1000 1000');
-        $('overlay').setAttribute('preserveAspectRatio', svg.getAttribute('preserveAspectRatio') || 'xMidYMid meet'); }
+      if (svg) {
+        svg.removeAttribute('width'); svg.removeAttribute('height');
+        if (!S.docBox) S.docBox = (svg.getAttribute('viewBox') || '0 0 1000 1000').split(/[\s,]+/).map(Number);
+        if (doc.source_path !== S.sourcePath) { S.sourcePath = doc.source_path; S.view = null;
+          S.docBox = (svg.getAttribute('viewBox') || '0 0 1000 1000').split(/[\s,]+/).map(Number); }
+        applyView();
+      }
       $('status').textContent = `rev ${doc.revision} · 요소 ${doc.element_count} · ${doc.source_path||'(파일 미지정)'}`;
       refreshZones(); restoreSelection();
     } else if (doc.status === 'empty') { $('status').textContent = 'SVG를 열어주세요'; }
   } catch (e) { $('status').textContent = '서버 연결 끊김'; }
 }
-setInterval(() => { if (!S.drawing) poll(); }, 1500);
+setInterval(() => { if (!S.drawing && !S.panning) poll(); }, 1500);
 poll();
+
+// ---- zoom / pan (viewBox is user-owned; polling never resets it) ----
+function applyView() {
+  const svg = $('stage').querySelector('svg'); if (!svg) return;
+  const v = S.view || S.docBox; if (!v) return;
+  const box = v.join(' ');
+  svg.setAttribute('viewBox', box);
+  $('overlay').setAttribute('viewBox', box);
+  $('overlay').setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+}
+function zoomAt(cx, cy, factor) {
+  const v = (S.view || S.docBox); if (!v) return;
+  const [x, y, w, h] = v;
+  const nw = Math.max(10, w * factor), nh = Math.max(10, h * factor);
+  S.view = [cx - (cx - x) * (nw / w), cy - (cy - y) * (nh / h), nw, nh];
+  applyView();
+}
+$('viewport').addEventListener('wheel', evt => {
+  evt.preventDefault();
+  const p = svgPoint(evt); if (!p) return;
+  zoomAt(p[0], p[1], evt.deltaY > 0 ? 1.15 : 1/1.15);
+}, { passive: false });
+$('viewport').addEventListener('pointerdown', evt => {
+  const midOrSpace = evt.button === 1 || (evt.button === 0 && (S.tool === 'pan' || evt.altKey || S.spaceDown));
+  if (!midOrSpace) return;
+  evt.preventDefault();
+  const start = svgPoint(evt), v0 = (S.view || S.docBox).slice();
+  S.panning = true;
+  const move = e2 => {
+    const svg = $('stage').querySelector('svg'); if (!svg) return;
+    const pt = svg.createSVGPoint(); pt.x = e2.clientX; pt.y = e2.clientY;
+    const p2 = pt.matrixTransform(svg.getScreenCTM().inverse());
+    S.view = [v0[0] - (p2.x - start[0]), v0[1] - (p2.y - start[1]), v0[2], v0[3]];
+    applyView();
+  };
+  const up = () => { S.panning = false; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+});
+document.addEventListener('keydown', e => { if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT') { S.spaceDown = true; e.preventDefault(); } });
+document.addEventListener('keyup', e => { if (e.code === 'Space') S.spaceDown = false; });
 
 async function refreshZones() {
   const z = await api('/api/zones');
@@ -199,6 +248,7 @@ $('btnOpen').onclick = async () => {
 };
 $('btnSave').onclick = async () => { const r = await api('/api/save', {}); log(r.status==='ok' ? '저장됨: '+r.saved : '오류: '+r.error); };
 $('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r.status==='error') log('오류: '+r.error); poll(true); };
+$('btnFit').onclick = () => { S.view = null; applyView(); };
 $('btnDelete').onclick = () => { if (S.selected.length) { op('delete_elements', { cids:S.selected.slice() }); S.selected = []; } };
 $('btnRegen').onclick = async () => {
   const prompt = $('prompt').value.trim(); if (!prompt) { log('재생성: 프롬프트를 입력하세요'); return; }
