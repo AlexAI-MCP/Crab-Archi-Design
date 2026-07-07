@@ -13,12 +13,16 @@ description: Crab-Archi-Design 라이브 SVG 캔버스로 건축 도면을 분�
 1. **상태 확인** — `canvas_status`. 사용자가 이미 띄운 도면이 있으면 그걸 쓴다. `open_svg`는 새 파일일 때만.
 2. **스케일 보정** — `set_scale`. 우선순위: 타이틀블록 축척 표기 → 주차구획(폭 2.5m=known_mm 2500) →
    기둥 스팬. 보정 없이 면적을 논하지 말 것. 상태의 `mm_per_unit`으로 보정 여부 확인.
-3. **인식** — `list_elements(tag="text")`로 실 라벨 파악 → `recognize_rooms`로 방별 면적(m²/평).
-   사용자가 브라우저에서 그린 스케치는 `list_elements(drawn=true)`가 유일한 진입점.
+3. **인식** — `list_elements(tag="text")`로 실 라벨 파악 → `recognize_rooms`로 방별 면적(m²/평)과
+   실치수(`size_m`). 개별 요소의 길이(m)·둘레·면적·벽두께(mm)·방향각은 `measure(cids)` — 스케일 보정
+   후에만 미터 값이 나온다. 사용자가 브라우저에서 그린 스케치는 `list_elements(drawn=true)`가 유일한 진입점.
 4. **불가침 선언** — 편집 전에 램프·기둥·코어·주차 구역을 `set_zone(no_go_zone/lock_boundary)`으로
    등록한다. 이후 모든 draw/move/stretch가 자동 차단된다 (의도적 예외만 force=true).
 5. **편집** — 대량·위험 편집은 반드시 `draft(begin)` → 편집 → `render_view`로 확인 → `commit`
    (문제 시 `rollback`). 벽 연장/방 확장은 삭제 후 재작도가 아니라 `stretch_elements` 사용.
+   정확 치수 지시는 전용 도구로: "이 벽 3.5m로" → `set_length(cid, m=3.5, anchor)`,
+   "200mm 내력벽으로" → `set_thickness(cids, mm=200)`, "이 존 30평으로" → `set_area(cid, pyeong=30)`.
+   적용 후 `measure`로 결과 수치를 되읽어 확인한다.
 6. **시각 검증** — 편집 후 `render_view(bbox=작업영역)`으로 눈으로 확인. 스크린샷 없이 완료 선언 금지.
 7. **저장** — `save_svg(path=원본과 다른 경로)`. 원본은 절대 덮어쓰지 않는다.
 

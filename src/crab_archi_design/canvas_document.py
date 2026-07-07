@@ -224,6 +224,12 @@ def path_points(d: str) -> list[tuple[float, float]] | None:
     return points or None
 
 
+def _matrix_scale_factor(m: tuple[float, ...]) -> float:
+    """Average length scale of an affine matrix (√|det| — exact for uniform scale)."""
+    import math
+    return math.sqrt(abs(m[0] * m[3] - m[1] * m[2])) or 1.0
+
+
 def invert_matrix(m: tuple[float, ...]) -> tuple[float, ...] | None:
     a, b, c, d, e, f = m
     det = a * d - b * c
@@ -503,12 +509,16 @@ class CanvasDocument:
 
     def describe(self, element: ET.Element) -> dict[str, Any]:
         text = "".join(element.itertext()).strip()
+        style = {k: element.get(k) for k in STYLE_ATTRS if element.get(k)}
+        for key, value in parse_style_attr(element.get("style")).items():
+            if key in STYLE_ATTRS:  # inline CSS wins at render time — report effective values
+                style[key] = value
         info: dict[str, Any] = {
             "cid": element.get("data-cid"),
             "tag": local_name(element),
             "id": element.get("id"),
             "bbox": self.world_bbox(element),
-            "style": {k: element.get(k) for k in STYLE_ATTRS if element.get(k)},
+            "style": style,
         }
         if text:
             info["text"] = text[:120]
@@ -1011,64 +1021,226 @@ class CanvasDocument:
             result["unsupported"] = skipped[:50]
         return result
 
+    # ---- real-world dimension control --------------------------------------
+
+    def _units_value(self, units: float | None = None, mm: float | None = None,
+                     m: float | None = None, what: str = "value") -> float:
+        """Convert a real-world dimension to drawing units via the document scale."""
+        if units is not None:
+            return float(units)
+        scale = self.mm_per_unit()
+        if scale is None:
+            raise CanvasError(f"real-world {what} needs a scale — call set_scale first")
+        if mm is not None:
+            return float(mm) / scale
+        if m is not None:
+            return float(m) * 1000.0 / scale
+        raise CanvasError(f"pass {what} as units, mm or m")
+
+    def op_set_thickness(self, cids: list[str], mm: float | None = None,
+                         units: float | None = None) -> dict[str, Any]:
+        """Set stroke thickness to an exact world size (mm uses the document scale);
+        the local stroke-width is compensated for each element's transform."""
+        world_units = self._units_value(units=units, mm=mm, what="thickness")
+        if world_units <= 0:
+            raise CanvasError("thickness must be positive")
+        for cid in cids:
+            element = self.find(cid)
+            factor = _matrix_scale_factor(self._accumulated_transform(element))
+            self._apply_style(element, {"stroke-width": fmt(world_units / factor)})
+        scale = self.mm_per_unit()
+        result: dict[str, Any] = {"stroke_width_units": round(world_units, 3), "targets": cids}
+        if scale:
+            result["stroke_width_mm"] = round(world_units * scale, 1)
+        return result
+
+    def op_set_length(self, cid: str, units: float | None = None, mm: float | None = None,
+                      m: float | None = None, anchor: str = "start") -> dict[str, Any]:
+        """Give a line an exact world-space length. anchor: start|end|center —
+        the anchored part stays fixed while the rest moves along the line."""
+        import math
+        if anchor not in {"start", "end", "center"}:
+            raise CanvasError("anchor must be start, end or center")
+        element = self.find(cid)
+        if local_name(element) != "line":
+            raise CanvasError("set_length works on <line> elements (분해되지 않은 단일 벽/선)")
+        target_world = self._units_value(units=units, mm=mm, m=m, what="length")
+        if target_world <= 0:
+            raise CanvasError("length must be positive")
+        p1 = (_attr_num(element, "x1"), _attr_num(element, "y1"))
+        p2 = (_attr_num(element, "x2"), _attr_num(element, "y2"))
+        matrix = self._accumulated_transform(element)
+        current_world = math.dist(apply_matrix(matrix, *p1), apply_matrix(matrix, *p2))
+        if current_world < 1e-9:
+            raise CanvasError("line has zero length — direction is undefined")
+        ratio = target_world / current_world
+        vx, vy = p2[0] - p1[0], p2[1] - p1[1]
+        if anchor == "start":
+            n1, n2 = p1, (p1[0] + vx * ratio, p1[1] + vy * ratio)
+        elif anchor == "end":
+            n1, n2 = (p2[0] - vx * ratio, p2[1] - vy * ratio), p2
+        else:
+            mx, my = (p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0
+            n1 = (mx - vx * ratio / 2.0, my - vy * ratio / 2.0)
+            n2 = (mx + vx * ratio / 2.0, my + vy * ratio / 2.0)
+        world_pts = [apply_matrix(matrix, *n1), apply_matrix(matrix, *n2)]
+        xs, ys = [p[0] for p in world_pts], [p[1] for p in world_pts]
+        self._check_no_go([min(xs), min(ys), max(xs), max(ys)], "set_length")
+        for (ax, ay), (px, py) in (( ("x1", "y1"), n1), (("x2", "y2"), n2)):
+            element.set(ax, fmt(px))
+            element.set(ay, fmt(py))
+        scale = self.mm_per_unit()
+        result = {"cid": cid, "length_units": round(target_world, 3),
+                  "previous_units": round(current_world, 3), "anchor": anchor}
+        if scale:
+            result["length_m"] = round(target_world * scale / 1000.0, 3)
+        return result
+
+    def op_set_area(self, cid: str, m2: float | None = None, pyeong: float | None = None,
+                    units2: float | None = None) -> dict[str, Any]:
+        """Uniformly scale a closed shape about its center to an exact world area
+        (m²/평 use the document scale). Works on rect/circle/ellipse/polygon/closed path."""
+        import math
+        if pyeong is not None and m2 is None:
+            m2 = float(pyeong) * PYEONG_M2
+        if units2 is not None:
+            target_area = float(units2)
+        else:
+            if m2 is None:
+                raise CanvasError("pass area as m2, pyeong or units2")
+            scale = self.mm_per_unit()
+            if scale is None:
+                raise CanvasError("real-world area needs a scale — call set_scale first")
+            target_area = float(m2) * (1000.0 / scale) ** 2
+        if target_area <= 0:
+            raise CanvasError("area must be positive")
+        element = self.find(cid)
+        tag = local_name(element)
+        _, current_area, closed = self._world_geometry(element)
+        if not closed or current_area < 1e-9:
+            raise CanvasError(f"element {cid} is not a closed shape with area")
+        s = math.sqrt(target_area / current_area)
+        pts = local_points(element)
+        if not pts:
+            raise CanvasError(f"element {cid} has no editable geometry")
+        acx = (min(p[0] for p in pts) + max(p[0] for p in pts)) / 2.0
+        acy = (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2.0
+        scale_pt = lambda px, py: (acx + (px - acx) * s, acy + (py - acy) * s)  # noqa: E731
+        matrix = self._accumulated_transform(element)
+        world = [apply_matrix(matrix, *scale_pt(px, py)) for px, py in pts]
+        xs, ys = [p[0] for p in world], [p[1] for p in world]
+        self._check_no_go([min(xs), min(ys), max(xs), max(ys)], "set_area")
+        if tag == "rect":
+            w, h = _attr_num(element, "width"), _attr_num(element, "height")
+            element.set("width", fmt(w * s))
+            element.set("height", fmt(h * s))
+            element.set("x", fmt(acx - w * s / 2.0))
+            element.set("y", fmt(acy - h * s / 2.0))
+        elif tag == "circle":
+            element.set("r", fmt(_attr_num(element, "r") * s))
+        elif tag == "ellipse":
+            element.set("rx", fmt(_attr_num(element, "rx") * s))
+            element.set("ry", fmt(_attr_num(element, "ry") * s))
+        elif tag in {"polygon", "polyline"}:
+            element.set("points", points_attr([list(scale_pt(px, py)) for px, py in pts]))
+        elif tag == "path":
+            new_d, _ = transform_path(element.get("d", ""), scale_pt)
+            element.set("d", new_d)
+        else:
+            raise CanvasError(f"set_area does not support <{tag}>")
+        return {"cid": cid, "scale_factor": round(s, 4),
+                **self.area_info(target_area), "previous": self.area_info(current_area)}
+
     # ---- measurement -------------------------------------------------------
 
+    def _element_polylines(self, element: ET.Element) -> list[tuple[list[tuple[float, float]], bool]]:
+        """Element geometry flattened to local-space polylines [(points, closed)]."""
+        import math
+        tag = local_name(element)
+        try:
+            if tag == "line":
+                return [([(_attr_num(element, "x1"), _attr_num(element, "y1")),
+                          (_attr_num(element, "x2"), _attr_num(element, "y2"))], False)]
+            if tag in {"polyline", "polygon"}:
+                pts = local_points(element) or []
+                return [(list(pts), tag == "polygon")] if len(pts) >= 2 else []
+            if tag == "rect":
+                pts = local_points(element)
+                if pts:
+                    (p00, p10, p01, p11) = pts
+                    return [([p00, p10, p11, p01], True)]
+            elif tag in {"circle", "ellipse"}:
+                ecx, ecy = _attr_num(element, "cx"), _attr_num(element, "cy")
+                rx = _attr_num(element, "r") if tag == "circle" else _attr_num(element, "rx")
+                ry = rx if tag == "circle" else _attr_num(element, "ry")
+                return [([(ecx + rx * math.cos(2 * math.pi * k / 64),
+                           ecy + ry * math.sin(2 * math.pi * k / 64)) for k in range(64)], True)]
+            elif tag == "path":
+                return [(sub, len(sub) > 2 and sub[0] == sub[-1])
+                        for sub in flatten_path(element.get("d", ""))]
+        except ValueError:
+            pass
+        return []
+
+    def _world_geometry(self, element: ET.Element) -> tuple[float, float, bool]:
+        """(length, area, any_closed) of an element in world units."""
+        import math
+        matrix = self._accumulated_transform(element)
+        length = area = 0.0
+        any_closed = False
+        for pts, closed in self._element_polylines(element):
+            world = [apply_matrix(matrix, x, y) for x, y in pts]
+            ring = world + [world[0]] if closed and world[0] != world[-1] else world
+            length += sum(math.dist(ring[i], ring[i + 1]) for i in range(len(ring) - 1))
+            if closed:
+                any_closed = True
+                area += abs(sum(ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1]
+                                for i in range(len(ring) - 1))) / 2.0
+        return length, area, any_closed
+
+    def stroke_width_units(self, element: ET.Element, world: bool = True) -> float | None:
+        """Effective stroke width (inline CSS wins), optionally transform-scaled."""
+        raw = parse_style_attr(element.get("style")).get("stroke-width") or element.get("stroke-width")
+        if raw is None:
+            return None
+        match = _NUM_RE.search(raw)
+        if match is None:
+            return None
+        width = float(match.group(0))
+        if world:
+            width *= _matrix_scale_factor(self._accumulated_transform(element))
+        return width
+
     def measure(self, cids: list[str]) -> list[dict[str, Any]]:
-        """World-space length/area of elements (curves flattened, transforms honored)."""
+        """World-space length/area/thickness of elements (curves flattened, transforms honored)."""
         import math
         mm = self.mm_per_unit()
         results: list[dict[str, Any]] = []
         for cid in cids:
             element = self.find(cid)
             tag = local_name(element)
-            matrix = self._accumulated_transform(element)
-            polylines: list[tuple[list[tuple[float, float]], bool]] = []  # (points, closed)
-            try:
-                if tag == "line":
-                    polylines = [([(_attr_num(element, "x1"), _attr_num(element, "y1")),
-                                   (_attr_num(element, "x2"), _attr_num(element, "y2"))], False)]
-                elif tag in {"polyline", "polygon"}:
-                    pts = local_points(element) or []
-                    polylines = [(list(pts), tag == "polygon")] if len(pts) >= 2 else []
-                elif tag == "rect":
-                    pts = local_points(element)
-                    if pts:
-                        (p00, p10, p01, p11) = pts
-                        polylines = [([p00, p10, p11, p01], True)]
-                elif tag in {"circle", "ellipse"}:
-                    ecx, ecy = _attr_num(element, "cx"), _attr_num(element, "cy")
-                    rx = _attr_num(element, "r") if tag == "circle" else _attr_num(element, "rx")
-                    ry = rx if tag == "circle" else _attr_num(element, "ry")
-                    ring = [(ecx + rx * math.cos(2 * math.pi * k / 64),
-                             ecy + ry * math.sin(2 * math.pi * k / 64)) for k in range(64)]
-                    polylines = [(ring, True)]
-                elif tag == "path":
-                    polylines = [(sub, len(sub) > 2 and sub[0] == sub[-1])
-                                 for sub in flatten_path(element.get("d", ""))]
-            except ValueError:
-                polylines = []
             info: dict[str, Any] = {"cid": cid, "tag": tag}
+            polylines = self._element_polylines(element)
             if not polylines:
                 info["error"] = "unsupported geometry (text/use/image/empty)"
                 results.append(info)
                 continue
-            length = 0.0
-            area = 0.0
-            any_closed = False
-            for pts, closed in polylines:
-                world = [apply_matrix(matrix, x, y) for x, y in pts]
-                ring = world + [world[0]] if closed and world[0] != world[-1] else world
-                length += sum(math.dist(ring[i], ring[i + 1]) for i in range(len(ring) - 1))
-                if closed:
-                    any_closed = True
-                    area += abs(sum(ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1]
-                                    for i in range(len(ring) - 1))) / 2.0
+            length, area, any_closed = self._world_geometry(element)
             info["length_units"] = round(length, 2)
             info["closed"] = any_closed
             if mm:
                 info["length_m"] = round(length * mm / 1000.0, 3)
             if any_closed:
                 info.update(self.area_info(area))
+            width = self.stroke_width_units(element)
+            if width is not None:
+                info["stroke_width_units"] = round(width, 2)
+                if mm:
+                    info["stroke_width_mm"] = round(width * mm, 1)
+            if tag == "line" and polylines:
+                matrix = self._accumulated_transform(element)
+                (wx1, wy1), (wx2, wy2) = (apply_matrix(matrix, x, y) for x, y in polylines[0][0])
+                info["angle_deg"] = round(math.degrees(math.atan2(wy2 - wy1, wx2 - wx1)) % 180.0, 1)
             results.append(info)
         return results
 
@@ -1224,8 +1396,11 @@ class CanvasDocument:
         xs = [c for c, _ in filled]; ys = [r for _, r in filled]
         bbox = [round(wx0 + min(xs) * cell, 1), round(wy0 + min(ys) * cell, 1),
                 round(wx0 + (max(xs) + 1) * cell, 1), round(wy0 + (max(ys) + 1) * cell, 1)]
+        mm = self.mm_per_unit()
+        size = ({"size_m": [round((bbox[2] - bbox[0]) * mm / 1000.0, 2),
+                            round((bbox[3] - bbox[1]) * mm / 1000.0, 2)]} if mm else {})
         return {"seed": [x, y], "enclosed": not leaked, "bbox": bbox,
-                "cell": cell, **self.area_info(area),
+                "cell": cell, **self.area_info(area), **size,
                 **({"note": "영역이 탐색 창 밖으로 새어나감 — 폐합되지 않았거나 max_span을 늘려야 함"} if leaked else {})}
 
     def recognize_rooms(self, max_rooms: int = 40, **kwargs: Any) -> list[dict[str, Any]]:

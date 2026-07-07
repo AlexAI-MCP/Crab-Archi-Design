@@ -194,10 +194,31 @@ TOOLS: dict[str, dict[str, Any]] = {
                          ["box", "dx", "dy"]),
     },
     "measure": {
-        "description": "Measure elements in world space: length (m when a scale is set) and closed-shape area (m²/평). Handles lines, polylines, polygons, rects, circles, ellipses and paths (curves flattened) — transforms are honored. Use for wall lengths, boundary perimeters, area takeoffs.",
+        "description": "Measure elements in world space: length (m when a scale is set), closed-shape area (m²/평), stroke thickness (mm, inline CSS + transforms honored) and line angle (deg). Handles lines, polylines, polygons, rects, circles, ellipses and paths (curves flattened). Use for wall lengths/thicknesses, boundary perimeters, area takeoffs, orthogonality checks.",
         "kind": ("post", "/api/measure"),
         "schema": schema({"cids": CIDS}, ["cids"]),
         "readonly": True,
+    },
+    "set_length": {
+        "description": "Give a line an exact real length (m/mm via the drawing scale, or raw units). anchor picks the fixed part: start|end|center — the rest moves along the line's direction. Use for '이 벽 3.5m로', trimming/extending walls to spec.",
+        "kind": ("op", "set_length"),
+        "schema": schema({"cid": {**STR, "description": "Target <line> cid."},
+                          "m": {**NUM, "description": "Target length in meters."},
+                          "mm": NUM, "units": NUM,
+                          "anchor": {"type": "string", "enum": ["start", "end", "center"]},
+                          "force": {"type": "boolean"}}, ["cid"]),
+    },
+    "set_thickness": {
+        "description": "Set stroke thickness to an exact real size (mm via the drawing scale, or raw units) — e.g. 200mm 내력벽, 100mm 칸막이. Local stroke-width is compensated for each element's transform so the drawn thickness is exact; inline style CSS conflicts are cleaned automatically.",
+        "kind": ("op", "set_thickness"),
+        "schema": schema({"cids": CIDS, "mm": NUM, "units": NUM,
+                          "force": {"type": "boolean"}}, ["cids"]),
+    },
+    "set_area": {
+        "description": "Uniformly scale a closed shape (rect/circle/ellipse/polygon/closed path) about its center to an exact area — m2, pyeong(평) or raw units2. Use for '이 존 30평으로 맞춰줘' style adjustments; respects protected zones.",
+        "kind": ("op", "set_area"),
+        "schema": schema({"cid": STR, "m2": NUM, "pyeong": NUM, "units2": NUM,
+                          "force": {"type": "boolean"}}, ["cid"]),
     },
     "set_scale": {
         "description": "Set the drawing scale: mm_per_unit directly, or calibrate with a known real distance (known_mm) between two drawing points p1/p2 (e.g. a 2500mm parking stall). Enables m²/평 output in recognize_rooms.",

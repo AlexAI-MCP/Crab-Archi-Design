@@ -200,6 +200,8 @@ def test_recognize_room_area_and_scale() -> None:
     # 200x150 units = 20m x 15m = 300 m²(±격자 오차)
     assert abs(room["area_m2"] - 300) < 25
     assert room["area_pyeong"] > 80
+    # 실치수 인식: 20m × 15m (격자 오차 허용)
+    assert abs(room["size_m"][0] - 20) < 1 and abs(room["size_m"][1] - 15) < 1
     rooms = document.recognize_rooms(cell=2, max_span=200)
     assert rooms and rooms[0]["label"] == "ROOM" and rooms[0]["enclosed"]
 
@@ -394,3 +396,75 @@ def test_http_measure_endpoint(server) -> None:
     cid = http_json(base + "/api/op", {"op": "draw_line", "params": {"x1": 0, "y1": 0, "x2": 60, "y2": 80}})["cid"]
     out = http_json(base + "/api/measure", {"cids": [cid]})
     assert out["measurements"][0]["length_units"] == 100.0
+
+
+# ---- 치수 인식·제어: 두께(mm), 정확 길이, 정확 면적 ----
+
+def test_measure_recognizes_thickness_and_angle() -> None:
+    doc = CanvasDocument()
+    doc.load_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">'
+                  '<line x1="0" y1="0" x2="100" y2="100" style="stroke:#000;stroke-width:2"/>'
+                  '<g transform="scale(2)"><line x1="0" y1="0" x2="50" y2="0" stroke-width="3" stroke="#000"/></g></svg>')
+    doc.apply("set_scale", {"mm_per_unit": 100})
+    m = {round(r["angle_deg"]): r for r in doc.measure([e["cid"] for e in doc.list_elements(tag="line")])}
+    assert m[45]["stroke_width_mm"] == 200.0          # 인라인 CSS에서 두께 인식
+    assert m[0]["stroke_width_mm"] == 600.0           # scale(2) 반영: 3×2 units × 100mm
+    assert m[45]["angle_deg"] == 45.0 and m[0]["angle_deg"] == 0.0
+
+
+def test_set_thickness_real_mm() -> None:
+    doc = CanvasDocument()
+    doc.load_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">'
+                  '<line x1="0" y1="0" x2="100" y2="0" style="stroke:red;stroke-width:9"/>'
+                  '<g transform="scale(4)"><line x1="0" y1="10" x2="25" y2="10" stroke="#000"/></g></svg>')
+    doc.apply("set_scale", {"mm_per_unit": 100})
+    cids = [e["cid"] for e in doc.list_elements(tag="line")]
+    result = doc.apply("set_thickness", {"cids": cids, "mm": 200})
+    assert result["stroke_width_mm"] == 200.0
+    for r in doc.measure(cids):
+        assert r["stroke_width_mm"] == 200.0          # transform 위 요소도 월드 두께 정확
+    # 인라인 CSS의 기존 stroke-width가 새 값을 가리지 않는다
+    plain = next(e for e in doc.require_root().iter() if e.tag.endswith("line") and e.get("style"))
+    assert "stroke-width" not in plain.get("style") and plain.get("stroke-width") == "2"
+
+
+def test_set_length_anchors_and_scale() -> None:
+    doc = CanvasDocument()
+    doc.load_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">'
+                  '<line x1="10" y1="10" x2="40" y2="50" stroke="#000"/></svg>')
+    doc.apply("set_scale", {"mm_per_unit": 100})       # 50 units = 5m 사선
+    cid = doc.list_elements(tag="line")[0]["cid"]
+    result = doc.apply("set_length", {"cid": cid, "m": 10})
+    assert result["length_m"] == 10.0 and result["previous_units"] == 50.0
+    element = doc.find(cid)
+    assert (element.get("x1"), element.get("y1")) == ("10", "10")   # anchor=start 기본
+    assert (element.get("x2"), element.get("y2")) == ("70", "90")   # 방향 유지, 길이 2배
+    doc.apply("set_length", {"cid": cid, "m": 5, "anchor": "end"})
+    assert (element.get("x2"), element.get("y2")) == ("70", "90")   # 끝점 고정
+    assert doc.measure([cid])[0]["length_m"] == 5.0
+
+
+def test_set_area_exact_target() -> None:
+    doc = CanvasDocument()
+    doc.load_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">'
+                  '<rect x="10" y="10" width="40" height="20"/>'
+                  '<polygon points="100,100 140,100 140,140 100,140"/>'
+                  '<path d="M 200 200 L 240 200 L 240 240 L 200 240 Z"/></svg>')
+    doc.apply("set_scale", {"mm_per_unit": 100})
+    rect, poly, path = (e["cid"] for e in doc.list_elements())
+    r = doc.apply("set_area", {"cid": rect, "m2": 32})        # 8m² → 32m² (2배 선형)
+    assert r["area_m2"] == 32.0 and r["scale_factor"] == 2.0
+    element = doc.find(rect)
+    assert element.get("x") == "-10" and element.get("width") == "80"  # 중심 (30,20) 유지
+    doc.apply("set_area", {"cid": poly, "pyeong": 10})
+    assert abs(doc.measure([poly])[0]["area_pyeong"] - 10) < 0.1
+    doc.apply("set_area", {"cid": path, "m2": 4})
+    assert doc.measure([path])[0]["area_m2"] == 4.0
+
+
+def test_describe_reads_inline_css_style(doc: CanvasDocument) -> None:
+    cid = doc.apply("draw_rect", {"x": 200, "y": 200, "width": 20, "height": 10})["cid"]
+    doc.apply("set_attrs", {"cid": cid, "attrs": {"style": "stroke-width:7;fill:magenta", "fill": "blue"}})
+    info = doc.describe(doc.find(cid))
+    assert info["style"]["stroke-width"] == "7"
+    assert info["style"]["fill"] == "magenta"          # CSS가 속성을 이기므로 유효값 보고

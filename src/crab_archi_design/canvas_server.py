@@ -35,6 +35,7 @@ ALLOWED_OPS = {
     "draw_ellipse", "add_text", "delete_elements", "move_element",
     "copy_element", "copy_style", "set_style", "set_attrs",
     "set_zone", "clear_zones", "stretch", "set_scale", "place_symbol",
+    "set_length", "set_thickness", "set_area",
 }
 
 
