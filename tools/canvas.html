@@ -86,7 +86,11 @@ async function api(route, body, method) {
   const res = await fetch(route, opt);
   return res.json();
 }
-const op = (name, params) => api('/api/op', { op:name, params }).then(r => { if (r.status==='error') log('오류: '+r.error); poll(true); return r; });
+const op = (name, params) => api('/api/op', { op:name, params }).then(r => {
+  if (r.status==='error') log('오류: '+r.error);
+  else log(`✓ ${name} 추가됨 (${r.cid || (r.deleted ? r.deleted.length + '개 삭제' : '')})`);
+  poll(true); return r;
+}).catch(e => { log('서버 요청 실패: ' + e); });
 
 async function poll(force) {
   try {
@@ -229,6 +233,7 @@ async function finishMulti() {
   else if (t === 'zone' && pts.length >= 3) await op('set_zone', { mode:$('zoneMode').value, points:pts });
 }
 $('viewport').addEventListener('dblclick', finishMulti);
+$('viewport').addEventListener('contextmenu', evt => { evt.preventDefault(); if (S.drawing) finishMulti(); });
 document.addEventListener('keydown', evt => {
   if (evt.key === 'Enter' && S.drawing) finishMulti();
   if (evt.key === 'Escape') { resetDraw(); S.styleSource = S.copySource = null; }
@@ -239,6 +244,7 @@ document.addEventListener('keydown', evt => {
 });
 
 document.querySelectorAll('#tools button').forEach(btn => btn.addEventListener('click', () => {
+  if (S.drawing && S.pts.length >= 2) finishMulti();   // 도구 전환 시 그리던 도형 자동 확정
   document.querySelectorAll('#tools button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active'); S.tool = btn.dataset.tool; resetDraw();
 }));

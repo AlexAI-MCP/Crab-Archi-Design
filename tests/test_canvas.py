@@ -170,3 +170,11 @@ def test_clean_path_unescapes_shell_paste() -> None:
     assert clean_path(r"/a/A-801\~802\ 도면_Model.svg") == "/a/A-801~802 도면_Model.svg"
     assert clean_path("'/a/plain path.svg'") == "/a/plain path.svg"
     assert clean_path("/a/normal.svg") == "/a/normal.svg"
+
+
+def test_list_elements_drawn_only(doc: CanvasDocument) -> None:
+    doc.apply("draw_line", {"x1": 0, "y1": 0, "x2": 5, "y2": 5})
+    doc.apply("set_zone", {"mode": "mutable_zone", "points": [[0, 0], [9, 0], [9, 9]]})
+    drawn = doc.list_elements(drawn_only=True)
+    assert {e["tag"] for e in drawn} == {"line", "polygon"}
+    assert len(doc.list_elements()) > len(drawn)  # 원본 요소는 제외됨

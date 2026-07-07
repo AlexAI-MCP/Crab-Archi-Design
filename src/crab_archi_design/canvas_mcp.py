@@ -55,10 +55,12 @@ TOOLS: dict[str, dict[str, Any]] = {
         "kind": ("get", "/api/doc"), "schema": schema({}, []), "readonly": True,
     },
     "list_elements": {
-        "description": "List recognized graphic elements (walls, labels, shapes) with stable cid handles, tag, bbox, style, and text. Use cids with the edit tools.",
+        "description": "List recognized graphic elements (walls, labels, shapes) with stable cid handles, tag, bbox, style, and text. Use cids with the edit tools. Set drawn=true to see ONLY strokes drawn in this canvas session (by the user in the browser or via MCP) — check this first when the user says they sketched something.",
         "kind": ("get", "/api/elements"),
         "schema": schema({"tag": {**STR, "description": "Filter by SVG tag, e.g. 'path', 'text', 'g'."},
-                          "max_results": {"type": "integer"}}, []), "readonly": True,
+                          "max_results": {"type": "integer"},
+                          "drawn": {"type": "boolean", "description": "Only session-drawn strokes and zones (crab_drawn/crab_zones layers)."}}, []),
+        "readonly": True,
     },
     "list_zones": {
         "description": "List annotation zones (community shell, protected, mutable...) drawn on the canvas.",

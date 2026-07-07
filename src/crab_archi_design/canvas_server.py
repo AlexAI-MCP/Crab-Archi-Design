@@ -182,7 +182,8 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                     self.send_json({"status": "ok",
                                     "elements": doc.list_elements(
                                         tag=params.get("tag") or None,
-                                        max_results=int(params.get("max_results", 200)))})
+                                        max_results=int(params.get("max_results", 200)),
+                                        drawn_only=str(params.get("drawn", "")).lower() in ("1", "true"))})
                 elif route == "/api/zones":
                     self.send_json({"status": "ok", "zones": doc.list_zones()})
                 else:

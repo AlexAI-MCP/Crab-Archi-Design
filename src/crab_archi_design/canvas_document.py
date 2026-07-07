@@ -386,16 +386,30 @@ class CanvasDocument:
             info["children"] = sum(1 for c in element.iter() if c is not element and local_name(c) in GRAPHIC_TAGS)
         return info
 
-    def list_elements(self, tag: str | None = None, max_results: int = 200) -> list[dict[str, Any]]:
+    def list_elements(self, tag: str | None = None, max_results: int = 200,
+                      drawn_only: bool = False) -> list[dict[str, Any]]:
+        """List graphic elements; drawn_only restricts to the canvas-session layers
+        (crab_drawn / crab_zones) — i.e. strokes drawn in the browser or via MCP."""
         with self.lock:
+            roots: list[ET.Element] = []
+            if drawn_only:
+                for layer_id in (DRAW_LAYER_ID, ZONE_LAYER_ID):
+                    layer = self._layer(layer_id, create=False)
+                    if layer is not None:
+                        roots.append(layer)
+            else:
+                roots.append(self.require_root())
             results = []
-            for element in self.require_root().iter():
-                name = local_name(element)
-                if name not in GRAPHIC_TAGS or (tag and name != tag):
-                    continue
-                results.append(self.describe(element))
-                if len(results) >= max_results:
-                    break
+            for root in roots:
+                for element in root.iter():
+                    name = local_name(element)
+                    if name not in GRAPHIC_TAGS or (tag and name != tag):
+                        continue
+                    if drawn_only and element in roots:
+                        continue  # skip the layer <g> itself
+                    results.append(self.describe(element))
+                    if len(results) >= max_results:
+                        return results
             return results
 
     def list_zones(self) -> list[dict[str, Any]]:
