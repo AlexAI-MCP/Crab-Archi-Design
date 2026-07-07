@@ -140,6 +140,43 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Remove zones (all, or only one mode).",
         "kind": ("op", "clear_zones"), "schema": schema({"mode": ZONE_MODE}, []),
     },
+    "recognize_rooms": {
+        "description": "Recognize rooms by flood-filling against bold wall geometry (door gaps up to door_close units auto-sealed). Pass x/y for the room around one point, or omit to scan every text label. Returns bbox and area (m²/평 when a scale is set via set_scale). THE tool for area checks against design standards. Note: open-plan spaces connected by wide openings merge into one region (enclosed=false) — that reflects real connectivity.",
+        "kind": ("get", "/api/rooms"),
+        "schema": schema({"x": NUM, "y": NUM,
+                          "cell": {**NUM, "description": "Fill-grid cell size in drawing units (default 3)."},
+                          "max_span": {**NUM, "description": "Search window half-size (default 500)."},
+                          "door_close": {**NUM, "description": "Seal wall gaps up to this many units as doors (default 12 ≈ 1m)."},
+                          "max_rooms": {"type": "integer"}}, []),
+        "readonly": True,
+    },
+    "stretch_elements": {
+        "description": "CAD-style stretch: geometry points inside box move by (dx,dy); points outside stay, so walls crossing the box boundary lengthen instead of moving. Use to enlarge rooms or pull walls. box=[x0,y0,x1,y1].",
+        "kind": ("op", "stretch"),
+        "schema": schema({"box": {"type": "array", "items": NUM, "minItems": 4, "maxItems": 4},
+                          "dx": NUM, "dy": NUM, "cids": CIDS,
+                          "force": {"type": "boolean", "description": "Bypass protected-zone check."}},
+                         ["box", "dx", "dy"]),
+    },
+    "set_scale": {
+        "description": "Set the drawing scale: mm_per_unit directly, or calibrate with a known real distance (known_mm) between two drawing points p1/p2 (e.g. a 2500mm parking stall). Enables m²/평 output in recognize_rooms.",
+        "kind": ("op", "set_scale"),
+        "schema": schema({"mm_per_unit": NUM, "known_mm": NUM,
+                          "p1": {"type": "array", "items": NUM, "minItems": 2, "maxItems": 2},
+                          "p2": {"type": "array", "items": NUM, "minItems": 2, "maxItems": 2}}, []),
+    },
+    "draft": {
+        "description": "Transaction control for risky multi-step edits: begin snapshots the document, commit keeps changes, rollback restores the snapshot (stronger than undo for bulk edits).",
+        "kind": ("post", "/api/draft"),
+        "schema": schema({"action": {"type": "string", "enum": ["begin", "commit", "rollback"]}}, ["action"]),
+    },
+    "render_view": {
+        "description": "Rasterize the canvas (or a bbox crop) to a PNG image so you can SEE the drawing. Use after edits to verify visually. bbox=[x0,y0,x1,y1] in drawing units.",
+        "kind": ("render", "/api/render"),
+        "schema": schema({"bbox": {"type": "array", "items": NUM, "minItems": 4, "maxItems": 4},
+                          "px": {"type": "integer", "description": "Output width in pixels (default 1024)."}}, []),
+        "readonly": True,
+    },
     "undo": {
         "description": "Undo the last canvas mutation.",
         "kind": ("post", "/api/undo"), "schema": schema({}, []),
@@ -190,11 +227,33 @@ class CanvasClient:
                     "error": f"canvas server unreachable at {self.base_url} ({exc.reason}). "
                              "Start it with: crab-archi-design-canvas --open"}
 
+    def request_bytes(self, route: str, params: dict[str, Any]) -> bytes:
+        from urllib.parse import urlencode
+        url = self.base_url + route + "?" + urlencode({k: v for k, v in params.items() if v is not None})
+        with urllib.request.urlopen(url, timeout=300) as response:
+            return response.read()
+
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         tool = TOOLS[name]
         kind, target = tool["kind"]
         if kind == "op":
             return self.request("post", "/api/op", {"op": target, "params": arguments})
+        if kind == "render":
+            import base64
+            params = dict(arguments)
+            if isinstance(params.get("bbox"), list):
+                params["bbox"] = ",".join(str(v) for v in params["bbox"])
+            try:
+                png = self.request_bytes(target, params)
+            except urllib.error.HTTPError as exc:
+                try:
+                    return json.loads(exc.read().decode("utf-8"))
+                except Exception:  # noqa: BLE001
+                    return {"status": "error", "error": f"HTTP {exc.code}"}
+            except urllib.error.URLError as exc:
+                return {"status": "error", "error": f"canvas server unreachable ({exc.reason})"}
+            return {"status": "ok", "png_base64": base64.b64encode(png).decode(),
+                    "bytes": len(png)}
         if kind == "get":
             return self.request("get", target, arguments)
         return self.request("post", target, arguments)
@@ -219,6 +278,15 @@ def mcp_tools() -> list[dict[str, Any]]:
 
 def tool_result(payload: dict[str, Any]) -> dict[str, Any]:
     is_error = payload.get("status") == "error"
+    if "png_base64" in payload:
+        return {
+            "content": [
+                {"type": "image", "data": payload["png_base64"], "mimeType": "image/png"},
+                {"type": "text", "text": f"rendered PNG ({payload.get('bytes', 0)} bytes)"},
+            ],
+            "structuredContent": {"status": payload.get("status"), "bytes": payload.get("bytes")},
+            "isError": is_error,
+        }
     return {
         "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False, indent=2)}],
         "structuredContent": payload,

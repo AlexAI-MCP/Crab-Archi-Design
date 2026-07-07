@@ -37,6 +37,7 @@
     <button id="btnSave">저장</button>
     <button id="btnUndo">↩ 실행취소</button>
     <button id="btnFit">전체보기</button>
+    <button id="btnSnap" class="active">스냅</button>
   </div>
   <div class="toolbar-group" id="tools">
     <button data-tool="select" class="active">선택</button>
@@ -107,6 +108,7 @@ async function poll(force) {
         applyView();
       }
       $('status').textContent = `rev ${doc.revision} · 요소 ${doc.element_count} · ${doc.source_path||'(파일 미지정)'}`;
+      S.endpoints = null;  // 스냅 캐시 무효화
       refreshZones(); restoreSelection();
     } else if (doc.status === 'empty') { $('status').textContent = 'SVG를 열어주세요'; }
   } catch (e) { $('status').textContent = '서버 연결 끊김'; }
@@ -166,6 +168,35 @@ function svgPoint(evt) {
   const p = pt.matrixTransform(svg.getScreenCTM().inverse());
   return [Math.round(p.x*100)/100, Math.round(p.y*100)/100];
 }
+
+// ---- snapping: endpoint > orthogonal(Shift) > grid ----
+S.snap = true; S.endpoints = null;
+function rebuildEndpoints() {
+  const eps = [];
+  $('stage').querySelectorAll('line').forEach(l => {
+    eps.push([+l.getAttribute('x1'), +l.getAttribute('y1')], [+l.getAttribute('x2'), +l.getAttribute('y2')]);
+    if (eps.length > 60000) return;
+  });
+  S.endpoints = eps;
+}
+function snapPoint(p, evt) {
+  if (!S.snap || !p) return p;
+  const svg = $('stage').querySelector('svg');
+  const view = (S.view || S.docBox);
+  const tolUnits = view ? view[2] / $('viewport').clientWidth * 10 : 2;  // ≈10px
+  if (S.endpoints === null) rebuildEndpoints();
+  let best = null, bd = tolUnits;
+  for (const [ex, ey] of S.endpoints) {
+    const d = Math.hypot(ex - p[0], ey - p[1]);
+    if (d < bd) { bd = d; best = [ex, ey]; }
+  }
+  if (best) return best;
+  if (evt && evt.shiftKey && S.pts.length) {   // orthogonal from last point
+    const last = S.pts[S.pts.length - 1];
+    return Math.abs(p[0]-last[0]) > Math.abs(p[1]-last[1]) ? [p[0], last[1]] : [last[0], p[1]];
+  }
+  return [Math.round(p[0]), Math.round(p[1])];  // 1-unit grid
+}
 const style = () => ({ stroke: $('strokeColor').value, 'stroke-width': $('strokeWidth').value, fill: 'none' });
 
 function restoreSelection() {
@@ -196,8 +227,9 @@ function preview() {
 function resetDraw() { S.pts = []; S.drawing = false; preview(); }
 
 $('viewport').addEventListener('click', async evt => {
-  const p = svgPoint(evt); if (!p) return;
+  let p = svgPoint(evt); if (!p) return;
   const t = S.tool;
+  if (t !== 'select' && t !== 'copy' && t !== 'stylecopy') p = snapPoint(p, evt);
   if (t === 'select') {
     const hit = evt.target.closest('[data-cid]');
     select(hit ? hit.getAttribute('data-cid') : null, evt.shiftKey);
@@ -263,6 +295,7 @@ $('btnBrowse').onclick = async () => {
 $('btnSave').onclick = async () => { const r = await api('/api/save', {}); log(r.status==='ok' ? '저장됨: '+r.saved : '오류: '+r.error); };
 $('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r.status==='error') log('오류: '+r.error); poll(true); };
 $('btnFit').onclick = () => { S.view = null; applyView(); };
+$('btnSnap').onclick = () => { S.snap = !S.snap; $('btnSnap').classList.toggle('active', S.snap); log('스냅 ' + (S.snap ? '켜짐 (끝점>직교(Shift)>그리드)' : '꺼짐')); };
 $('btnDelete').onclick = () => { if (S.selected.length) { op('delete_elements', { cids:S.selected.slice() }); S.selected = []; } };
 $('btnRegen').onclick = async () => {
   const prompt = $('prompt').value.trim(); if (!prompt) { log('재생성: 프롬프트를 입력하세요'); return; }

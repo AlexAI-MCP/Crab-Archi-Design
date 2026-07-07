@@ -222,6 +222,10 @@ class CanvasError(ValueError):
     pass
 
 
+SCALE_ATTR = "data-crab-mm-per-unit"
+PYEONG_M2 = 3.305785
+
+
 class CanvasDocument:
     def __init__(self) -> None:
         self.lock = threading.RLock()
@@ -230,6 +234,9 @@ class CanvasDocument:
         self.revision = 0
         self._undo: list[str] = []
         self._cid_seq = 0
+        self.autosave_path: Path | None = None
+        self._autosave_at = 0.0
+        self._draft_base: str | None = None
         self._parent_map: dict[int, ET.Element] | None = None
         self._parent_map_rev = -1
         self._bbox_cache: dict[int, list[float] | None] = {}
@@ -316,6 +323,8 @@ class CanvasDocument:
                 "element_count": sum(1 for _ in self.root.iter() if local_name(_) in GRAPHIC_TAGS),
                 "zone_count": len(self.list_zones()),
                 "undo_depth": len(self._undo),
+                "mm_per_unit": self.mm_per_unit(),
+                "draft_open": self._draft_base is not None,
             }
 
     def find(self, cid: str) -> ET.Element:
@@ -440,6 +449,7 @@ class CanvasDocument:
         with self.lock:
             self.require_root()
             self._snapshot()
+            self._op_force = bool(params.pop("force", False)) if isinstance(params, dict) else False
             try:
                 result = handler(**params)
             except TypeError as exc:
@@ -449,7 +459,83 @@ class CanvasDocument:
                 self._undo.pop()
                 raise
             self.revision += 1
+            self._autosave()
             return {"op": op, "revision": self.revision, **(result or {})}
+
+    def _autosave(self) -> None:
+        """Journal the document to disk at most every few seconds (crash recovery)."""
+        import time
+        if self.autosave_path is None:
+            return
+        now = time.monotonic()
+        if now - self._autosave_at < 3.0:
+            return
+        self._autosave_at = now
+        try:
+            self.autosave_path.parent.mkdir(parents=True, exist_ok=True)
+            self.autosave_path.write_text(self.to_string(), encoding="utf-8")
+        except OSError:
+            pass
+
+    # ---- draft transaction ------------------------------------------------
+
+    def draft_begin(self) -> dict[str, Any]:
+        with self.lock:
+            if self._draft_base is not None:
+                raise CanvasError("a draft is already open — commit or rollback first")
+            self._draft_base = self.to_string()
+            return {"draft": "open", "revision": self.revision}
+
+    def draft_commit(self) -> dict[str, Any]:
+        with self.lock:
+            if self._draft_base is None:
+                raise CanvasError("no open draft")
+            self._draft_base = None
+            return {"draft": "committed", "revision": self.revision}
+
+    def draft_rollback(self) -> dict[str, Any]:
+        with self.lock:
+            if self._draft_base is None:
+                raise CanvasError("no open draft")
+            self.root = safe_fromstring(self._draft_base)
+            self._draft_base = None
+            self.revision += 1
+            return {"draft": "rolled_back", "revision": self.revision}
+
+    # ---- scale -------------------------------------------------------------
+
+    def mm_per_unit(self) -> float | None:
+        raw = self.require_root().get(SCALE_ATTR)
+        try:
+            return float(raw) if raw else None
+        except ValueError:
+            return None
+
+    def area_info(self, area_units2: float) -> dict[str, Any]:
+        info: dict[str, Any] = {"area_units2": round(area_units2, 1)}
+        mm = self.mm_per_unit()
+        if mm:
+            m2 = area_units2 * (mm / 1000.0) ** 2
+            info["area_m2"] = round(m2, 1)
+            info["area_pyeong"] = round(m2 / PYEONG_M2, 1)
+        return info
+
+    def op_set_scale(self, mm_per_unit: float | None = None,
+                     known_mm: float | None = None,
+                     p1: list[float] | None = None, p2: list[float] | None = None) -> dict[str, Any]:
+        """Set drawing scale directly or by calibrating a known real distance
+        between two points on the drawing."""
+        if mm_per_unit is None:
+            if not (known_mm and p1 and p2):
+                raise CanvasError("pass mm_per_unit, or known_mm with p1/p2")
+            import math
+            dist = math.dist((float(p1[0]), float(p1[1])), (float(p2[0]), float(p2[1])))
+            if dist < 1e-6:
+                raise CanvasError("p1 and p2 are the same point")
+            mm_per_unit = float(known_mm) / dist
+        self.require_root().set(SCALE_ATTR, f"{float(mm_per_unit):.6f}")
+        return {"mm_per_unit": round(float(mm_per_unit), 4),
+                "units_per_meter": round(1000.0 / float(mm_per_unit), 4)}
 
     def undo(self) -> dict[str, Any]:
         with self.lock:
@@ -485,6 +571,13 @@ class CanvasDocument:
         merged = {**defaults, **attrs, "data-cid": self._new_cid()}
         element = ET.SubElement(layer, q(tag), merged)
         self._apply_style(element, style)
+        bbox = self.world_bbox(element)
+        if bbox:
+            try:
+                self._check_no_go(bbox, f"draw {tag}")
+            except CanvasError:
+                layer.remove(element)
+                raise
         return {"cid": element.get("data-cid"), "element": self.describe(element)}
 
     # ---- ops: drawing ----------------------------------------------------
@@ -575,6 +668,9 @@ class CanvasDocument:
 
     def op_move_element(self, cid: str, dx: float, dy: float) -> dict[str, Any]:
         element = self.find(cid)
+        bbox = self.world_bbox(element)
+        if bbox:
+            self._check_no_go([bbox[0] + dx, bbox[1] + dy, bbox[2] + dx, bbox[3] + dy], "move")
         existing = element.get("transform", "")
         element.set("transform", f"translate({fmt(dx)},{fmt(dy)}) {existing}".strip())
         return {"cid": cid, "element": self.describe(element)}
@@ -626,6 +722,249 @@ class CanvasDocument:
             else:
                 element.set(key, str(value))
         return {"cid": cid, "element": self.describe(element)}
+
+    def op_stretch(self, box: list[float], dx: float, dy: float,
+                   cids: list[str] | None = None) -> dict[str, Any]:
+        """CAD-style stretch: geometry points inside box move by (dx,dy); points
+        outside stay — lines/walls crossing the box boundary stretch instead of moving."""
+        x0, y0, x1, y1 = (float(v) for v in box)
+        x0, x1 = min(x0, x1), max(x0, x1)
+        y0, y1 = min(y0, y1), max(y0, y1)
+        inside = lambda px, py: x0 <= px <= x1 and y0 <= py <= y1  # noqa: E731
+        self._check_no_go([x0 + dx, y0 + dy, x1 + dx, y1 + dy], "stretch")
+        wanted = set(cids) if cids else None
+        changed: list[str] = []
+        skipped: list[str] = []
+        for element in list(self.require_root().iter()):
+            cid = element.get("data-cid")
+            tag = local_name(element)
+            if not cid or tag not in GRAPHIC_TAGS or tag == "g":
+                continue
+            if wanted is not None and cid not in wanted:
+                continue
+            if element.get("transform"):
+                if wanted is not None:
+                    skipped.append(cid)
+                continue
+            b = self.world_bbox(element)
+            if not b or b[2] < x0 or b[0] > x1 or b[3] < y0 or b[1] > y1:
+                continue
+            moved = False
+            if tag == "line":
+                for sx, sy in (("x1", "y1"), ("x2", "y2")):
+                    px, py = _attr_num(element, sx), _attr_num(element, sy)
+                    if inside(px, py):
+                        element.set(sx, fmt(px + dx)); element.set(sy, fmt(py + dy)); moved = True
+            elif tag in {"polyline", "polygon"}:
+                pts = [[float(v) for v in pair.split(",")] for pair in element.get("points", "").split()]
+                for p in pts:
+                    if inside(p[0], p[1]):
+                        p[0] += dx; p[1] += dy; moved = True
+                if moved:
+                    element.set("points", points_attr(pts))
+            elif tag == "rect":
+                rx, ry = _attr_num(element, "x"), _attr_num(element, "y")
+                rw, rh = _attr_num(element, "width"), _attr_num(element, "height")
+                corners_in = [inside(px, py) for px, py in
+                              ((rx, ry), (rx + rw, ry), (rx, ry + rh), (rx + rw, ry + rh))]
+                if all(corners_in):
+                    element.set("x", fmt(rx + dx)); element.set("y", fmt(ry + dy)); moved = True
+                elif corners_in[1] and corners_in[3] and not corners_in[0]:   # right edge
+                    element.set("width", fmt(max(1.0, rw + dx))); moved = True
+                elif corners_in[0] and corners_in[2] and not corners_in[1]:   # left edge
+                    element.set("x", fmt(rx + dx)); element.set("width", fmt(max(1.0, rw - dx))); moved = True
+                elif corners_in[2] and corners_in[3] and not corners_in[0]:   # bottom edge
+                    element.set("height", fmt(max(1.0, rh + dy))); moved = True
+                elif corners_in[0] and corners_in[1] and not corners_in[2]:   # top edge
+                    element.set("y", fmt(ry + dy)); element.set("height", fmt(max(1.0, rh - dy))); moved = True
+            elif tag == "text":
+                px, py = _attr_num(element, "x"), _attr_num(element, "y")
+                if inside(px, py):
+                    element.set("x", fmt(px + dx)); element.set("y", fmt(py + dy)); moved = True
+            else:
+                if wanted is not None:
+                    skipped.append(cid)
+                continue
+            if moved:
+                changed.append(cid)
+        if not changed:
+            raise CanvasError("stretch matched no editable geometry in the box "
+                              "(paths/transformed elements are skipped — pass their cids to see them listed)")
+        result: dict[str, Any] = {"stretched": changed[:200], "stretched_count": len(changed)}
+        if skipped:
+            result["unsupported"] = skipped[:50]
+        return result
+
+    # ---- no-go enforcement -------------------------------------------------
+
+    def _no_go_zones(self) -> list[tuple[str, list[list[float]], list[float]]]:
+        zones = []
+        layer = self._zone_layer(create=False)
+        if layer is None:
+            return zones
+        for poly in layer:
+            if poly.get("data-zone-mode") in {"no_go_zone", "lock_boundary"}:
+                pts = [[float(v) for v in pair.split(",")] for pair in poly.get("points", "").split()]
+                xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+                zones.append((poly.get("data-zone-name") or "no_go",
+                              pts, [min(xs), min(ys), max(xs), max(ys)]))
+        return zones
+
+    @staticmethod
+    def _point_in_polygon(px: float, py: float, pts: list[list[float]]) -> bool:
+        hit = False
+        j = len(pts) - 1
+        for i in range(len(pts)):
+            xi, yi = pts[i]; xj, yj = pts[j]
+            if (yi > py) != (yj > py) and px < (xj - xi) * (py - yi) / (yj - yi) + xi:
+                hit = not hit
+            j = i
+        return hit
+
+    def _check_no_go(self, bbox: list[float], action: str) -> None:
+        if getattr(self, "_op_force", False):
+            return
+        cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+        probes = [(bbox[0], bbox[1]), (bbox[2], bbox[1]), (bbox[0], bbox[3]), (bbox[2], bbox[3]), (cx, cy)]
+        for name, pts, zb in self._no_go_zones():
+            if bbox[2] < zb[0] or bbox[0] > zb[2] or bbox[3] < zb[1] or bbox[1] > zb[3]:
+                continue
+            if any(self._point_in_polygon(px, py, pts) for px, py in probes):
+                raise CanvasError(
+                    f"{action} blocked: geometry enters protected zone '{name}' "
+                    "(no_go/lock). Pass force=true only if this is intentional.")
+
+    # ---- room recognition ----------------------------------------------------
+
+    def recognize_room(self, x: float, y: float, cell: float = 3.0,
+                       max_span: float = 500.0, door_close: float = 12.0) -> dict[str, Any]:
+        """Flood-fill from a seed point against wall geometry to find the enclosing
+        room. Returns bbox and area (m²/평 when a scale is set)."""
+        x, y = float(x), float(y)
+        wx0, wy0 = x - max_span, y - max_span
+        cols = rows = int((2 * max_span) / cell)
+        grid = bytearray(cols * rows)
+
+        def mark(px: float, py: float) -> None:
+            ci, ri = int((px - wx0) / cell), int((py - wy0) / cell)
+            if 0 <= ci < cols and 0 <= ri < rows:
+                grid[ri * cols + ci] = 1
+
+        gray = {"#bababa", "#767676", "#545454", "#989898", "gray", "grey", "white", "none"}
+        for element in self.require_root().iter():
+            tag = local_name(element)
+            if tag not in GRAPHIC_TAGS or tag in {"g", "text", "image", "use"}:
+                continue
+            if element.get("data-zone-mode"):
+                continue  # annotation zones are not walls
+            # 벽만 배리어로: 굵은 스트로크(격자·주석의 폭1 선 제외) 또는 면 채움 도형
+            stroke = (element.get("stroke") or "").lower()
+            try:
+                sw = _attr_num(element, "stroke-width", 1.0)
+            except ValueError:
+                sw = 1.0
+            fill = (element.get("fill") or "none").lower()
+            solid = tag in {"polygon", "rect", "circle", "ellipse"} and fill not in {"none", "white", "#ffffff"}
+            if not solid and (sw < 1.5 or stroke in gray):
+                continue
+            b = self.world_bbox(element)
+            if not b or b[2] < wx0 or b[0] > x + max_span or b[3] < wy0 or b[1] > y + max_span:
+                continue
+            pts = local_points(element)
+            if not pts:
+                continue
+            matrix = self._accumulated_transform(element)
+            pts = [apply_matrix(matrix, px, py) for px, py in pts]
+            closed = tag in {"polygon", "rect", "circle", "ellipse"}
+            seq = list(pts) + ([pts[0]] if closed and len(pts) > 2 else [])
+            for (ax, ay), (bx2, by2) in zip(seq, seq[1:]):
+                seg = max(abs(bx2 - ax), abs(by2 - ay))
+                steps = max(1, int(seg / (cell / 2)))
+                for i in range(steps + 1):
+                    t = i / steps
+                    mark(ax + (bx2 - ax) * t, ay + (by2 - ay) * t)
+
+        # 문 개구부 봉합: door_close 이하의 틈을 모폴로지 클로징으로 닫는다
+        radius = max(1, int(round(door_close / cell / 2)))
+        if radius:
+            dilated = bytearray(cols * rows)
+            for ri in range(rows):
+                base = ri * cols
+                for ci in range(cols):
+                    if grid[base + ci]:
+                        for dr in range(-radius, radius + 1):
+                            rr = ri + dr
+                            if not (0 <= rr < rows):
+                                continue
+                            row_base = rr * cols
+                            for dc in range(-radius, radius + 1):
+                                cc = ci + dc
+                                if 0 <= cc < cols:
+                                    dilated[row_base + cc] = 1
+            closed_grid = bytearray(cols * rows)
+            for ri in range(rows):
+                base = ri * cols
+                for ci in range(cols):
+                    if not dilated[base + ci]:
+                        continue
+                    keep = True
+                    for dr in range(-radius, radius + 1):
+                        rr = ri + dr
+                        if not (0 <= rr < rows):
+                            continue
+                        row_base = rr * cols
+                        for dc in range(-radius, radius + 1):
+                            cc = ci + dc
+                            if 0 <= cc < cols and not dilated[row_base + cc]:
+                                keep = False
+                                break
+                        if not keep:
+                            break
+                    if keep:
+                        closed_grid[base + ci] = 1
+            grid = closed_grid
+
+        seed = (int((x - wx0) / cell), int((y - wy0) / cell))
+        if grid[seed[1] * cols + seed[0]]:
+            raise CanvasError("seed point sits on wall geometry — nudge it into the room")
+        from collections import deque
+        queue = deque([seed])
+        seen = {seed}
+        filled: list[tuple[int, int]] = []
+        leaked = False
+        while queue:
+            ci, ri = queue.popleft()
+            filled.append((ci, ri))
+            for nc, nr in ((ci+1, ri), (ci-1, ri), (ci, ri+1), (ci, ri-1)):
+                if not (0 <= nc < cols and 0 <= nr < rows):
+                    leaked = True
+                    continue
+                if (nc, nr) in seen or grid[nr * cols + nc]:
+                    continue
+                seen.add((nc, nr))
+                queue.append((nc, nr))
+        area = len(filled) * cell * cell
+        xs = [c for c, _ in filled]; ys = [r for _, r in filled]
+        bbox = [round(wx0 + min(xs) * cell, 1), round(wy0 + min(ys) * cell, 1),
+                round(wx0 + (max(xs) + 1) * cell, 1), round(wy0 + (max(ys) + 1) * cell, 1)]
+        return {"seed": [x, y], "enclosed": not leaked, "bbox": bbox,
+                "cell": cell, **self.area_info(area),
+                **({"note": "영역이 탐색 창 밖으로 새어나감 — 폐합되지 않았거나 max_span을 늘려야 함"} if leaked else {})}
+
+    def recognize_rooms(self, max_rooms: int = 40, **kwargs: Any) -> list[dict[str, Any]]:
+        """Recognize the room around every text label (best effort)."""
+        results = []
+        with self.lock:
+            labels = [e for e in self.list_elements(tag="text", max_results=max_rooms * 3)
+                      if e.get("text") and e.get("bbox")]
+            for label in labels[:max_rooms]:
+                lx, ly = label["bbox"][0], label["bbox"][1]
+                try:
+                    room = self.recognize_room(lx, ly - 4, **kwargs)
+                except CanvasError as exc:
+                    room = {"error": str(exc)}
+                results.append({"label": label["text"], "label_cid": label["cid"], **room})
+        return results
 
     # ---- ops: zones ------------------------------------------------------
 

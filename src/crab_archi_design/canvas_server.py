@@ -34,8 +34,40 @@ ALLOWED_OPS = {
     "draw_line", "draw_polyline", "draw_path", "draw_curve", "draw_rect",
     "draw_ellipse", "add_text", "delete_elements", "move_element",
     "copy_element", "copy_style", "set_style", "set_attrs",
-    "set_zone", "clear_zones",
+    "set_zone", "clear_zones", "stretch", "set_scale",
 }
+
+
+def render_png(svg_text: str, bbox: list[float] | None, px: int = 1024) -> bytes:
+    """Rasterize (a crop of) the document. Backends: rsvg-convert > cairosvg > qlmanage."""
+    import shutil
+    import tempfile
+
+    if bbox:
+        svg_text = re.sub(r'viewBox="[^"]*"',
+                          f'viewBox="{bbox[0]} {bbox[1]} {bbox[2] - bbox[0]} {bbox[3] - bbox[1]}"',
+                          svg_text, count=1)
+        svg_text = re.sub(r'\s(width|height)="[^"]*"', "", svg_text, count=2)
+    with tempfile.TemporaryDirectory() as tmp:
+        svg_path = Path(tmp) / "view.svg"
+        svg_path.write_text("<?xml version='1.0' encoding='utf-8'?>\n" + svg_text, encoding="utf-8")
+        if shutil.which("rsvg-convert"):
+            out = Path(tmp) / "view.png"
+            subprocess.run(["rsvg-convert", "-w", str(px), "-o", str(out), str(svg_path)],
+                           check=True, capture_output=True, timeout=120)
+            return out.read_bytes()
+        try:
+            import cairosvg  # type: ignore
+            return cairosvg.svg2png(url=str(svg_path), output_width=px)
+        except Exception:  # noqa: BLE001 — missing native cairo lib etc.; try next backend
+            pass
+        if sys.platform == "darwin":
+            subprocess.run(["qlmanage", "-t", "-s", str(px), "-o", tmp, str(svg_path)],
+                           check=True, capture_output=True, timeout=120)
+            out = Path(tmp) / "view.svg.png"
+            if out.exists():
+                return out.read_bytes()
+    raise CanvasError("no SVG rasterizer available (install rsvg-convert or cairosvg)")
 
 
 def clean_path(raw: str) -> str:
@@ -76,6 +108,17 @@ class CanvasState:
         self.project_root = project_root
         self.repo_root = Path(__file__).resolve().parents[2]
         self.regen_lock = threading.Lock()
+        self.document.autosave_path = project_root / ".canvas_autosave.svg"
+
+    def try_restore_autosave(self) -> bool:
+        path = self.document.autosave_path
+        if path and path.is_file():
+            try:
+                self.document.load_text(path.read_text(encoding="utf-8"))
+                return True
+            except Exception:  # noqa: BLE001
+                return False
+        return False
 
     def regenerate(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Save the canvas, run the deterministic pipeline, load the alternative back."""
@@ -131,6 +174,17 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            if len(body) > 8192 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+                import gzip
+                body = gzip.compress(body, compresslevel=5)
+                self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def send_bytes_raw(self, body: bytes, content_type: str) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -186,10 +240,37 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                                         drawn_only=str(params.get("drawn", "")).lower() in ("1", "true"))})
                 elif route == "/api/zones":
                     self.send_json({"status": "ok", "zones": doc.list_zones()})
+                elif route == "/api/rooms":
+                    params = self.query()
+                    if params.get("x") and params.get("y"):
+                        room = doc.recognize_room(float(params["x"]), float(params["y"]),
+                                                  cell=float(params.get("cell", 3)),
+                                                  max_span=float(params.get("max_span", 500)),
+                                                  door_close=float(params.get("door_close", 12)))
+                        self.send_json({"status": "ok", "room": room})
+                    else:
+                        rooms = doc.recognize_rooms(max_rooms=int(params.get("max_rooms", 40)),
+                                                    cell=float(params.get("cell", 3)),
+                                                    max_span=float(params.get("max_span", 500)),
+                                                    door_close=float(params.get("door_close", 12)))
+                        self.send_json({"status": "ok", "rooms": rooms})
+                elif route == "/api/render":
+                    params = self.query()
+                    bbox = None
+                    if params.get("bbox"):
+                        bbox = [float(v) for v in params["bbox"].split(",")]
+                        if len(bbox) != 4:
+                            raise CanvasError("bbox must be x0,y0,x1,y1")
+                    with doc.lock:
+                        svg_text = doc.to_string()
+                    png = render_png(svg_text, bbox, px=int(params.get("px", 1024)))
+                    self.send_bytes_raw(png, "image/png")
                 else:
                     self.send_json({"status": "error", "error": f"unknown route {route}"}, 404)
             except CanvasError as exc:
                 self.send_json({"status": "error", "error": str(exc)}, 400)
+            except Exception as exc:  # noqa: BLE001 — rasterizer/parse failures
+                self.send_json({"status": "error", "error": f"{type(exc).__name__}: {exc}"}, 500)
 
         def do_POST(self) -> None:  # noqa: N802
             route = urlparse(self.path).path
@@ -216,6 +297,13 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                     self.send_json({"status": "ok", **doc.apply(op, params)})
                 elif route == "/api/undo":
                     self.send_json({"status": "ok", **doc.undo()})
+                elif route == "/api/draft":
+                    action = str(payload.get("action") or "")
+                    handler = {"begin": doc.draft_begin, "commit": doc.draft_commit,
+                               "rollback": doc.draft_rollback}.get(action)
+                    if handler is None:
+                        raise CanvasError("action must be begin | commit | rollback")
+                    self.send_json({"status": "ok", **handler()})
                 elif route == "/api/save":
                     raw_target = payload.get("path")
                     saved = doc.save(clean_path(str(raw_target)) if raw_target else None)
@@ -237,6 +325,8 @@ def serve(project_root: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT,
     state = CanvasState(project_root=project_root.resolve())
     if svg:
         state.document.load(svg)
+    elif state.try_restore_autosave():
+        print("[canvas] restored autosaved session", file=sys.stderr)
     server = ThreadingHTTPServer((host, port), make_handler(state))
     url = f"http://{host}:{server.server_address[1]}/"
     print(url)

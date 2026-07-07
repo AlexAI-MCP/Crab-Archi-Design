@@ -178,3 +178,78 @@ def test_list_elements_drawn_only(doc: CanvasDocument) -> None:
     drawn = doc.list_elements(drawn_only=True)
     assert {e["tag"] for e in drawn} == {"line", "polygon"}
     assert len(doc.list_elements()) > len(drawn)  # 원본 요소는 제외됨
+
+
+ROOM_SVG = """<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 300\">
+  <line x1=\"50\" y1=\"50\" x2=\"250\" y2=\"50\" stroke=\"black\" stroke-width=\"2\"/>
+  <line x1=\"250\" y1=\"50\" x2=\"250\" y2=\"200\" stroke=\"black\" stroke-width=\"2\"/>
+  <line x1=\"250\" y1=\"200\" x2=\"50\" y2=\"200\" stroke=\"black\" stroke-width=\"2\"/>
+  <line x1=\"50\" y1=\"200\" x2=\"50\" y2=\"50\" stroke=\"black\" stroke-width=\"2\"/>
+  <text x=\"120\" y=\"120\" font-size=\"10\">ROOM</text>
+</svg>"""
+
+
+def test_recognize_room_area_and_scale() -> None:
+    document = CanvasDocument()
+    document.load_text(ROOM_SVG)
+    document.apply("set_scale", {"mm_per_unit": 100})  # 1 unit = 0.1m
+    room = document.recognize_room(150, 120, cell=2, max_span=200)
+    assert room["enclosed"]
+    # 200x150 units = 20m x 15m = 300 m²(±격자 오차)
+    assert abs(room["area_m2"] - 300) < 25
+    assert room["area_pyeong"] > 80
+    rooms = document.recognize_rooms(cell=2, max_span=200)
+    assert rooms and rooms[0]["label"] == "ROOM" and rooms[0]["enclosed"]
+
+
+def test_set_scale_calibration() -> None:
+    document = CanvasDocument()
+    document.load_text(ROOM_SVG)
+    result = document.apply("set_scale", {"known_mm": 2500, "p1": [0, 0], "p2": [25, 0]})
+    assert abs(result["mm_per_unit"] - 100) < 1e-6
+    assert document.status()["mm_per_unit"] == 100
+
+
+def test_stretch_extends_walls() -> None:
+    document = CanvasDocument()
+    document.load_text(ROOM_SVG)
+    # 방 하부(y150~230)를 아래로 40 늘리기: 세로벽 연장 + 하부벽 이동
+    result = document.apply("stretch", {"box": [40, 150, 260, 230], "dx": 0, "dy": 40})
+    assert result["stretched_count"] == 3  # 좌우 세로벽 하단점 2 + 하부벽 1
+    room = document.recognize_room(150, 120, cell=2, max_span=250)
+    assert abs((room["bbox"][3] - room["bbox"][1]) - 190) < 8  # 150 → 190
+
+
+def test_no_go_zone_blocks_and_force_overrides() -> None:
+    document = CanvasDocument()
+    document.load_text(ROOM_SVG)
+    document.apply("set_zone", {"mode": "no_go_zone", "points": [[0, 0], [40, 0], [40, 300], [0, 300]], "name": "램프"})
+    with pytest.raises(CanvasError, match="램프"):
+        document.apply("draw_line", {"x1": 10, "y1": 10, "x2": 30, "y2": 30})
+    ok = document.apply("draw_line", {"x1": 10, "y1": 10, "x2": 30, "y2": 30, "force": True})
+    assert ok["cid"]
+    with pytest.raises(CanvasError):
+        document.apply("stretch", {"box": [45, 40, 60, 210], "dx": -20, "dy": 0})
+
+
+def test_draft_rollback_restores_bulk_delete(doc: CanvasDocument) -> None:
+    before = doc.status()["element_count"]
+    doc.draft_begin()
+    cids = [e["cid"] for e in doc.list_elements()]
+    doc.apply("delete_elements", {"cids": cids})
+    assert doc.status()["element_count"] < before
+    doc.draft_rollback()
+    assert doc.status()["element_count"] == before
+    with pytest.raises(CanvasError):
+        doc.draft_commit()  # 이미 닫힘
+
+
+def test_autosave_journal(tmp_path: Path) -> None:
+    document = CanvasDocument()
+    document.autosave_path = tmp_path / "auto.svg"
+    document.load_text(ROOM_SVG)
+    document.apply("draw_line", {"x1": 0, "y1": 0, "x2": 5, "y2": 5})
+    assert document.autosave_path.exists()
+    restored = CanvasDocument()
+    restored.load_text(document.autosave_path.read_text(encoding="utf-8"))
+    assert restored.status()["element_count"] == document.status()["element_count"]
