@@ -143,6 +143,20 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Remove zones (all, or only one mode).",
         "kind": ("op", "clear_zones"), "schema": schema({"mode": ZONE_MODE}, []),
     },
+    "browser_state": {
+        "description": "What the user is doing in the browser RIGHT NOW: selected elements (full descriptions — resolves '이거/이 선' references), the viewBox they are looking at (pass to render_view to see the same area), and queued messages they typed to you (drained on read). Check this FIRST whenever the user references something on screen.",
+        "kind": ("get", "/api/session"),
+        "schema": schema({"drain": {"type": "boolean",
+                                    "description": "Consume queued user messages (default true)."}}, []),
+        "readonly": True,
+    },
+    "notify_user": {
+        "description": "Send a short notice to the user's browser (toast in the log panel), optionally with pointer=[x,y] to flash a blinking marker on the drawing — use it to say '여기' while explaining.",
+        "kind": ("post", "/api/notify"),
+        "schema": schema({"text": STR,
+                          "pointer": {"type": "array", "items": NUM, "minItems": 2, "maxItems": 2,
+                                      "description": "Drawing coordinates to point at."}}, ["text"]),
+    },
     "list_symbols": {
         "description": "Catalog of discipline symbols (건축·조경·전기·기계·소방·토목) available for place_symbol: doors, columns, trees, shrubs, lights, outlets, panels, diffusers, valves, sprinklers, detectors, manholes, catch basins, slope arrows...",
         "kind": ("get", "/api/symbols"), "schema": schema({}, []), "readonly": True,

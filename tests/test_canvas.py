@@ -276,3 +276,26 @@ def test_symbol_respects_no_go(doc: CanvasDocument) -> None:
     doc.apply("set_zone", {"mode": "no_go_zone", "points": [[0, 0], [100, 0], [100, 100], [0, 100]], "name": "보호"})
     with pytest.raises(CanvasError, match="보호"):
         doc.apply("place_symbol", {"name": "manhole", "x": 50, "y": 50})
+
+
+def test_bidirectional_session_channel(server) -> None:
+    base, svg_path = server
+    http_json(base + "/api/open", {"path": str(svg_path)})
+    line = http_json(base + "/api/op", {"op": "draw_line", "params": {"x1": 0, "y1": 0, "x2": 9, "y2": 9}})
+    # 브라우저 → 선택/뷰포트 보고
+    http_json(base + "/api/session/update", {"selection": [line["cid"]], "viewport": [0, 0, 100, 80]})
+    # 브라우저 → 사용자 메시지
+    http_json(base + "/api/message", {"text": "이 선을 벽으로 바꿔줘"})
+    # 에이전트 → 세션 조회 (선택 해석 + 메시지 drain)
+    session = http_json(base + "/api/session?drain=1")
+    assert session["viewport"] == [0, 0, 100, 80]
+    assert session["selection"][0]["cid"] == line["cid"] and session["selection"][0]["tag"] == "line"
+    assert session["user_messages"][0]["text"] == "이 선을 벽으로 바꿔줘"
+    assert session["user_messages"][0]["selection"] == [line["cid"]]  # 메시지에 당시 선택 동봉
+    assert http_json(base + "/api/session?drain=1")["user_messages"] == []  # drained
+    # 에이전트 → 알림 + 포인터
+    http_json(base + "/api/notify", {"text": "여기를 보세요", "pointer": [50, 40]})
+    notices = http_json(base + "/api/session/browser?since=0")
+    assert notices["notices"][0]["text"] == "여기를 보세요"
+    assert notices["notices"][0]["pointer"] == [50, 40]
+    assert http_json(base + "/api/session/browser?since=" + str(notices["seq"]))["notices"] == []

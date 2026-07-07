@@ -65,7 +65,8 @@
     <input id="strokeWidth" type="number" value="2" min="0.5" step="0.5" style="width:56px" title="선 두께">
     <button id="btnDelete">삭제</button>
   </div>
-  <input id="prompt" type="text" placeholder="자연어 설계 요청 (재생성 파이프라인에 전달)">
+  <input id="prompt" type="text" placeholder="메시지(에이전트에게) 또는 재생성 프롬프트">
+  <button id="btnSend">💬 에이전트에게</button>
   <button id="btnRegen">재생성</button>
 </header>
 <main>
@@ -132,6 +133,7 @@ function zoomAt(cx, cy, factor) {
   const nw = Math.max(10, w * factor), nh = Math.max(10, h * factor);
   S.view = [cx - (cx - x) * (nw / w), cy - (cy - y) * (nh / h), nw, nh];
   applyView();
+  syncSession();
 }
 $('viewport').addEventListener('wheel', evt => {
   evt.preventDefault();
@@ -151,7 +153,7 @@ $('viewport').addEventListener('pointerdown', evt => {
     S.view = [v0[0] - (p2.x - start[0]), v0[1] - (p2.y - start[1]), v0[2], v0[3]];
     applyView();
   };
-  const up = () => { S.panning = false; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  const up = () => { S.panning = false; syncSession(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 });
 document.addEventListener('keydown', e => { if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT') { S.spaceDown = true; e.preventDefault(); } });
@@ -199,6 +201,42 @@ function snapPoint(p, evt) {
 }
 const style = () => ({ stroke: $('strokeColor').value, 'stroke-width': $('strokeWidth').value, fill: 'none' });
 
+// ---- 에이전트 양방향 채널 ----
+S.noticeSeq = 0;
+let syncTimer = null;
+function syncSession(immediate) {  // 선택은 즉시, 뷰포트는 250ms 스로틀
+  const send = () => api('/api/session/update', { selection: S.selected, viewport: S.view || S.docBox }).catch(()=>{});
+  clearTimeout(syncTimer);
+  if (immediate) send(); else syncTimer = setTimeout(send, 250);
+}
+async function pollNotices() {     // 에이전트 알림·포인터 수신
+  try {
+    const r = await api('/api/session/browser?since=' + S.noticeSeq);
+    for (const n of r.notices || []) {
+      S.noticeSeq = n.seq;
+      if (n.text) log('🤖 ' + n.text);
+      if (n.pointer) showPointer(n.pointer[0], n.pointer[1]);
+    }
+  } catch (e) {}
+}
+setInterval(pollNotices, 1500);
+function showPointer(x, y) {       // 화면에 4초간 깜빡이는 마커
+  const ns = 'http://www.w3.org/2000/svg';
+  const o = $('overlay');
+  const g = document.createElementNS(ns, 'g');
+  const view = S.view || S.docBox; const r = view ? view[2]/40 : 20;
+  for (const [rad, w] of [[r, 3], [r*0.55, 2]]) {
+    const c = document.createElementNS(ns, 'circle');
+    c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', rad);
+    c.setAttribute('stroke', '#ff3b30'); c.setAttribute('fill', 'none'); c.setAttribute('stroke-width', w);
+    g.appendChild(c);
+  }
+  o.appendChild(g);
+  let on = true;
+  const blink = setInterval(() => { g.style.opacity = (on = !on) ? 1 : 0.15; }, 350);
+  setTimeout(() => { clearInterval(blink); g.remove(); }, 4500);
+}
+
 function restoreSelection() {
   S.selected = S.selected.filter(cid => {
     const el = $('stage').querySelector(`[data-cid="${cid}"]`);
@@ -211,6 +249,7 @@ function select(cid, additive) {
   if (!additive) { S.selected = []; $('stage').querySelectorAll('.sel').forEach(e=>e.classList.remove('sel')); }
   if (cid && !S.selected.includes(cid)) S.selected.push(cid);
   restoreSelection();
+  syncSession(true);
 }
 
 // preview overlay
@@ -297,6 +336,13 @@ $('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r
 $('btnFit').onclick = () => { S.view = null; applyView(); };
 $('btnSnap').onclick = () => { S.snap = !S.snap; $('btnSnap').classList.toggle('active', S.snap); log('스냅 ' + (S.snap ? '켜짐 (끝점>직교(Shift)>그리드)' : '꺼짐')); };
 $('btnDelete').onclick = () => { if (S.selected.length) { op('delete_elements', { cids:S.selected.slice() }); S.selected = []; } };
+$('btnSend').onclick = async () => {
+  const text = $('prompt').value.trim(); if (!text) { log('보낼 메시지를 입력하세요'); return; }
+  const r = await api('/api/message', { text });
+  if (r.status === 'ok') { log('💬 에이전트에게 전달됨: ' + text); $('prompt').value = ''; }
+  else log('오류: ' + r.error);
+};
+$('prompt').addEventListener('keydown', evt => { if (evt.key === 'Enter') $('btnSend').click(); });
 $('btnRegen').onclick = async () => {
   const prompt = $('prompt').value.trim(); if (!prompt) { log('재생성: 프롬프트를 입력하세요'); return; }
   log('재생성 실행 중… (수 분 걸릴 수 있음)'); $('btnRegen').disabled = true;

@@ -28,6 +28,13 @@ description: Crab-Archi-Design 라이브 SVG 캔버스로 건축 도면을 분�
 - 면적 기준 대조: `/Users/alex/Work/Community/그리너리라운지 세부 설계면적 기준(2024).csv` (세대수 열 선택).
 - 근거 조회: OpenCrab MCP `opencrab_query` — "A-801~802 커뮤니티" 팩들에 투영구역·토폴로지 레버·세션 이력.
 
+## 양방향 소통 (브라우저 ↔ 에이전트)
+- 사용자가 "이거/이 선/여기"라고 하면 **무조건 `browser_state` 먼저** — 선택 요소 상세, 현재 보고 있는 viewBox,
+  사용자가 💬 버튼으로 보낸 메시지(당시 선택 동봉)가 온다. viewport를 `render_view(bbox=viewport)`에 넣으면
+  사용자와 같은 화면을 본다.
+- 설명할 때 `notify_user(text, pointer=[x,y])`로 브라우저에 알림 + 깜빡이는 마커를 찍어 "여기"를 가리켜라.
+- 작업 완료·경고도 notify_user로 즉시 알린다 (사용자는 채팅창을 안 보고 있을 수 있다).
+
 ## 다분야 작업 (건축·조경·전기·기계·소방·토목)
 - 분야 요소는 반드시 해당 레이어에: draw 계열의 `layer` 인자 또는 `place_symbol`(자동 배정).
 - 심볼 카탈로그는 `list_symbols` — 수목/조명/콘센트/디퓨저/밸브/스프링클러/맨홀 등 23종, 회전·스케일·라벨 지원.

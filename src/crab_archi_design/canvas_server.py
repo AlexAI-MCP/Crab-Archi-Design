@@ -109,6 +109,20 @@ class CanvasState:
         self.repo_root = Path(__file__).resolve().parents[2]
         self.regen_lock = threading.Lock()
         self.document.autosave_path = project_root / ".canvas_autosave.svg"
+        # 브라우저↔에이전트 양방향 세션 채널
+        self.session_lock = threading.Lock()
+        self.selection: list[str] = []          # 브라우저에서 선택된 cid들
+        self.viewport: list[float] | None = None  # 사용자가 보고 있는 viewBox
+        self.inbox: list[dict[str, Any]] = []   # 사용자 → 에이전트 메시지
+        self.notices: list[dict[str, Any]] = [] # 에이전트 → 브라우저 알림/포인터
+        self.notice_seq = 0
+
+    def push_notice(self, text: str, pointer: list[float] | None = None) -> int:
+        with self.session_lock:
+            self.notice_seq += 1
+            self.notices.append({"seq": self.notice_seq, "text": text, "pointer": pointer})
+            self.notices = self.notices[-50:]
+            return self.notice_seq
 
     def try_restore_autosave(self) -> bool:
         path = self.document.autosave_path
@@ -246,6 +260,30 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                     self.send_json({"status": "ok", "disciplines": DISCIPLINES, "symbols": catalog()})
                 elif route == "/api/layers":
                     self.send_json({"status": "ok", "layers": doc.list_layers()})
+                elif route == "/api/session":
+                    # 에이전트용: 브라우저 컨텍스트 + 사용자 메시지 (drain=1이면 인박스 비움)
+                    drain = str(self.query().get("drain", "1")).lower() in ("1", "true")
+                    with state.session_lock:
+                        selection = list(state.selection)
+                        viewport = state.viewport
+                        messages = list(state.inbox)
+                        if drain:
+                            state.inbox.clear()
+                    details = []
+                    for cid in selection[:20]:
+                        try:
+                            details.append(doc.describe(doc.find(cid)))
+                        except CanvasError:
+                            continue
+                    self.send_json({"status": "ok", "selection": details,
+                                    "viewport": viewport, "user_messages": messages})
+                elif route == "/api/session/browser":
+                    # 브라우저용: 에이전트 알림/포인터 (since 이후만)
+                    since = int(self.query().get("since", 0))
+                    with state.session_lock:
+                        fresh = [n for n in state.notices if n["seq"] > since]
+                        seq = state.notice_seq
+                    self.send_json({"status": "ok", "notices": fresh, "seq": seq})
                 elif route == "/api/rooms":
                     params = self.query()
                     if params.get("x") and params.get("y"):
@@ -303,6 +341,34 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                     self.send_json({"status": "ok", **doc.apply(op, params)})
                 elif route == "/api/undo":
                     self.send_json({"status": "ok", **doc.undo()})
+                elif route == "/api/session/update":
+                    # 브라우저 → 선택/뷰포트 보고
+                    with state.session_lock:
+                        if isinstance(payload.get("selection"), list):
+                            state.selection = [str(c) for c in payload["selection"]][:100]
+                        if isinstance(payload.get("viewport"), list) and len(payload["viewport"]) == 4:
+                            state.viewport = [float(v) for v in payload["viewport"]]
+                    self.send_json({"status": "ok"})
+                elif route == "/api/message":
+                    # 브라우저 → 에이전트 메시지
+                    text = str(payload.get("text") or "").strip()
+                    if not text:
+                        raise CanvasError("text is required")
+                    import time
+                    with state.session_lock:
+                        state.inbox.append({"text": text, "ts": time.time(),
+                                            "viewport": state.viewport,
+                                            "selection": list(state.selection)})
+                        state.inbox = state.inbox[-50:]
+                    self.send_json({"status": "ok", "queued": len(state.inbox)})
+                elif route == "/api/notify":
+                    # 에이전트 → 브라우저 알림 (+선택적 포인터 좌표)
+                    text = str(payload.get("text") or "").strip()
+                    pointer = payload.get("pointer")
+                    if pointer is not None and (not isinstance(pointer, list) or len(pointer) < 2):
+                        raise CanvasError("pointer must be [x, y]")
+                    seq = state.push_notice(text, [float(pointer[0]), float(pointer[1])] if pointer else None)
+                    self.send_json({"status": "ok", "seq": seq})
                 elif route == "/api/draft":
                     action = str(payload.get("action") or "")
                     handler = {"begin": doc.draft_begin, "commit": doc.draft_commit,
