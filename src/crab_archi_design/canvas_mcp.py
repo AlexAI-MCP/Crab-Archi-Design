@@ -33,6 +33,8 @@ CIDS = {"type": "array", "items": STR, "description": "Element handles (data-cid
 
 ZONE_MODE = {"type": "string", "enum": ["community_shell", "no_go_zone", "lock_boundary",
                                         "protect_zone", "mutable_zone", "projectable_zone"]}
+LAYER = {"type": "string", "description": "Target layer name — use a discipline (arch/landscape/"
+         "electrical/mechanical/fire/civil) or any name; omit for the default sketch layer."}
 
 
 def schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -59,7 +61,8 @@ TOOLS: dict[str, dict[str, Any]] = {
         "kind": ("get", "/api/elements"),
         "schema": schema({"tag": {**STR, "description": "Filter by SVG tag, e.g. 'path', 'text', 'g'."},
                           "max_results": {"type": "integer"},
-                          "drawn": {"type": "boolean", "description": "Only session-drawn strokes and zones (crab_drawn/crab_zones layers)."}}, []),
+                          "drawn": {"type": "boolean", "description": "Only session-drawn strokes and zones (crab_drawn/crab_zones/crab_layer_* layers)."},
+                          "layer": LAYER}, []),
         "readonly": True,
     },
     "list_zones": {
@@ -69,38 +72,38 @@ TOOLS: dict[str, dict[str, Any]] = {
     "draw_line": {
         "description": "Draw a straight line on the canvas.",
         "kind": ("op", "draw_line"),
-        "schema": schema({"x1": NUM, "y1": NUM, "x2": NUM, "y2": NUM, "style": STYLE},
+        "schema": schema({"x1": NUM, "y1": NUM, "x2": NUM, "y2": NUM, "style": STYLE, "layer": LAYER},
                          ["x1", "y1", "x2", "y2"]),
     },
     "draw_polyline": {
         "description": "Draw a polyline (or closed polygon) through the given points.",
         "kind": ("op", "draw_polyline"),
-        "schema": schema({"points": POINTS, "closed": {"type": "boolean"}, "style": STYLE}, ["points"]),
+        "schema": schema({"points": POINTS, "closed": {"type": "boolean"}, "style": STYLE, "layer": LAYER}, ["points"]),
     },
     "draw_curve": {
         "description": "Draw a smooth curve through the given points (Catmull-Rom interpolation).",
-        "kind": ("op", "draw_curve"), "schema": schema({"points": POINTS, "style": STYLE}, ["points"]),
+        "kind": ("op", "draw_curve"), "schema": schema({"points": POINTS, "style": STYLE, "layer": LAYER}, ["points"]),
     },
     "draw_path": {
         "description": "Draw a raw SVG path (full path-d syntax for arcs/beziers).",
-        "kind": ("op", "draw_path"), "schema": schema({"d": STR, "style": STYLE}, ["d"]),
+        "kind": ("op", "draw_path"), "schema": schema({"d": STR, "style": STYLE, "layer": LAYER}, ["d"]),
     },
     "draw_rect": {
         "description": "Draw a rectangle.",
         "kind": ("op", "draw_rect"),
-        "schema": schema({"x": NUM, "y": NUM, "width": NUM, "height": NUM, "rx": NUM, "style": STYLE},
+        "schema": schema({"x": NUM, "y": NUM, "width": NUM, "height": NUM, "rx": NUM, "style": STYLE, "layer": LAYER},
                          ["x", "y", "width", "height"]),
     },
     "draw_ellipse": {
         "description": "Draw a circle (ry omitted) or ellipse.",
         "kind": ("op", "draw_ellipse"),
-        "schema": schema({"cx": NUM, "cy": NUM, "rx": NUM, "ry": NUM, "style": STYLE},
+        "schema": schema({"cx": NUM, "cy": NUM, "rx": NUM, "ry": NUM, "style": STYLE, "layer": LAYER},
                          ["cx", "cy", "rx"]),
     },
     "add_text": {
         "description": "Add a text label at the given position.",
         "kind": ("op", "add_text"),
-        "schema": schema({"x": NUM, "y": NUM, "text": STR, "style": STYLE}, ["x", "y", "text"]),
+        "schema": schema({"x": NUM, "y": NUM, "text": STR, "style": STYLE, "layer": LAYER}, ["x", "y", "text"]),
     },
     "delete_elements": {
         "description": "Delete elements by cid (from list_elements). Undoable.",
@@ -139,6 +142,24 @@ TOOLS: dict[str, dict[str, Any]] = {
     "clear_zones": {
         "description": "Remove zones (all, or only one mode).",
         "kind": ("op", "clear_zones"), "schema": schema({"mode": ZONE_MODE}, []),
+    },
+    "list_symbols": {
+        "description": "Catalog of discipline symbols (건축·조경·전기·기계·소방·토목) available for place_symbol: doors, columns, trees, shrubs, lights, outlets, panels, diffusers, valves, sprinklers, detectors, manholes, catch basins, slope arrows...",
+        "kind": ("get", "/api/symbols"), "schema": schema({}, []), "readonly": True,
+    },
+    "place_symbol": {
+        "description": "Stamp a parametric discipline symbol at (x,y) with optional rotation/scale/label — e.g. tree_deciduous for 조경 식재, light_ceiling/outlet for 전기, diffuser_supply/valve for 기계, sprinkler for 소방, manhole/slope_arrow for 토목. Goes onto the discipline's layer automatically (override with layer).",
+        "kind": ("op", "place_symbol"),
+        "schema": schema({"name": {**STR, "description": "Symbol name from list_symbols."},
+                          "x": NUM, "y": NUM,
+                          "rotation": {**NUM, "description": "Degrees clockwise."},
+                          "scale": NUM, "layer": LAYER,
+                          "label": {**STR, "description": "Optional tag text beside the symbol (수종명, 회로번호 등)."}},
+                         ["name", "x", "y"]),
+    },
+    "list_layers": {
+        "description": "List canvas session layers (crab_drawn, crab_zones, discipline layers) with element counts. Combine with list_elements(layer=...) to inspect one discipline.",
+        "kind": ("get", "/api/layers"), "schema": schema({}, []), "readonly": True,
     },
     "recognize_rooms": {
         "description": "Recognize rooms by flood-filling against bold wall geometry (door gaps up to door_close units auto-sealed). Pass x/y for the room around one point, or omit to scan every text label. Returns bbox and area (m²/평 when a scale is set via set_scale). THE tool for area checks against design standards. Note: open-plan spaces connected by wide openings merge into one region (enclosed=false) — that reflects real connectivity.",

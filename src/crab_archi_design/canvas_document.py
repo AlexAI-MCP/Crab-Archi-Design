@@ -396,16 +396,21 @@ class CanvasDocument:
         return info
 
     def list_elements(self, tag: str | None = None, max_results: int = 200,
-                      drawn_only: bool = False) -> list[dict[str, Any]]:
-        """List graphic elements; drawn_only restricts to the canvas-session layers
-        (crab_drawn / crab_zones) — i.e. strokes drawn in the browser or via MCP."""
+                      drawn_only: bool = False, layer: str | None = None) -> list[dict[str, Any]]:
+        """List graphic elements; drawn_only restricts to all canvas-session layers
+        (crab_drawn / crab_zones / crab_layer_*); layer restricts to one named layer."""
         with self.lock:
             roots: list[ET.Element] = []
-            if drawn_only:
-                for layer_id in (DRAW_LAYER_ID, ZONE_LAYER_ID):
-                    layer = self._layer(layer_id, create=False)
-                    if layer is not None:
-                        roots.append(layer)
+            if layer:
+                target = self._layer(self.layer_id(layer), create=False)
+                if target is not None:
+                    roots.append(target)
+            elif drawn_only:
+                for element in self.require_root():
+                    gid = element.get("id") or ""
+                    if local_name(element) == "g" and (
+                            gid in (DRAW_LAYER_ID, ZONE_LAYER_ID) or gid.startswith("crab_layer_")):
+                        roots.append(element)
             else:
                 roots.append(self.require_root())
             results = []
@@ -414,7 +419,7 @@ class CanvasDocument:
                     name = local_name(element)
                     if name not in GRAPHIC_TAGS or (tag and name != tag):
                         continue
-                    if drawn_only and element in roots:
+                    if (drawn_only or layer) and element in roots:
                         continue  # skip the layer <g> itself
                     results.append(self.describe(element))
                     if len(results) >= max_results:
@@ -565,9 +570,18 @@ class CanvasDocument:
             if key in STYLE_ATTRS and value is not None:
                 element.set(key, str(value))
 
+    @staticmethod
+    def layer_id(layer: str | None) -> str:
+        """Sanitized layer group id. None → default draw layer; names map to
+        crab_layer_<name> (분야별: arch/landscape/electrical/mechanical/fire/civil …)."""
+        if not layer:
+            return DRAW_LAYER_ID
+        clean = re.sub(r"[^a-zA-Z0-9_-]", "_", str(layer))[:40]
+        return f"crab_layer_{clean}"
+
     def _add_shape(self, tag: str, attrs: dict[str, str], style: dict[str, Any] | None,
-                   defaults: dict[str, str]) -> dict[str, Any]:
-        layer = self._layer(DRAW_LAYER_ID)
+                   defaults: dict[str, str], layer: str | None = None) -> dict[str, Any]:
+        layer = self._layer(self.layer_id(layer))
         merged = {**defaults, **attrs, "data-cid": self._new_cid()}
         element = ET.SubElement(layer, q(tag), merged)
         self._apply_style(element, style)
@@ -583,25 +597,25 @@ class CanvasDocument:
     # ---- ops: drawing ----------------------------------------------------
 
     def op_draw_line(self, x1: float, y1: float, x2: float, y2: float,
-                     style: dict[str, Any] | None = None) -> dict[str, Any]:
+                     style: dict[str, Any] | None = None, layer: str | None = None) -> dict[str, Any]:
         return self._add_shape("line", {"x1": fmt(x1), "y1": fmt(y1), "x2": fmt(x2), "y2": fmt(y2)},
-                               style, {"stroke": "#111111", "stroke-width": "2"})
+                               style, {"stroke": "#111111", "stroke-width": "2"}, layer=layer)
 
     def op_draw_polyline(self, points: list[list[float]], closed: bool = False,
-                         style: dict[str, Any] | None = None) -> dict[str, Any]:
+                         style: dict[str, Any] | None = None, layer: str | None = None) -> dict[str, Any]:
         if len(points) < 2:
             raise CanvasError("polyline needs at least 2 points")
         tag = "polygon" if closed else "polyline"
         return self._add_shape(tag, {"points": points_attr(points)}, style,
-                               {"stroke": "#111111", "stroke-width": "2", "fill": "none"})
+                               {"stroke": "#111111", "stroke-width": "2", "fill": "none"}, layer=layer)
 
-    def op_draw_path(self, d: str, style: dict[str, Any] | None = None) -> dict[str, Any]:
+    def op_draw_path(self, d: str, style: dict[str, Any] | None = None, layer: str | None = None) -> dict[str, Any]:
         if not d.strip() or d.strip()[0].upper() != "M":
             raise CanvasError("path d must start with a moveto (M)")
         return self._add_shape("path", {"d": d.strip()}, style,
-                               {"stroke": "#111111", "stroke-width": "2", "fill": "none"})
+                               {"stroke": "#111111", "stroke-width": "2", "fill": "none"}, layer=layer)
 
-    def op_draw_curve(self, points: list[list[float]], style: dict[str, Any] | None = None) -> dict[str, Any]:
+    def op_draw_curve(self, points: list[list[float]], style: dict[str, Any] | None = None, layer: str | None = None) -> dict[str, Any]:
         """Smooth open curve through the given points (Catmull-Rom → cubic Bezier)."""
         if len(points) < 3:
             raise CanvasError("curve needs at least 3 points")
@@ -615,28 +629,29 @@ class CanvasDocument:
             d += (f" C {fmt(c1[0])} {fmt(c1[1])}, {fmt(c2[0])} {fmt(c2[1])},"
                   f" {fmt(p[i + 1][0])} {fmt(p[i + 1][1])}")
         return self._add_shape("path", {"d": d}, style,
-                               {"stroke": "#111111", "stroke-width": "2", "fill": "none"})
+                               {"stroke": "#111111", "stroke-width": "2", "fill": "none"}, layer=layer)
 
     def op_draw_rect(self, x: float, y: float, width: float, height: float,
-                     rx: float | None = None, style: dict[str, Any] | None = None) -> dict[str, Any]:
+                     rx: float | None = None, style: dict[str, Any] | None = None,
+                     layer: str | None = None) -> dict[str, Any]:
         attrs = {"x": fmt(x), "y": fmt(y), "width": fmt(width), "height": fmt(height)}
         if rx is not None:
             attrs["rx"] = fmt(rx)
         return self._add_shape("rect", attrs, style,
-                               {"stroke": "#111111", "stroke-width": "2", "fill": "none"})
+                               {"stroke": "#111111", "stroke-width": "2", "fill": "none"}, layer=layer)
 
     def op_draw_ellipse(self, cx: float, cy: float, rx: float, ry: float | None = None,
-                        style: dict[str, Any] | None = None) -> dict[str, Any]:
+                        style: dict[str, Any] | None = None, layer: str | None = None) -> dict[str, Any]:
         if ry is None or abs(float(ry) - float(rx)) < 1e-9:
             return self._add_shape("circle", {"cx": fmt(cx), "cy": fmt(cy), "r": fmt(rx)}, style,
-                                   {"stroke": "#111111", "stroke-width": "2", "fill": "none"})
+                                   {"stroke": "#111111", "stroke-width": "2", "fill": "none"}, layer=layer)
         return self._add_shape("ellipse", {"cx": fmt(cx), "cy": fmt(cy), "rx": fmt(rx), "ry": fmt(ry)},
-                               style, {"stroke": "#111111", "stroke-width": "2", "fill": "none"})
+                               style, {"stroke": "#111111", "stroke-width": "2", "fill": "none"}, layer=layer)
 
     def op_add_text(self, x: float, y: float, text: str,
-                    style: dict[str, Any] | None = None) -> dict[str, Any]:
+                    style: dict[str, Any] | None = None, layer: str | None = None) -> dict[str, Any]:
         result = self._add_shape("text", {"x": fmt(x), "y": fmt(y)}, style,
-                                 {"fill": "#111111", "font-size": "16"})
+                                 {"fill": "#111111", "font-size": "16"}, layer=layer)
         self.find(result["cid"]).text = str(text)
         return result
 
@@ -965,6 +980,55 @@ class CanvasDocument:
                     room = {"error": str(exc)}
                 results.append({"label": label["text"], "label_cid": label["cid"], **room})
         return results
+
+    def op_place_symbol(self, name: str, x: float, y: float, rotation: float = 0.0,
+                        scale: float = 1.0, layer: str | None = None,
+                        label: str | None = None) -> dict[str, Any]:
+        """Place a discipline symbol (조경 수목, 전기 조명·콘센트, 기계 디퓨저·밸브,
+        소방 스프링클러, 토목 맨홀 등) at (x, y). See canvas_symbols.catalog()."""
+        from crab_archi_design.canvas_symbols import build_symbol
+        try:
+            symbol, discipline = build_symbol(str(name))
+        except KeyError:
+            from crab_archi_design.canvas_symbols import SYMBOLS
+            raise CanvasError(f"unknown symbol {name!r}; available: {', '.join(sorted(SYMBOLS))}") from None
+        parent = self._layer(self.layer_id(layer or discipline))
+        transform = f"translate({fmt(x)},{fmt(y)})"
+        if rotation:
+            transform += f" rotate({fmt(rotation)})"
+        if scale and abs(float(scale) - 1.0) > 1e-9:
+            transform += f" scale({fmt(scale)})"
+        symbol.set("transform", transform)
+        symbol.set("data-cid", self._new_cid())
+        symbol.set("data-symbol", str(name))
+        parent.append(symbol)
+        bbox = self.world_bbox(symbol)
+        if bbox:
+            try:
+                self._check_no_go(bbox, f"place {name}")
+            except CanvasError:
+                parent.remove(symbol)
+                raise
+        result = {"cid": symbol.get("data-cid"), "symbol": name,
+                  "discipline": discipline, "layer": parent.get("id")}
+        if label:
+            text = ET.SubElement(parent, q("text"),
+                                 {"x": fmt(x + 8 * float(scale)), "y": fmt(y + 3),
+                                  "data-cid": self._new_cid(), "fill": "#111111",
+                                  "font-size": fmt(6 * float(scale))})
+            text.text = str(label)
+            result["label_cid"] = text.get("data-cid")
+        return result
+
+    def list_layers(self) -> list[dict[str, Any]]:
+        layers = []
+        for element in self.require_root():
+            gid = element.get("id") or ""
+            if local_name(element) == "g" and (gid.startswith("crab_layer_") or gid in (DRAW_LAYER_ID, ZONE_LAYER_ID)):
+                count = sum(1 for c in element.iter()
+                            if c is not element and local_name(c) in GRAPHIC_TAGS)
+                layers.append({"id": gid, "elements": count})
+        return layers
 
     # ---- ops: zones ------------------------------------------------------
 

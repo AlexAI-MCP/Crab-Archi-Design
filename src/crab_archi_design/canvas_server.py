@@ -34,7 +34,7 @@ ALLOWED_OPS = {
     "draw_line", "draw_polyline", "draw_path", "draw_curve", "draw_rect",
     "draw_ellipse", "add_text", "delete_elements", "move_element",
     "copy_element", "copy_style", "set_style", "set_attrs",
-    "set_zone", "clear_zones", "stretch", "set_scale",
+    "set_zone", "clear_zones", "stretch", "set_scale", "place_symbol",
 }
 
 
@@ -237,9 +237,15 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                                     "elements": doc.list_elements(
                                         tag=params.get("tag") or None,
                                         max_results=int(params.get("max_results", 200)),
-                                        drawn_only=str(params.get("drawn", "")).lower() in ("1", "true"))})
+                                        drawn_only=str(params.get("drawn", "")).lower() in ("1", "true"),
+                                        layer=params.get("layer") or None)})
                 elif route == "/api/zones":
                     self.send_json({"status": "ok", "zones": doc.list_zones()})
+                elif route == "/api/symbols":
+                    from crab_archi_design.canvas_symbols import DISCIPLINES, catalog
+                    self.send_json({"status": "ok", "disciplines": DISCIPLINES, "symbols": catalog()})
+                elif route == "/api/layers":
+                    self.send_json({"status": "ok", "layers": doc.list_layers()})
                 elif route == "/api/rooms":
                     params = self.query()
                     if params.get("x") and params.get("y"):

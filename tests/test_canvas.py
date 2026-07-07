@@ -253,3 +253,26 @@ def test_autosave_journal(tmp_path: Path) -> None:
     restored = CanvasDocument()
     restored.load_text(document.autosave_path.read_text(encoding="utf-8"))
     assert restored.status()["element_count"] == document.status()["element_count"]
+
+
+def test_layers_and_symbols(doc: CanvasDocument) -> None:
+    from crab_archi_design.canvas_symbols import SYMBOLS, catalog
+    assert len(catalog()) == len(SYMBOLS) >= 20
+    tree = doc.apply("place_symbol", {"name": "tree_deciduous", "x": 50, "y": 50, "label": "느티나무"})
+    assert tree["discipline"] == "landscape" and tree["layer"] == "crab_layer_landscape"
+    doc.apply("place_symbol", {"name": "sprinkler", "x": 60, "y": 60})
+    doc.apply("draw_line", {"x1": 0, "y1": 0, "x2": 9, "y2": 9, "layer": "electrical"})
+    layers = {l["id"]: l["elements"] for l in doc.list_layers()}
+    assert "crab_layer_landscape" in layers and "crab_layer_fire" in layers
+    only_elec = doc.list_elements(layer="electrical")
+    assert len(only_elec) == 1 and only_elec[0]["tag"] == "line"
+    drawn = doc.list_elements(drawn_only=True)
+    assert any(e["tag"] == "g" or e["cid"] == tree["cid"] for e in drawn)
+    with pytest.raises(CanvasError, match="unknown symbol"):
+        doc.apply("place_symbol", {"name": "ufo", "x": 0, "y": 0})
+
+
+def test_symbol_respects_no_go(doc: CanvasDocument) -> None:
+    doc.apply("set_zone", {"mode": "no_go_zone", "points": [[0, 0], [100, 0], [100, 100], [0, 100]], "name": "보호"})
+    with pytest.raises(CanvasError, match="보호"):
+        doc.apply("place_symbol", {"name": "manhole", "x": 50, "y": 50})
