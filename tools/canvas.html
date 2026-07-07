@@ -34,6 +34,7 @@
     <input id="svgPath" type="text" placeholder="SVG 파일 절대 경로">
     <button id="btnOpen">열기</button>
     <button id="btnBrowse">📂 찾아보기</button>
+    <input type="file" id="filePick" accept=".svg,image/svg+xml" style="display:none">
     <button id="btnSave">저장</button>
     <button id="btnUndo">↩ 실행취소</button>
     <button id="btnFit">전체보기</button>
@@ -325,11 +326,22 @@ $('btnOpen').onclick = async () => {
   if (r.status === 'error') log('오류: ' + r.error); else { log('로드됨: ' + $('svgPath').value); S.view = null; poll(true); }
 };
 $('btnBrowse').onclick = async () => {
-  log('파인더에서 SVG 파일을 선택하세요…');
+  log('파인더에서 SVG 파일을 선택하세요… (창이 안 보이면 다른 창 뒤를 확인)');
   const r = await api('/api/pick-file', {});
   if (r.status === 'ok') { $('svgPath').value = r.path; log('로드됨: ' + r.path); S.view = null; poll(true); }
   else if (r.status === 'cancelled') log('파일 선택 취소됨');
-  else log('오류: ' + (r.error || '파일 선택 실패'));
+  else { log('네이티브 선택창 실패(' + (r.error || '?') + ') — 브라우저 선택창으로 대체합니다'); $('filePick').click(); }
+};
+$('filePick').onchange = async evt => {
+  const f = evt.target.files[0]; if (!f) return;
+  const svg = await f.text();
+  const r = await api('/api/open-text', { svg, name: f.name });
+  if (r.status === 'ok') {
+    if (r.path) $('svgPath').value = r.path;
+    log('로드됨(업로드): ' + f.name + (r.path ? ' — 저장 시 ' + r.path : ''));
+    S.view = null; poll(true);
+  } else log('오류: ' + (r.error || '업로드 실패'));
+  evt.target.value = '';
 };
 $('btnSave').onclick = async () => { const r = await api('/api/save', {}); log(r.status==='ok' ? '저장됨: '+r.saved : '오류: '+r.error); };
 $('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r.status==='error') log('오류: '+r.error); poll(true); };

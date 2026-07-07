@@ -82,14 +82,21 @@ def pick_file_dialog() -> str | None:
     """Open a native file picker (macOS Finder) and return the chosen path."""
     if sys.platform != "darwin":
         raise CanvasError("native file picker is only supported on macOS")
-    script = 'POSIX path of (choose file with prompt "SVG 도면 선택" of type {"public.svg-image", "svg"})'
+    # 서버는 GUI 앱이 아닌 백그라운드 프로세스라 activate 없이는
+    # 다이얼로그가 포커스 없이 다른 창 뒤에 열린다
+    script = ('tell me to activate\n'
+              'POSIX path of (choose file with prompt "SVG 도면 선택" '
+              'of type {"public.svg-image", "svg"})')
     try:
         completed = subprocess.run(["osascript", "-e", script],
                                    capture_output=True, text=True, timeout=180)
     except subprocess.TimeoutExpired:
         return None
     if completed.returncode != 0:
-        return None  # user cancelled
+        err = (completed.stderr or "").strip()
+        if "-128" in err:  # user cancelled
+            return None
+        raise CanvasError(f"file dialog failed: {err or 'unknown osascript error'}")
     path = completed.stdout.strip()
     return path or None
 
@@ -330,7 +337,16 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                     else:
                         self.send_json({"status": "ok", **doc.load(picked), "path": picked})
                 elif route == "/api/open-text":
-                    self.send_json({"status": "ok", **doc.load_text(str(payload.get("svg") or ""))})
+                    # 브라우저 업로드 폴백: 파일명이 오면 uploads/ 아래를 저장 경로로 삼는다
+                    name = re.sub(r"[^\w.\- ]", "_", str(payload.get("name") or "")).strip()
+                    source = None
+                    if name:
+                        if not name.lower().endswith(".svg"):
+                            name += ".svg"
+                        source = state.project_root / "uploads" / name
+                    result = doc.load_text(str(payload.get("svg") or ""), source=source)
+                    extra = {"path": str(source)} if source else {}
+                    self.send_json({"status": "ok", **result, **extra})
                 elif route == "/api/op":
                     op = str(payload.get("op") or "")
                     if op not in ALLOWED_OPS:
