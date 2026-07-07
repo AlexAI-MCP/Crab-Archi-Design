@@ -134,6 +134,81 @@ _PATH_ARITY = {
 }
 
 
+def parse_path_segments(d: str) -> list[list[Any]]:
+    """Parse path data into absolute segments [cmd, [nums…]].
+
+    All coordinates come out absolute; H/V are normalized to L so every
+    consumer sees full (x, y) pairs. Arc (A) keeps [rx, ry, rot, laf, sf, x, y]
+    with only the endpoint absolutized. Implicit lineto after M is honored.
+    """
+    segs: list[list[Any]] = []
+    cx = cy = sx = sy = 0.0
+    for cmd, args in _PATH_CMD_RE.findall(d or ""):
+        upper = cmd.upper()
+        relative = cmd.islower()
+        nums = [float(v) for v in _NUM_RE.findall(args)]
+        if upper == "Z":
+            segs.append(["Z", []])
+            cx, cy = sx, sy
+            continue
+        arity = _PATH_ARITY[upper]
+        if len(nums) < arity:
+            continue
+        first = True
+        for i in range(0, len(nums) - arity + 1, arity):
+            chunk = nums[i:i + arity]
+            if upper == "H":
+                cx = cx + chunk[0] if relative else chunk[0]
+                segs.append(["L", [cx, cy]])
+            elif upper == "V":
+                cy = cy + chunk[0] if relative else chunk[0]
+                segs.append(["L", [cx, cy]])
+            elif upper == "A":
+                ex, ey = chunk[5], chunk[6]
+                if relative:
+                    ex += cx
+                    ey += cy
+                segs.append(["A", chunk[:5] + [ex, ey]])
+                cx, cy = ex, ey
+            else:
+                out = list(chunk)
+                if relative:
+                    for j in range(0, arity, 2):
+                        out[j] += cx
+                        out[j + 1] += cy
+                op = "L" if upper == "M" and not first else upper
+                segs.append([op, out])
+                cx, cy = out[-2], out[-1]
+                if op == "M":
+                    sx, sy = cx, cy
+            first = False
+    return segs
+
+
+def path_from_segments(segs: list[list[Any]]) -> str:
+    return " ".join(op + " ".join(fmt(v) for v in nums) for op, nums in segs)
+
+
+def transform_path(d: str, fn) -> tuple[str, bool]:
+    """Apply fn(x, y) → (x, y) to every coordinate pair of a path.
+
+    Returns (new_d, changed). The output is normalized to absolute commands.
+    Arc radii/rotation/flags are preserved (exact for pure translation).
+    """
+    segs = parse_path_segments(d)
+    changed = False
+    for op, nums in segs:
+        if op == "Z":
+            continue
+        pairs = [(5, 6)] if op == "A" else [(j, j + 1) for j in range(0, len(nums), 2)]
+        for jx, jy in pairs:
+            nx, ny = fn(nums[jx], nums[jy])
+            if (nx, ny) != (nums[jx], nums[jy]):
+                nums[jx], nums[jy] = nx, ny
+                changed = True
+    return path_from_segments(segs), changed
+
+
 def path_points(d: str) -> list[tuple[float, float]] | None:
     """On-curve points of a path (control points included for C/S/Q as bbox hull).
 
@@ -141,40 +216,86 @@ def path_points(d: str) -> list[tuple[float, float]] | None:
     consumed but never misread as coordinates.
     """
     points: list[tuple[float, float]] = []
-    cx = cy = 0.0
-    start_x = start_y = 0.0
-    for cmd, args in _PATH_CMD_RE.findall(d or ""):
-        upper = cmd.upper()
-        relative = cmd.islower()
-        try:
-            nums = [float(v) for v in _NUM_RE.findall(args)]
-        except ValueError:
-            continue
-        arity = _PATH_ARITY[upper]
-        if upper == "Z":
-            cx, cy = start_x, start_y
-            continue
-        if arity == 0 or len(nums) < arity:
-            continue
-        for i in range(0, len(nums) - arity + 1, arity):
-            chunk = nums[i:i + arity]
-            if upper == "H":
-                cx = cx + chunk[0] if relative else chunk[0]
-            elif upper == "V":
-                cy = cy + chunk[0] if relative else chunk[0]
-            elif upper == "A":
-                ex, ey = chunk[5], chunk[6]
-                cx, cy = (cx + ex, cy + ey) if relative else (ex, ey)
-            else:
-                base_x, base_y = (cx, cy) if relative else (0.0, 0.0)
-                pairs = [(chunk[j] + base_x, chunk[j + 1] + base_y) for j in range(0, arity, 2)]
-                points.extend(pairs)
-                cx, cy = pairs[-1]
-                if upper == "M":
-                    start_x, start_y = cx, cy
-                continue
-            points.append((cx, cy))
+    for op, nums in parse_path_segments(d):
+        if op == "A":
+            points.append((nums[5], nums[6]))
+        elif op != "Z":
+            points.extend(zip(nums[0::2], nums[1::2]))
     return points or None
+
+
+def invert_matrix(m: tuple[float, ...]) -> tuple[float, ...] | None:
+    a, b, c, d, e, f = m
+    det = a * d - b * c
+    if abs(det) < 1e-9:
+        return None
+    ia, ib, ic, id_ = d / det, -b / det, -c / det, a / det
+    return (ia, ib, ic, id_, -(ia * e + ic * f), -(ib * e + id_ * f))
+
+
+def parse_style_attr(raw: str | None) -> dict[str, str]:
+    """Parse an inline style="a:b;c:d" attribute into an ordered dict."""
+    out: dict[str, str] = {}
+    for part in (raw or "").split(";"):
+        if ":" in part:
+            key, value = part.split(":", 1)
+            if key.strip():
+                out[key.strip()] = value.strip()
+    return out
+
+
+def flatten_path(d: str, samples: int = 12) -> list[list[tuple[float, float]]]:
+    """Flatten path data to polyline subpaths (curves sampled, arcs chorded)."""
+    subpaths: list[list[tuple[float, float]]] = []
+    cur: list[tuple[float, float]] = []
+    prev_ctrl: tuple[float, float] | None = None  # last cubic/quadratic control, for S/T reflection
+    prev_op = ""
+    for op, nums in parse_path_segments(d):
+        if op == "M":
+            if len(cur) > 1:
+                subpaths.append(cur)
+            cur = [(nums[0], nums[1])]
+            prev_ctrl = None
+        elif op == "Z":
+            if len(cur) > 1 and cur[0] != cur[-1]:
+                cur.append(cur[0])
+            prev_ctrl = None
+        elif op in {"L", "A"}:
+            if not cur:
+                cur = [(0.0, 0.0)]
+            cur.append((nums[-2], nums[-1]))
+            prev_ctrl = None
+        elif op in {"C", "S", "Q", "T"}:
+            if not cur:
+                cur = [(0.0, 0.0)]
+            x0, y0 = cur[-1]
+            reflected = ((2 * x0 - prev_ctrl[0], 2 * y0 - prev_ctrl[1])
+                         if prev_ctrl is not None else (x0, y0))
+            if op == "C":
+                c1, c2 = (nums[0], nums[1]), (nums[2], nums[3])
+            elif op == "S":
+                c1 = reflected if prev_op in {"C", "S"} else (x0, y0)
+                c2 = (nums[0], nums[1])
+            elif op == "Q":
+                c1 = c2 = (nums[0], nums[1])
+            else:  # T
+                c1 = c2 = reflected if prev_op in {"Q", "T"} else (x0, y0)
+            quad_ctrl = c1  # remember before quadratic→cubic conversion
+            ex, ey = nums[-2], nums[-1]
+            if op in {"Q", "T"}:
+                qx, qy = quad_ctrl
+                c1 = (x0 + 2.0 / 3.0 * (qx - x0), y0 + 2.0 / 3.0 * (qy - y0))
+                c2 = (ex + 2.0 / 3.0 * (qx - ex), ey + 2.0 / 3.0 * (qy - ey))
+            for k in range(1, samples + 1):
+                t = k / samples
+                mt = 1.0 - t
+                cur.append((mt**3 * x0 + 3 * mt**2 * t * c1[0] + 3 * mt * t**2 * c2[0] + t**3 * ex,
+                            mt**3 * y0 + 3 * mt**2 * t * c1[1] + 3 * mt * t**2 * c2[1] + t**3 * ey))
+            prev_ctrl = c2 if op in {"C", "S"} else quad_ctrl
+        prev_op = op
+    if len(cur) > 1:
+        subpaths.append(cur)
+    return subpaths
 
 
 def _attr_num(element: ET.Element, name: str, default: float = 0.0) -> float:
@@ -566,9 +687,24 @@ class CanvasDocument:
         return self._layer(ZONE_LAYER_ID, create)
 
     def _apply_style(self, element: ET.Element, style: dict[str, Any] | None) -> None:
-        for key, value in (style or {}).items():
-            if key in STYLE_ATTRS and value is not None:
-                element.set(key, str(value))
+        clean = {k: v for k, v in (style or {}).items() if k in STYLE_ATTRS and v is not None}
+        if not clean:
+            return
+        if "style" in clean:
+            element.set("style", str(clean.pop("style")))
+        if not clean:
+            return
+        # inline style="" CSS overrides presentation attributes — drop the
+        # properties we are about to set so the new values actually take effect
+        inline = parse_style_attr(element.get("style"))
+        if inline:
+            kept = {k: v for k, v in inline.items() if k not in clean}
+            if kept:
+                element.set("style", ";".join(f"{k}:{v}" for k, v in kept.items()))
+            else:
+                element.attrib.pop("style", None)
+        for key, value in clean.items():
+            element.set(key, str(value))
 
     @staticmethod
     def layer_id(layer: str | None) -> str:
@@ -686,9 +822,56 @@ class CanvasDocument:
         bbox = self.world_bbox(element)
         if bbox:
             self._check_no_go([bbox[0] + dx, bbox[1] + dy, bbox[2] + dx, bbox[3] + dy], "move")
+        # 좌표에 직접 반영(bake)하면 SVG가 깨끗하게 유지되고 이후 stretch 편집이 가능
+        if not element.get("transform"):
+            parent = self.parent_of(element)
+            ancestor = self._accumulated_transform(parent) if parent is not None else IDENTITY
+            inv = invert_matrix(ancestor)
+            if inv is not None:
+                ldx, ldy = inv[0] * dx + inv[2] * dy, inv[1] * dx + inv[3] * dy
+                if self._bake_translate(element, ldx, ldy):
+                    return {"cid": cid, "element": self.describe(element), "baked": True}
         existing = element.get("transform", "")
         element.set("transform", f"translate({fmt(dx)},{fmt(dy)}) {existing}".strip())
         return {"cid": cid, "element": self.describe(element)}
+
+    def _bake_translate(self, element: ET.Element, ldx: float, ldy: float) -> bool:
+        """Shift a leaf element's own geometry by (ldx, ldy) in its local space."""
+        tag = local_name(element)
+        try:
+            if tag == "line":
+                for ax, ay in (("x1", "y1"), ("x2", "y2")):
+                    px, py = _attr_num(element, ax), _attr_num(element, ay)
+                    element.set(ax, fmt(px + ldx))
+                    element.set(ay, fmt(py + ldy))
+            elif tag in {"polyline", "polygon"}:
+                pts = local_points(element)
+                if not pts:
+                    return False
+                element.set("points", points_attr([[x + ldx, y + ldy] for x, y in pts]))
+            elif tag in {"rect", "use", "image"}:
+                element.set("x", fmt(_attr_num(element, "x") + ldx))
+                element.set("y", fmt(_attr_num(element, "y") + ldy))
+            elif tag in {"circle", "ellipse"}:
+                element.set("cx", fmt(_attr_num(element, "cx") + ldx))
+                element.set("cy", fmt(_attr_num(element, "cy") + ldy))
+            elif tag == "text":
+                # tspan children with their own x/y would not follow a baked shift
+                if any(child.get("x") or child.get("y") for child in element):
+                    return False
+                element.set("x", fmt(_attr_num(element, "x") + ldx))
+                element.set("y", fmt(_attr_num(element, "y") + ldy))
+            elif tag == "path":
+                new_d, changed = transform_path(element.get("d", ""),
+                                                lambda px, py: (px + ldx, py + ldy))
+                if not changed:
+                    return False
+                element.set("d", new_d)
+            else:
+                return False
+            return True
+        except ValueError:
+            return False
 
     def op_copy_element(self, cid: str, dx: float = 0.0, dy: float = 0.0) -> dict[str, Any]:
         source = self.find(cid)
@@ -757,45 +940,64 @@ class CanvasDocument:
                 continue
             if wanted is not None and cid not in wanted:
                 continue
-            if element.get("transform"):
-                if wanted is not None:
-                    skipped.append(cid)
-                continue
             b = self.world_bbox(element)
             if not b or b[2] < x0 or b[0] > x1 or b[3] < y0 or b[1] > y1:
                 continue
+            # local geometry is tested through its world transform; the world
+            # delta is mapped back into local space so transformed elements work
+            matrix = self._accumulated_transform(element)
+            if matrix == IDENTITY:
+                inside_pt, ldx, ldy = inside, dx, dy
+            else:
+                inv = invert_matrix(matrix)
+                if inv is None:  # degenerate transform
+                    if wanted is not None:
+                        skipped.append(cid)
+                    continue
+                inside_pt = lambda px, py, _m=matrix: inside(*apply_matrix(_m, px, py))  # noqa: E731
+                ldx, ldy = inv[0] * dx + inv[2] * dy, inv[1] * dx + inv[3] * dy
             moved = False
             if tag == "line":
                 for sx, sy in (("x1", "y1"), ("x2", "y2")):
                     px, py = _attr_num(element, sx), _attr_num(element, sy)
-                    if inside(px, py):
-                        element.set(sx, fmt(px + dx)); element.set(sy, fmt(py + dy)); moved = True
+                    if inside_pt(px, py):
+                        element.set(sx, fmt(px + ldx)); element.set(sy, fmt(py + ldy)); moved = True
             elif tag in {"polyline", "polygon"}:
-                pts = [[float(v) for v in pair.split(",")] for pair in element.get("points", "").split()]
+                pts = [list(p) for p in (local_points(element) or [])]
                 for p in pts:
-                    if inside(p[0], p[1]):
-                        p[0] += dx; p[1] += dy; moved = True
+                    if inside_pt(p[0], p[1]):
+                        p[0] += ldx; p[1] += ldy; moved = True
                 if moved:
                     element.set("points", points_attr(pts))
             elif tag == "rect":
                 rx, ry = _attr_num(element, "x"), _attr_num(element, "y")
                 rw, rh = _attr_num(element, "width"), _attr_num(element, "height")
-                corners_in = [inside(px, py) for px, py in
+                corners_in = [inside_pt(px, py) for px, py in
                               ((rx, ry), (rx + rw, ry), (rx, ry + rh), (rx + rw, ry + rh))]
                 if all(corners_in):
-                    element.set("x", fmt(rx + dx)); element.set("y", fmt(ry + dy)); moved = True
+                    element.set("x", fmt(rx + ldx)); element.set("y", fmt(ry + ldy)); moved = True
                 elif corners_in[1] and corners_in[3] and not corners_in[0]:   # right edge
-                    element.set("width", fmt(max(1.0, rw + dx))); moved = True
+                    element.set("width", fmt(max(1.0, rw + ldx))); moved = True
                 elif corners_in[0] and corners_in[2] and not corners_in[1]:   # left edge
-                    element.set("x", fmt(rx + dx)); element.set("width", fmt(max(1.0, rw - dx))); moved = True
+                    element.set("x", fmt(rx + ldx)); element.set("width", fmt(max(1.0, rw - ldx))); moved = True
                 elif corners_in[2] and corners_in[3] and not corners_in[0]:   # bottom edge
-                    element.set("height", fmt(max(1.0, rh + dy))); moved = True
+                    element.set("height", fmt(max(1.0, rh + ldy))); moved = True
                 elif corners_in[0] and corners_in[1] and not corners_in[2]:   # top edge
-                    element.set("y", fmt(ry + dy)); element.set("height", fmt(max(1.0, rh - dy))); moved = True
-            elif tag == "text":
+                    element.set("y", fmt(ry + ldy)); element.set("height", fmt(max(1.0, rh - ldy))); moved = True
+            elif tag == "path":
+                new_d, moved = transform_path(
+                    element.get("d", ""),
+                    lambda px, py: (px + ldx, py + ldy) if inside_pt(px, py) else (px, py))
+                if moved:
+                    element.set("d", new_d)
+            elif tag in {"circle", "ellipse"}:
+                pcx, pcy = _attr_num(element, "cx"), _attr_num(element, "cy")
+                if inside_pt(pcx, pcy):
+                    element.set("cx", fmt(pcx + ldx)); element.set("cy", fmt(pcy + ldy)); moved = True
+            elif tag in {"text", "use", "image"}:
                 px, py = _attr_num(element, "x"), _attr_num(element, "y")
-                if inside(px, py):
-                    element.set("x", fmt(px + dx)); element.set("y", fmt(py + dy)); moved = True
+                if inside_pt(px, py):
+                    element.set("x", fmt(px + ldx)); element.set("y", fmt(py + ldy)); moved = True
             else:
                 if wanted is not None:
                     skipped.append(cid)
@@ -803,12 +1005,72 @@ class CanvasDocument:
             if moved:
                 changed.append(cid)
         if not changed:
-            raise CanvasError("stretch matched no editable geometry in the box "
-                              "(paths/transformed elements are skipped — pass their cids to see them listed)")
+            raise CanvasError("stretch matched no editable geometry in the box")
         result: dict[str, Any] = {"stretched": changed[:200], "stretched_count": len(changed)}
         if skipped:
             result["unsupported"] = skipped[:50]
         return result
+
+    # ---- measurement -------------------------------------------------------
+
+    def measure(self, cids: list[str]) -> list[dict[str, Any]]:
+        """World-space length/area of elements (curves flattened, transforms honored)."""
+        import math
+        mm = self.mm_per_unit()
+        results: list[dict[str, Any]] = []
+        for cid in cids:
+            element = self.find(cid)
+            tag = local_name(element)
+            matrix = self._accumulated_transform(element)
+            polylines: list[tuple[list[tuple[float, float]], bool]] = []  # (points, closed)
+            try:
+                if tag == "line":
+                    polylines = [([(_attr_num(element, "x1"), _attr_num(element, "y1")),
+                                   (_attr_num(element, "x2"), _attr_num(element, "y2"))], False)]
+                elif tag in {"polyline", "polygon"}:
+                    pts = local_points(element) or []
+                    polylines = [(list(pts), tag == "polygon")] if len(pts) >= 2 else []
+                elif tag == "rect":
+                    pts = local_points(element)
+                    if pts:
+                        (p00, p10, p01, p11) = pts
+                        polylines = [([p00, p10, p11, p01], True)]
+                elif tag in {"circle", "ellipse"}:
+                    ecx, ecy = _attr_num(element, "cx"), _attr_num(element, "cy")
+                    rx = _attr_num(element, "r") if tag == "circle" else _attr_num(element, "rx")
+                    ry = rx if tag == "circle" else _attr_num(element, "ry")
+                    ring = [(ecx + rx * math.cos(2 * math.pi * k / 64),
+                             ecy + ry * math.sin(2 * math.pi * k / 64)) for k in range(64)]
+                    polylines = [(ring, True)]
+                elif tag == "path":
+                    polylines = [(sub, len(sub) > 2 and sub[0] == sub[-1])
+                                 for sub in flatten_path(element.get("d", ""))]
+            except ValueError:
+                polylines = []
+            info: dict[str, Any] = {"cid": cid, "tag": tag}
+            if not polylines:
+                info["error"] = "unsupported geometry (text/use/image/empty)"
+                results.append(info)
+                continue
+            length = 0.0
+            area = 0.0
+            any_closed = False
+            for pts, closed in polylines:
+                world = [apply_matrix(matrix, x, y) for x, y in pts]
+                ring = world + [world[0]] if closed and world[0] != world[-1] else world
+                length += sum(math.dist(ring[i], ring[i + 1]) for i in range(len(ring) - 1))
+                if closed:
+                    any_closed = True
+                    area += abs(sum(ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1]
+                                    for i in range(len(ring) - 1))) / 2.0
+            info["length_units"] = round(length, 2)
+            info["closed"] = any_closed
+            if mm:
+                info["length_m"] = round(length * mm / 1000.0, 3)
+            if any_closed:
+                info.update(self.area_info(area))
+            results.append(info)
+        return results
 
     # ---- no-go enforcement -------------------------------------------------
 

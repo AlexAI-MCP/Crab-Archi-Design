@@ -355,6 +355,13 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                     if not isinstance(params, dict):
                         raise CanvasError("params must be an object")
                     self.send_json({"status": "ok", **doc.apply(op, params)})
+                elif route == "/api/measure":
+                    cids = [str(c) for c in (payload.get("cids") or [])]
+                    if not cids:
+                        raise CanvasError("cids is required")
+                    with doc.lock:
+                        measurements = doc.measure(cids)
+                    self.send_json({"status": "ok", "measurements": measurements})
                 elif route == "/api/undo":
                     self.send_json({"status": "ok", **doc.undo()})
                 elif route == "/api/session/update":

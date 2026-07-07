@@ -186,12 +186,18 @@ TOOLS: dict[str, dict[str, Any]] = {
         "readonly": True,
     },
     "stretch_elements": {
-        "description": "CAD-style stretch: geometry points inside box move by (dx,dy); points outside stay, so walls crossing the box boundary lengthen instead of moving. Use to enlarge rooms or pull walls. box=[x0,y0,x1,y1].",
+        "description": "CAD-style stretch: geometry points inside box move by (dx,dy); points outside stay, so walls crossing the box boundary lengthen instead of moving. Works on lines, polylines, rects, paths (curve control points included) and transformed elements. Use to enlarge rooms or pull walls. box=[x0,y0,x1,y1] in world coordinates.",
         "kind": ("op", "stretch"),
         "schema": schema({"box": {"type": "array", "items": NUM, "minItems": 4, "maxItems": 4},
                           "dx": NUM, "dy": NUM, "cids": CIDS,
                           "force": {"type": "boolean", "description": "Bypass protected-zone check."}},
                          ["box", "dx", "dy"]),
+    },
+    "measure": {
+        "description": "Measure elements in world space: length (m when a scale is set) and closed-shape area (m²/평). Handles lines, polylines, polygons, rects, circles, ellipses and paths (curves flattened) — transforms are honored. Use for wall lengths, boundary perimeters, area takeoffs.",
+        "kind": ("post", "/api/measure"),
+        "schema": schema({"cids": CIDS}, ["cids"]),
+        "readonly": True,
     },
     "set_scale": {
         "description": "Set the drawing scale: mm_per_unit directly, or calibrate with a known real distance (known_mm) between two drawing points p1/p2 (e.g. a 2500mm parking stall). Enables m²/평 output in recognize_rooms.",

@@ -83,7 +83,9 @@ def test_set_attrs_and_move(doc: CanvasDocument) -> None:
     element = doc.find(line_cid)
     assert element.get("x2") == "200" and element.get("stroke") is None
     doc.apply("move_element", {"cid": line_cid, "dx": 5, "dy": -5})
-    assert "translate(5,-5)" in element.get("transform", "")
+    # 이동은 transform을 쌓지 않고 좌표에 직접 반영(bake)된다
+    assert element.get("transform") is None
+    assert element.get("x1") == "15" and element.get("y1") == "115"
 
 
 def test_save_and_reload_roundtrip(doc: CanvasDocument, tmp_path: Path) -> None:
@@ -299,3 +301,96 @@ def test_bidirectional_session_channel(server) -> None:
     assert notices["notices"][0]["text"] == "여기를 보세요"
     assert notices["notices"][0]["pointer"] == [50, 40]
     assert http_json(base + "/api/session/browser?since=" + str(notices["seq"]))["notices"] == []
+
+
+# ---- SVG 친화 개선: path 스트레치, transform 인식, style 병합, bake, measure ----
+
+def test_stretch_moves_path_points() -> None:
+    doc = CanvasDocument()
+    doc.load_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">'
+                  '<path d="M 10 10 L 100 10 l 0 90" fill="none" stroke="#000"/></svg>')
+    # 오른쪽 끝점 두 개(100,10)(100,100)만 박스에 넣고 오른쪽으로 20 이동 → 벽이 늘어난다
+    doc.apply("stretch", {"box": [90, 0, 120, 200], "dx": 20, "dy": 0})
+    element = next(e for e in doc.require_root().iter() if e.tag.endswith("path"))
+    pts = sorted((round(x), round(y)) for x, y in
+                 __import__("crab_archi_design.canvas_document", fromlist=["path_points"]).path_points(element.get("d")))
+    assert pts == [(10, 10), (120, 10), (120, 100)]
+
+
+def test_stretch_handles_transformed_group() -> None:
+    doc = CanvasDocument()
+    doc.load_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">'
+                  '<g transform="translate(50,0)"><line x1="0" y1="10" x2="100" y2="10" stroke="#000"/></g></svg>')
+    # 월드좌표 (150,10) = 로컬 (100,10) 끝점만 박스에 → 스트레치되어야 한다
+    doc.apply("stretch", {"box": [140, 0, 160, 20], "dx": 0, "dy": 30})
+    line = next(e for e in doc.require_root().iter() if e.tag.endswith("line"))
+    assert (line.get("x1"), line.get("y1")) == ("0", "10")
+    assert (line.get("x2"), line.get("y2")) == ("100", "40")
+
+
+def test_path_parse_serialize_relative_arc_hv() -> None:
+    from crab_archi_design.canvas_document import parse_path_segments, path_from_segments
+    segs = parse_path_segments("m 10 10 h 20 v 5 a 5 5 0 0 1 10 0 c 1 1 2 2 3 3 z")
+    ops = [s[0] for s in segs]
+    assert ops == ["M", "L", "L", "A", "C", "Z"]
+    assert segs[1][1] == [30.0, 10.0] and segs[2][1] == [30.0, 15.0]     # h/v → 절대 L
+    assert segs[3][1][5:] == [40.0, 15.0]                                 # 상대 arc 끝점 절대화
+    assert "A5 5 0 0 1 40 15" in path_from_segments(segs).replace("  ", " ")
+
+
+def test_move_element_bakes_coordinates(doc: CanvasDocument) -> None:
+    line_cid = next(e["cid"] for e in doc.list_elements(tag="line"))
+    result = doc.apply("move_element", {"cid": line_cid, "dx": 5, "dy": -10})
+    assert result.get("baked") is True
+    element = next(e for e in doc.require_root().iter() if e.get("data-cid") == line_cid)
+    assert element.get("transform") is None          # transform이 쌓이지 않는다
+    assert element.get("x1") == "15" and element.get("y1") == "110"
+    # bake된 요소는 이후 stretch 편집이 그대로 가능
+    doc.apply("stretch", {"box": [100, 100, 130, 120], "dx": 7, "dy": 0})
+    assert element.get("x2") == "122"
+
+
+def test_set_style_overrides_inline_css(doc: CanvasDocument) -> None:
+    cid = doc.apply("draw_rect", {"x": 200, "y": 200, "width": 20, "height": 10})["cid"]
+    doc.apply("set_attrs", {"cid": cid, "attrs": {"style": "fill:red;stroke:blue;opacity:0.5"}})
+    doc.apply("set_style", {"cids": [cid], "style": {"fill": "#0f0"}})
+    element = next(e for e in doc.require_root().iter() if e.get("data-cid") == cid)
+    assert element.get("fill") == "#0f0"
+    inline = element.get("style")
+    assert "fill" not in inline and "stroke:blue" in inline and "opacity:0.5" in inline
+
+
+def test_measure_lengths_and_areas() -> None:
+    doc = CanvasDocument()
+    doc.load_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">'
+                  '<line x1="0" y1="0" x2="30" y2="40" stroke="#000"/>'
+                  '<rect x="10" y="10" width="20" height="10"/>'
+                  '<circle cx="100" cy="100" r="10"/>'
+                  '<g transform="scale(2)"><line x1="0" y1="0" x2="50" y2="0" stroke="#000"/></g>'
+                  '<path d="M 0 0 L 10 0 L 10 10 L 0 10 Z"/></svg>')
+    doc.apply("set_scale", {"mm_per_unit": 100})  # 1 unit = 0.1m
+    cids = [e["cid"] for e in doc.list_elements()]
+    by_tag = {m["tag"]: m for m in doc.measure(cids) if "error" not in m}
+    assert by_tag["line"]["length_m"] == 5.0 or by_tag["line"]["length_units"] == 100.0  # scale(2) line 또는 3-4-5 line
+    line_lengths = sorted(m["length_units"] for m in doc.measure(cids) if m["tag"] == "line")
+    assert line_lengths == [50.0, 100.0]                       # 3-4-5 → 50, scale(2)·50 → 100 (transform 반영)
+    assert by_tag["rect"]["area_m2"] == 2.0                    # 20×10 units → 2×1 m
+    assert abs(by_tag["circle"]["area_m2"] - 3.14) < 0.05      # πr², 다각형 근사
+    assert by_tag["path"]["closed"] and by_tag["path"]["area_m2"] == 1.0
+
+
+def test_measure_flattens_curves() -> None:
+    import math
+    from crab_archi_design.canvas_document import flatten_path
+    # 반원 근사 큐빅 베지어: 반지름 50 → 호 길이 ≈ π·50
+    subs = flatten_path("M 0 0 C 0 -66.7 100 -66.7 100 0")
+    length = sum(math.dist(a, b) for sub in subs for a, b in zip(sub, sub[1:]))
+    assert abs(length - math.pi * 50) < 3
+
+
+def test_http_measure_endpoint(server) -> None:
+    base, svg_path = server
+    http_json(base + "/api/open", {"path": str(svg_path)})
+    cid = http_json(base + "/api/op", {"op": "draw_line", "params": {"x1": 0, "y1": 0, "x2": 60, "y2": 80}})["cid"]
+    out = http_json(base + "/api/measure", {"cids": [cid]})
+    assert out["measurements"][0]["length_units"] == 100.0
