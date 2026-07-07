@@ -468,3 +468,59 @@ def test_describe_reads_inline_css_style(doc: CanvasDocument) -> None:
     info = doc.describe(doc.find(cid))
     assert info["style"]["stroke-width"] == "7"
     assert info["style"]["fill"] == "magenta"          # CSS가 속성을 이기므로 유효값 보고
+
+
+# ---- DXF 내보내기 ----
+
+def test_export_dxf_roundtrip(tmp_path: Path) -> None:
+    import ezdxf
+    from crab_archi_design.dxf_export import export_cad
+    doc = CanvasDocument()
+    doc.load_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">'
+                  '<line x1="10" y1="290" x2="110" y2="290" stroke="#ff0000" stroke-width="2"/>'
+                  '<g id="crab_layer_electrical">'
+                  '<circle cx="50" cy="50" r="10" stroke="#000"/>'
+                  '<text x="20" y="40" font-size="12">분전반</text></g>'
+                  '<g transform="translate(100,0)">'
+                  '<rect x="0" y="0" width="40" height="30" stroke="#00f" fill="none"/></g>'
+                  '<path d="M 200 200 C 200 150 300 150 300 200" stroke="#000" fill="none"/></svg>')
+    doc.apply("set_scale", {"mm_per_unit": 100})  # 1 unit = 100mm
+    result = export_cad(doc, path=str(tmp_path / "out"))
+    assert result["dxf"].endswith(".dxf") and result["units"] == "mm"
+    assert "ELECTRICAL" in result["layers"]
+    dxf = ezdxf.readfile(result["dxf"])
+    assert dxf.header["$INSUNITS"] == 4  # millimeters
+    msp = dxf.modelspace()
+    line = msp.query("LINE")[0]
+    # (10,290) → x 10*100=1000mm, y (300-290)*100=1000mm (y축 반전)
+    assert (round(line.dxf.start.x), round(line.dxf.start.y)) == (1000, 1000)
+    assert line.dxf.lineweight == 211  # stroke-width 2 units = 200mm → 표준 최대 2.11mm로 클램프
+    circle = msp.query("CIRCLE")[0]
+    assert circle.dxf.layer == "ELECTRICAL" and round(circle.dxf.radius) == 1000
+    text = msp.query("TEXT")[0]
+    assert text.dxf.text == "분전반" and text.dxf.layer == "ELECTRICAL"
+    rect = [p for p in msp.query("LWPOLYLINE") if p.closed]
+    assert rect and len(rect[0]) == 4                     # transform 위 rect → 닫힌 4점 폴리라인
+    curve = [p for p in msp.query("LWPOLYLINE") if not p.closed]
+    assert curve and len(curve[0]) > 10                   # 베지어 평탄화
+
+
+def test_export_dxf_without_scale_notes_units(tmp_path: Path) -> None:
+    import ezdxf
+    from crab_archi_design.dxf_export import export_cad
+    doc = CanvasDocument()
+    doc.load_text(SAMPLE_SVG)
+    result = export_cad(doc, path=str(tmp_path / "raw.dxf"))
+    assert "set_scale" in result["units"]
+    assert ezdxf.readfile(result["dxf"]).header["$INSUNITS"] == 0
+
+
+def test_http_export_endpoint(server, tmp_path: Path) -> None:
+    base, svg_path = server
+    http_json(base + "/api/open", {"path": str(svg_path)})
+    out = http_json(base + "/api/export", {"path": str(tmp_path / "web.dxf")})
+    assert out["status"] == "ok" and Path(out["dxf"]).exists()
+    assert sum(out["entities"].values()) >= 2
+    dwg = http_json(base + "/api/export", {"path": str(tmp_path / "web2"), "format": "dwg"})
+    assert dwg["status"] == "ok" and Path(dwg["dxf"]).exists()
+    assert "dwg" in dwg  # 변환기 없으면 None + 안내, 있으면 경로

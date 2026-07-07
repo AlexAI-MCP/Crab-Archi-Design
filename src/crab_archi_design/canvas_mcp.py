@@ -247,6 +247,12 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Save the canvas to disk (defaults to the loaded file's path).",
         "kind": ("post", "/api/save"), "schema": schema({"path": STR}, []),
     },
+    "export_cad": {
+        "description": "Export the canvas to DXF for AutoCAD/CAD interchange — real-mm coordinates when a scale is set (set_scale first!), y-axis corrected, canvas layers → DXF layers, walls→LINE/LWPOLYLINE (curves flattened), text/circles native, stroke widths → lineweights. format='dwg' additionally converts via ODA File Converter when installed (otherwise returns the DXF with a note).",
+        "kind": ("post", "/api/export"),
+        "schema": schema({"path": {**STR, "description": "Output path (.dxf appended; defaults beside the loaded SVG)."},
+                          "format": {"type": "string", "enum": ["dxf", "dwg"]}}, []),
+    },
     "regenerate_layout": {
         "description": "Run the deterministic Crab Archi Design layout pipeline on the current canvas: the drawing plus its zones become constraints, the prompt becomes design intent, and the generated alternative is loaded back into the canvas. Slow (up to minutes).",
         "kind": ("post", "/api/regenerate"),

@@ -356,6 +356,11 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                     if not isinstance(params, dict):
                         raise CanvasError("params must be an object")
                     self.send_json({"status": "ok", **doc.apply(op, params)})
+                elif route == "/api/export":
+                    from crab_archi_design.dxf_export import export_cad
+                    self.send_json({"status": "ok", **export_cad(
+                        doc, path=str(payload.get("path") or "") or None,
+                        fmt=str(payload.get("format") or "dxf"))})
                 elif route == "/api/measure":
                     cids = [str(c) for c in (payload.get("cids") or [])]
                     if not cids:

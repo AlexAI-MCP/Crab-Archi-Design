@@ -24,7 +24,10 @@ description: Crab-Archi-Design 라이브 SVG 캔버스로 건축 도면을 분�
    "200mm 내력벽으로" → `set_thickness(cids, mm=200)`, "이 존 30평으로" → `set_area(cid, pyeong=30)`.
    적용 후 `measure`로 결과 수치를 되읽어 확인한다.
 6. **시각 검증** — 편집 후 `render_view(bbox=작업영역)`으로 눈으로 확인. 스크린샷 없이 완료 선언 금지.
-7. **저장** — `save_svg(path=원본과 다른 경로)`. 원본은 절대 덮어쓰지 않는다.
+7. **저장·내보내기** — `save_svg(path=원본과 다른 경로)`. 원본은 절대 덮어쓰지 않는다.
+   CAD 납품·교환은 `export_cad(path, format)` — 반드시 스케일 보정 후에(그래야 mm 좌표).
+   레이어·선굵기·한글 텍스트가 DXF로 넘어간다. format="dwg"는 ODA File Converter가 있을 때만
+   실제 DWG가 나오고, 없으면 DXF + 안내를 반환한다 (DXF는 AutoCAD에서 그대로 열림).
 
 ## 좌표·선택 요령
 - 좌표는 SVG viewBox 단위. bbox 창으로 요소를 고를 때 격자선(회색 #bababa/#767676, 페이지 관통 장선)과

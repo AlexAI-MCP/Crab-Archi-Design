@@ -36,6 +36,7 @@
     <button id="btnBrowse">📂 찾아보기</button>
     <input type="file" id="filePick" accept=".svg,image/svg+xml" style="display:none">
     <button id="btnSave">저장</button>
+    <button id="btnDxf" title="DXF로 내보내기 (AutoCAD 호환)">⬇ DXF</button>
     <button id="btnUndo">↩ 실행취소</button>
     <button id="btnFit">전체보기</button>
     <button id="btnSnap" class="active">스냅</button>
@@ -344,6 +345,17 @@ $('filePick').onchange = async evt => {
   evt.target.value = '';
 };
 $('btnSave').onclick = async () => { const r = await api('/api/save', {}); log(r.status==='ok' ? '저장됨: '+r.saved : '오류: '+r.error); };
+$('btnDxf').onclick = async () => {
+  log('DXF 내보내는 중…');
+  const r = await api('/api/export', { format: 'dxf' });
+  if (r.status === 'ok') {
+    const n = Object.values(r.entities||{}).reduce((a,b)=>a+b,0);
+    log('DXF 내보냄: ' + r.dxf + ' (요소 ' + n + '개, 단위 ' + r.units + ')');
+  } else log('오류: ' + r.error);
+};
+document.addEventListener('keydown', evt => {
+  if ((evt.metaKey || evt.ctrlKey) && evt.key === 's') { evt.preventDefault(); $('btnSave').click(); }
+});
 $('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r.status==='error') log('오류: '+r.error); poll(true); };
 $('btnFit').onclick = () => { S.view = null; applyView(); };
 $('btnSnap').onclick = () => { S.snap = !S.snap; $('btnSnap').classList.toggle('active', S.snap); log('스냅 ' + (S.snap ? '켜짐 (끝점>직교(Shift)>그리드)' : '꺼짐')); };
