@@ -11,6 +11,8 @@ Binds to 127.0.0.1 only. Stdlib only.
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -34,6 +36,30 @@ ALLOWED_OPS = {
     "copy_element", "copy_style", "set_style", "set_attrs",
     "set_zone", "clear_zones",
 }
+
+
+def clean_path(raw: str) -> str:
+    """Tolerate shell-escaped paths pasted from a terminal (\\~, \\space, quotes)."""
+    text = raw.strip().strip("'\"")
+    if "\\" in text:
+        text = re.sub(r"\\(.)", r"\1", text)
+    return text
+
+
+def pick_file_dialog() -> str | None:
+    """Open a native file picker (macOS Finder) and return the chosen path."""
+    if sys.platform != "darwin":
+        raise CanvasError("native file picker is only supported on macOS")
+    script = 'POSIX path of (choose file with prompt "SVG 도면 선택" of type {"public.svg-image", "svg"})'
+    try:
+        completed = subprocess.run(["osascript", "-e", script],
+                                   capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return None
+    if completed.returncode != 0:
+        return None  # user cancelled
+    path = completed.stdout.strip()
+    return path or None
 
 
 def canvas_html_path() -> Path | None:
@@ -170,7 +196,13 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
             doc = state.document
             try:
                 if route == "/api/open":
-                    self.send_json({"status": "ok", **doc.load(str(payload.get("path") or ""))})
+                    self.send_json({"status": "ok", **doc.load(clean_path(str(payload.get("path") or "")))})
+                elif route == "/api/pick-file":
+                    picked = pick_file_dialog()
+                    if picked is None:
+                        self.send_json({"status": "cancelled"})
+                    else:
+                        self.send_json({"status": "ok", **doc.load(picked), "path": picked})
                 elif route == "/api/open-text":
                     self.send_json({"status": "ok", **doc.load_text(str(payload.get("svg") or ""))})
                 elif route == "/api/op":
@@ -184,7 +216,8 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                 elif route == "/api/undo":
                     self.send_json({"status": "ok", **doc.undo()})
                 elif route == "/api/save":
-                    saved = doc.save(payload.get("path"))
+                    raw_target = payload.get("path")
+                    saved = doc.save(clean_path(str(raw_target)) if raw_target else None)
                     self.send_json({"status": "ok", "saved": saved})
                 elif route == "/api/regenerate":
                     report = state.regenerate(payload)

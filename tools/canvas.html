@@ -33,6 +33,7 @@
   <div class="toolbar-group">
     <input id="svgPath" type="text" placeholder="SVG 파일 절대 경로">
     <button id="btnOpen">열기</button>
+    <button id="btnBrowse">📂 찾아보기</button>
     <button id="btnSave">저장</button>
     <button id="btnUndo">↩ 실행취소</button>
     <button id="btnFit">전체보기</button>
@@ -244,7 +245,14 @@ document.querySelectorAll('#tools button').forEach(btn => btn.addEventListener('
 
 $('btnOpen').onclick = async () => {
   const r = await api('/api/open', { path: $('svgPath').value.trim() });
-  if (r.status === 'error') log('오류: ' + r.error); else { log('로드됨: ' + $('svgPath').value); poll(true); }
+  if (r.status === 'error') log('오류: ' + r.error); else { log('로드됨: ' + $('svgPath').value); S.view = null; poll(true); }
+};
+$('btnBrowse').onclick = async () => {
+  log('파인더에서 SVG 파일을 선택하세요…');
+  const r = await api('/api/pick-file', {});
+  if (r.status === 'ok') { $('svgPath').value = r.path; log('로드됨: ' + r.path); S.view = null; poll(true); }
+  else if (r.status === 'cancelled') log('파일 선택 취소됨');
+  else log('오류: ' + (r.error || '파일 선택 실패'));
 };
 $('btnSave').onclick = async () => { const r = await api('/api/save', {}); log(r.status==='ok' ? '저장됨: '+r.saved : '오류: '+r.error); };
 $('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r.status==='error') log('오류: '+r.error); poll(true); };

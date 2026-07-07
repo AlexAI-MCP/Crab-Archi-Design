@@ -163,3 +163,10 @@ def test_mcp_bridge_unreachable_server_is_soft_error() -> None:
                                      "params": {"name": "canvas_status", "arguments": {}}})
     assert result["result"]["isError"]
     assert "unreachable" in result["result"]["structuredContent"]["error"]
+
+
+def test_clean_path_unescapes_shell_paste() -> None:
+    from crab_archi_design.canvas_server import clean_path
+    assert clean_path(r"/a/A-801\~802\ 도면_Model.svg") == "/a/A-801~802 도면_Model.svg"
+    assert clean_path("'/a/plain path.svg'") == "/a/plain path.svg"
+    assert clean_path("/a/normal.svg") == "/a/normal.svg"
