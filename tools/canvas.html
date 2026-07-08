@@ -65,7 +65,7 @@
     </select>
     <input id="strokeColor" type="color" value="#d62728" title="선 색">
     <input id="strokeWidth" type="number" value="2" min="0.5" step="0.5" style="width:56px" title="선 두께">
-    <button id="btnDelete">삭제</button>
+    <button id="btnDelete">🗑 선택삭제</button>
   </div>
   <input id="prompt" type="text" placeholder="메시지(에이전트에게) 또는 재생성 프롬프트">
   <button id="btnSend">💬 에이전트에게</button>
@@ -79,7 +79,7 @@
     <h3>로그</h3><div id="log"></div>
   </aside>
 </main>
-<footer><span id="status">서버 연결 중…</span><span id="hint">휠 줌 · Space/Alt+드래그 팬 · 더블클릭/Enter 다점 완료 · Esc 취소</span></footer>
+<footer><span id="status">서버 연결 중…</span><span id="hint">휠 줌 · Space/Alt+드래그 팬 · Ctrl/Shift+클릭 복수선택 · Delete키/🗑 삭제 · 더블클릭 다점 완료 · Esc 취소</span></footer>
 <script>
 const S = { rev:-1, tool:'select', pts:[], selected:[], styleSource:null, copySource:null, drawing:false };
 const $ = id => document.getElementById(id);
@@ -277,7 +277,7 @@ $('viewport').addEventListener('click', async evt => {
   if (t !== 'select' && t !== 'copy' && t !== 'stylecopy') p = snapPoint(p, evt);
   if (t === 'select') {
     const hit = evt.target.closest('[data-cid]');
-    select(hit ? hit.getAttribute('data-cid') : null, evt.shiftKey);
+    select(hit ? hit.getAttribute('data-cid') : null, evt.shiftKey || evt.ctrlKey || evt.metaKey);
   } else if (t === 'copy') {
     const hit = evt.target.closest('[data-cid]');
     if (!S.copySource) { if (hit) { S.copySource = { cid:hit.getAttribute('data-cid'), p }; log('복사 원본 선택 — 붙여넣을 위치 클릭'); } }
@@ -363,7 +363,13 @@ document.addEventListener('keydown', evt => {
 $('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r.status==='error') log('오류: '+r.error); poll(true); };
 $('btnFit').onclick = () => { S.view = null; applyView(); };
 $('btnSnap').onclick = () => { S.snap = !S.snap; $('btnSnap').classList.toggle('active', S.snap); log('스냅 ' + (S.snap ? '켜짐 (끝점>직교(Shift)>그리드)' : '꺼짐')); };
-$('btnDelete').onclick = () => { if (S.selected.length) { op('delete_elements', { cids:S.selected.slice() }); S.selected = []; } };
+$('btnDelete').onclick = () => {
+  if (!S.selected.length) { log('삭제할 요소를 먼저 선택하세요 (Ctrl/Cmd/Shift+클릭 = 복수 선택)'); return; }
+  const n = S.selected.length;
+  op('delete_elements', { cids:S.selected.slice() });
+  S.selected = []; syncSession(true);
+  log(`🗑 ${n}개 요소 삭제`);
+};
 $('btnSend').onclick = async () => {
   const text = $('prompt').value.trim(); if (!text) { log('보낼 메시지를 입력하세요'); return; }
   const r = await api('/api/message', { text });
