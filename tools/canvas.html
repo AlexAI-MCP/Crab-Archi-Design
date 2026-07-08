@@ -142,6 +142,54 @@ $('viewport').addEventListener('wheel', evt => {
   const p = svgPoint(evt); if (!p) return;
   zoomAt(p[0], p[1], evt.deltaY > 0 ? 1.15 : 1/1.15);
 }, { passive: false });
+// ---- 러버밴드 선택: 선택 도구에서 드래그 → 박스 안 요소 일괄 선택 ----
+$('viewport').addEventListener('pointerdown', evt => {
+  if (evt.button !== 0 || S.tool !== 'select' || evt.altKey || S.spaceDown) return;
+  const startX = evt.clientX, startY = evt.clientY;
+  const additive = evt.shiftKey || evt.ctrlKey || evt.metaKey;
+  const ns = 'http://www.w3.org/2000/svg';
+  let band = null, dragged = false;
+  const move = e2 => {
+    if (!dragged && Math.hypot(e2.clientX-startX, e2.clientY-startY) < 5) return;
+    dragged = true;
+    const svg = $('stage').querySelector('svg'); if (!svg) return;
+    const inv = svg.getScreenCTM().inverse();
+    const p = svg.createSVGPoint();
+    p.x = startX; p.y = startY; const a = p.matrixTransform(inv);
+    p.x = e2.clientX; p.y = e2.clientY; const b = p.matrixTransform(inv);
+    if (!band) { band = document.createElementNS(ns, 'rect');
+      band.setAttribute('stroke', '#4da3ff'); band.setAttribute('fill', '#4da3ff');
+      band.setAttribute('fill-opacity', '0.08'); band.setAttribute('stroke-dasharray', '4 3');
+      const view = S.view || S.docBox; band.setAttribute('stroke-width', view ? view[2]/600 : 1);
+      $('overlay').appendChild(band); }
+    band.setAttribute('x', Math.min(a.x, b.x)); band.setAttribute('y', Math.min(a.y, b.y));
+    band.setAttribute('width', Math.abs(b.x - a.x)); band.setAttribute('height', Math.abs(b.y - a.y));
+  };
+  const up = e2 => {
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    if (band) band.remove();
+    if (!dragged) return;                       // 클릭이면 기존 클릭선택에 맡김
+    S.suppressClick = true;                     // 드래그 직후의 click 이벤트 무시
+    const x0 = Math.min(startX, e2.clientX), x1 = Math.max(startX, e2.clientX);
+    const y0 = Math.min(startY, e2.clientY), y1 = Math.max(startY, e2.clientY);
+    if (!additive) select(null, false);
+    let n = 0, capped = false;
+    $('stage').querySelectorAll('[data-cid]').forEach(el => {
+      if (el.tagName === 'g' || capped) return;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0.01 || r.height > 0.01) {
+        if (r.left >= x0 && r.right <= x1 && r.top >= y0 && r.bottom <= y1) {
+          if (S.selected.length >= 800) { capped = true; return; }
+          select(el.getAttribute('data-cid'), true); n++;
+        }
+      }
+    });
+    log(capped ? `박스 선택 800개 상한 도달 — 더 좁게 드래그하세요`
+               : `박스 선택: ${n}개 (합계 ${S.selected.length}) — 완전히 포함된 요소만`);
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+});
+
 $('viewport').addEventListener('pointerdown', evt => {
   const midOrSpace = evt.button === 1 || (evt.button === 0 && (S.tool === 'pan' || evt.altKey || S.spaceDown));
   if (!midOrSpace) return;
@@ -272,6 +320,7 @@ function preview() {
 function resetDraw() { S.pts = []; S.drawing = false; preview(); }
 
 $('viewport').addEventListener('click', async evt => {
+  if (S.suppressClick) { S.suppressClick = false; return; }   // 러버밴드 직후 click 무시
   let p = svgPoint(evt); if (!p) return;
   const t = S.tool;
   if (t !== 'select' && t !== 'copy' && t !== 'stylecopy') p = snapPoint(p, evt);
