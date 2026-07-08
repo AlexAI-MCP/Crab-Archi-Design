@@ -277,7 +277,26 @@ $('viewport').addEventListener('click', async evt => {
   if (t !== 'select' && t !== 'copy' && t !== 'stylecopy') p = snapPoint(p, evt);
   if (t === 'select') {
     const hit = evt.target.closest('[data-cid]');
-    select(hit ? hit.getAttribute('data-cid') : null, evt.shiftKey || evt.ctrlKey || evt.metaKey);
+    const additive = evt.shiftKey || evt.ctrlKey || evt.metaKey;
+    if (!hit) { select(null, additive); }
+    else {
+      // CAD 도면은 같은 자리에 동일 요소가 2~3겹 → 지오메트리가 완전히 같은 쌍둥이를 함께 선택
+      const GEO = { line:['x1','y1','x2','y2'], polyline:['points'], polygon:['points'],
+                    path:['d'], rect:['x','y','width','height'], circle:['cx','cy','r'],
+                    ellipse:['cx','cy','rx','ry'] };
+      const keys = GEO[hit.tagName];
+      select(hit.getAttribute('data-cid'), additive);
+      if (keys) {
+        const sig = keys.map(k => hit.getAttribute(k)).join('|') + '|' + (hit.getAttribute('transform')||'');
+        let n = 0;
+        $('stage').querySelectorAll(hit.tagName + '[data-cid]').forEach(e => {
+          if (e !== hit && keys.map(k => e.getAttribute(k)).join('|') + '|' + (e.getAttribute('transform')||'') === sig) {
+            select(e.getAttribute('data-cid'), true); n++;
+          }
+        });
+        if (n) log(`겹친 동일 요소 ${n}개 함께 선택됨 (합계 ${S.selected.length})`);
+      }
+    }
   } else if (t === 'copy') {
     const hit = evt.target.closest('[data-cid]');
     if (!S.copySource) { if (hit) { S.copySource = { cid:hit.getAttribute('data-cid'), p }; log('복사 원본 선택 — 붙여넣을 위치 클릭'); } }
