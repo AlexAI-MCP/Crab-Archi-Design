@@ -146,13 +146,17 @@ $('viewport').addEventListener('pointerdown', evt => {
   const midOrSpace = evt.button === 1 || (evt.button === 0 && (S.tool === 'pan' || evt.altKey || S.spaceDown));
   if (!midOrSpace) return;
   evt.preventDefault();
-  const start = svgPoint(evt), v0 = (S.view || S.docBox).slice();
+  const svg0 = $('stage').querySelector('svg'); if (!svg0) return;
+  // 드래그 시작 시점의 변환 행렬로 고정 — viewBox를 갱신하면서 다시 읽으면 이동이 상쇄된다
+  const ctm0 = svg0.getScreenCTM().inverse();
+  const pt0 = svg0.createSVGPoint(); pt0.x = evt.clientX; pt0.y = evt.clientY;
+  const start = pt0.matrixTransform(ctm0);
+  const v0 = (S.view || S.docBox).slice();
   S.panning = true;
   const move = e2 => {
-    const svg = $('stage').querySelector('svg'); if (!svg) return;
-    const pt = svg.createSVGPoint(); pt.x = e2.clientX; pt.y = e2.clientY;
-    const p2 = pt.matrixTransform(svg.getScreenCTM().inverse());
-    S.view = [v0[0] - (p2.x - start[0]), v0[1] - (p2.y - start[1]), v0[2], v0[3]];
+    const pt = svg0.createSVGPoint(); pt.x = e2.clientX; pt.y = e2.clientY;
+    const p2 = pt.matrixTransform(ctm0);
+    S.view = [v0[0] - (p2.x - start.x), v0[1] - (p2.y - start.y), v0[2], v0[3]];
     applyView();
   };
   const up = () => { S.panning = false; syncSession(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
