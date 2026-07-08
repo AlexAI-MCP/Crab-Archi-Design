@@ -172,20 +172,29 @@ $('viewport').addEventListener('pointerdown', evt => {
     S.suppressClick = true;                     // 드래그 직후의 click 이벤트 무시
     const x0 = Math.min(startX, e2.clientX), x1 = Math.max(startX, e2.clientX);
     const y0 = Math.min(startY, e2.clientY), y1 = Math.max(startY, e2.clientY);
-    if (!additive) select(null, false);
-    let n = 0, capped = false;
-    $('stage').querySelectorAll('[data-cid]').forEach(el => {
-      if (el.tagName === 'g' || capped) return;
+    // 일괄 처리: 요소마다 select() 호출 금지 (DOM 재검색·서버 POST 폭주 → 프리즈)
+    const picked = [];
+    let capped = false;
+    for (const el of $('stage').querySelectorAll('[data-cid]')) {
+      if (el.tagName === 'g') continue;
       const r = el.getBoundingClientRect();
-      if (r.width > 0.01 || r.height > 0.01) {
-        if (r.left >= x0 && r.right <= x1 && r.top >= y0 && r.bottom <= y1) {
-          if (S.selected.length >= 800) { capped = true; return; }
-          select(el.getAttribute('data-cid'), true); n++;
-        }
+      if ((r.width > 0.01 || r.height > 0.01) &&
+          r.left >= x0 && r.right <= x1 && r.top >= y0 && r.bottom <= y1) {
+        picked.push(el);
+        if (picked.length >= 800) { capped = true; break; }
       }
-    });
+    }
+    if (!additive) { S.selected = []; $('stage').querySelectorAll('.sel').forEach(e=>e.classList.remove('sel')); }
+    const have = new Set(S.selected);
+    for (const el of picked) {
+      const cid = el.getAttribute('data-cid');
+      if (!have.has(cid)) { have.add(cid); S.selected.push(cid); el.classList.add('sel'); }
+    }
+    $('selInfo').textContent = S.selected.length > 12
+      ? `${S.selected.length}개 선택됨` : (S.selected.join(', ') || '없음');
+    syncSession(true);
     log(capped ? `박스 선택 800개 상한 도달 — 더 좁게 드래그하세요`
-               : `박스 선택: ${n}개 (합계 ${S.selected.length}) — 완전히 포함된 요소만`);
+               : `박스 선택: ${picked.length}개 (합계 ${S.selected.length}) — 완전히 포함된 요소만`);
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 });
@@ -292,12 +301,17 @@ function showPointer(x, y) {       // 화면에 4초간 깜빡이는 마커
 }
 
 function restoreSelection() {
-  S.selected = S.selected.filter(cid => {
-    const el = $('stage').querySelector(`[data-cid="${cid}"]`);
-    if (el) el.classList.add('sel');
-    return !!el;
-  });
-  $('selInfo').textContent = S.selected.join(', ') || '없음';
+  if (S.selected.length) {                       // 단일 패스: cid별 전체 DOM 검색 금지
+    const want = new Set(S.selected);
+    const found = new Set();
+    for (const el of $('stage').querySelectorAll('[data-cid]')) {
+      const cid = el.getAttribute('data-cid');
+      if (want.has(cid)) { el.classList.add('sel'); found.add(cid); }
+    }
+    S.selected = S.selected.filter(cid => found.has(cid));
+  }
+  $('selInfo').textContent = S.selected.length > 12
+    ? `${S.selected.length}개 선택됨` : (S.selected.join(', ') || '없음');
 }
 function select(cid, additive) {
   if (!additive) { S.selected = []; $('stage').querySelectorAll('.sel').forEach(e=>e.classList.remove('sel')); }
