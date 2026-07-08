@@ -6,11 +6,11 @@
       "runtimeExecutable": ".venv/bin/crab-archi-design-canvas",
       "runtimeArgs": [
         "--port",
-        "8772",
+        "8773",
         "--svg",
-        "/Users/alex/Work/Community/A-801~802 \uc9c0\ud558\uce35\ud3c9\uba74\ub3c4_Model.svg"
+        "/Users/alex/Work/Community/A-801~802 지하층평면도_Model.svg"
       ],
-      "port": 8772
+      "port": 8773
     }
   ]
 }

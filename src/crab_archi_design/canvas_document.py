@@ -899,6 +899,108 @@ class CanvasDocument:
         parent.append(clone)
         return {"cid": clone.get("data-cid"), "element": self.describe(clone)}
 
+    def _selection_center(self, elements: list[ET.Element]) -> tuple[float, float]:
+        boxes = [b for b in (self.world_bbox(e) for e in elements) if b]
+        if not boxes:
+            raise CanvasError("selection has no measurable geometry")
+        x0 = min(b[0] for b in boxes); y0 = min(b[1] for b in boxes)
+        x1 = max(b[2] for b in boxes); y1 = max(b[3] for b in boxes)
+        return (x0 + x1) / 2, (y0 + y1) / 2
+
+    def op_transform_elements(self, cids: list[str], dx: float = 0.0, dy: float = 0.0,
+                              rotate: float = 0.0, scale: float = 1.0,
+                              center: list[float] | None = None) -> dict[str, Any]:
+        """Move/rotate/scale a selection as one group. Rotation and scaling pivot
+        about the selection's combined center (or an explicit center=[x,y])."""
+        if not cids:
+            raise CanvasError("cids is required (empty selection)")
+        elements = [self.find(cid) for cid in cids]
+        has_rot = abs(float(rotate)) > 1e-9
+        has_scl = abs(float(scale) - 1.0) > 1e-9
+        if not (dx or dy or has_rot or has_scl):
+            raise CanvasError("nothing to do — pass dx/dy, rotate (deg), or scale")
+        if has_scl and abs(float(scale)) < 1e-6:
+            raise CanvasError("scale must be non-zero")
+        cx, cy = (float(center[0]), float(center[1])) if center else self._selection_center(elements)
+        # 이동만이면 요소별 bake 경로 재사용 (SVG가 깨끗하게 유지됨)
+        if not has_rot and not has_scl:
+            for cid in cids:
+                self.op_move_element(cid, dx, dy)
+            return {"transformed": cids, "mode": "translate"}
+        parts = []
+        if dx or dy:
+            parts.append(f"translate({fmt(dx)},{fmt(dy)})")
+        parts.append(f"translate({fmt(cx)},{fmt(cy)})")
+        if has_rot:
+            parts.append(f"rotate({fmt(rotate)})")
+        if has_scl:
+            parts.append(f"scale({fmt(scale)})")
+        parts.append(f"translate({fmt(-cx)},{fmt(-cy)})")
+        prefix = " ".join(parts)
+        # 사전 충돌 검사: 변형 후 전체 bbox
+        import math
+        theta = math.radians(float(rotate))
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+        s = float(scale)
+        corners = []
+        for e in elements:
+            b = self.world_bbox(e)
+            if not b:
+                continue
+            for px, py in ((b[0], b[1]), (b[2], b[1]), (b[0], b[3]), (b[2], b[3])):
+                rx, ry = px - cx, py - cy
+                nx = (rx * cos_t - ry * sin_t) * s + cx + dx
+                ny = (rx * sin_t + ry * cos_t) * s + cy + dy
+                corners.append((nx, ny))
+        if corners:
+            xs = [p[0] for p in corners]; ys = [p[1] for p in corners]
+            self._check_no_go([min(xs), min(ys), max(xs), max(ys)], "transform")
+        for e in elements:
+            existing = e.get("transform", "")
+            e.set("transform", f"{prefix} {existing}".strip())
+        return {"transformed": cids, "center": [round(cx, 2), round(cy, 2)],
+                "rotate": rotate, "scale": scale}
+
+    def op_array_elements(self, cids: list[str], count: int, dx: float = 0.0, dy: float = 0.0,
+                          rows: int = 1, row_dy: float = 0.0, row_dx: float = 0.0) -> dict[str, Any]:
+        """Rectangular array: duplicate the selection into count columns × rows,
+        stepping (dx,dy) per column and (row_dx,row_dy) per row. The original
+        occupies slot (0,0)."""
+        if not cids:
+            raise CanvasError("cids is required (empty selection)")
+        count = int(count); rows = max(1, int(rows))
+        if count < 1 or count * rows > 400:
+            raise CanvasError("count must be >= 1 and count*rows <= 400")
+        if count > 1 and not (dx or dy):
+            raise CanvasError("dx/dy step is required for multiple columns")
+        sources = [self.find(cid) for cid in cids]
+        created: list[str] = []
+        for r in range(rows):
+            for c in range(count):
+                if r == 0 and c == 0:
+                    continue
+                ox, oy = c * dx + r * row_dx, c * dy + r * row_dy
+                for src in sources:
+                    parent = self.parent_of(src) or self.require_root()
+                    clone = copy.deepcopy(src)
+                    for node in clone.iter():
+                        if node.get("data-cid"):
+                            node.set("data-cid", self._new_cid())
+                        node.attrib.pop("id", None)
+                    existing = clone.get("transform", "")
+                    clone.set("transform", f"translate({fmt(ox)},{fmt(oy)}) {existing}".strip())
+                    parent.append(clone)
+                    bbox = self.world_bbox(clone)
+                    if bbox:
+                        try:
+                            self._check_no_go(bbox, "array")
+                        except CanvasError:
+                            parent.remove(clone)
+                            raise
+                    created.append(clone.get("data-cid"))
+        return {"created": created, "copies": len(created),
+                "grid": f"{count}x{rows}"}
+
     def op_copy_style(self, source_cid: str, target_cids: list[str]) -> dict[str, Any]:
         source = self.find(source_cid)
         style = {k: source.get(k) for k in STYLE_ATTRS if source.get(k)}
@@ -940,6 +1042,9 @@ class CanvasDocument:
         y0, y1 = min(y0, y1), max(y0, y1)
         inside = lambda px, py: x0 <= px <= x1 and y0 <= py <= y1  # noqa: E731
         self._check_no_go([x0 + dx, y0 + dy, x1 + dx, y1 + dy], "stretch")
+        if cids is not None and len(cids) == 0:
+            raise CanvasError("cids=[] would stretch everything in the box — omit cids "
+                              "for box-wide stretch, or pass the intended element ids")
         wanted = set(cids) if cids else None
         changed: list[str] = []
         skipped: list[str] = []

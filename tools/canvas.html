@@ -67,6 +67,13 @@
     <input id="strokeWidth" type="number" value="2" min="0.5" step="0.5" style="width:56px" title="선 두께">
     <button id="btnDelete">🗑 선택삭제</button>
   </div>
+  <div class="toolbar-group" id="xformGroup" title="선택한 오브젝트 변형">
+    <button id="btnMove" title="정확 이동 (드래그로도 이동 가능)">⤒ 이동</button>
+    <button id="btnRotate" title="선택 중심 기준 회전">⟳ 회전</button>
+    <button id="btnScale" title="선택 중심 기준 배율">⤢ 스케일</button>
+    <button id="btnDup" title="선택 복제">⧉ 복제</button>
+    <button id="btnArray" title="행×열 배열 복사">⠿ 배열</button>
+  </div>
   <input id="prompt" type="text" placeholder="메시지(에이전트에게) 또는 재생성 프롬프트">
   <button id="btnSend">💬 에이전트에게</button>
   <button id="btnRegen">재생성</button>
@@ -445,6 +452,70 @@ document.addEventListener('keydown', evt => {
 $('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r.status==='error') log('오류: '+r.error); poll(true); };
 $('btnFit').onclick = () => { S.view = null; applyView(); };
 $('btnSnap').onclick = () => { S.snap = !S.snap; $('btnSnap').classList.toggle('active', S.snap); log('스냅 ' + (S.snap ? '켜짐 (끝점>직교(Shift)>그리드)' : '꺼짐')); };
+// ---- 선택 변형: 이동·회전·스케일·복제·배열 ----
+const needSel = () => { if (!S.selected.length) { log('먼저 요소를 선택하세요'); return false; } return true; };
+const xform = params => op('transform_elements', { cids: S.selected.slice(), ...params });
+$('btnMove').onclick = () => {
+  if (!needSel()) return;
+  const v = window.prompt('이동량 dx,dy (도면 단위 · 예: 20,-10)', '10,0'); if (!v) return;
+  const [dx, dy] = v.split(',').map(Number);
+  if (isNaN(dx) || isNaN(dy)) { log('형식: dx,dy'); return; }
+  xform({ dx, dy });
+};
+$('btnRotate').onclick = () => {
+  if (!needSel()) return;
+  const v = window.prompt('회전 각도 (도 · 시계방향, 예: 90)', '90'); if (!v) return;
+  const a = Number(v); if (isNaN(a)) { log('숫자를 입력하세요'); return; }
+  xform({ rotate: a });
+};
+$('btnScale').onclick = () => {
+  if (!needSel()) return;
+  const v = window.prompt('배율 (예: 1.5 = 150%)', '1.5'); if (!v) return;
+  const s = Number(v); if (isNaN(s) || s === 0) { log('0이 아닌 숫자를 입력하세요'); return; }
+  xform({ scale: s });
+};
+$('btnDup').onclick = async () => {
+  if (!needSel()) return;
+  const r = await op('array_elements', { cids: S.selected.slice(), count: 2, dx: 15, dy: 15 });
+  if (r && r.status === 'ok' && r.created) { select(null, false); r.created.forEach(c => select(c, true)); log(`⧉ 복제됨 — 새 사본이 선택됨 (드래그로 이동)`); }
+};
+$('btnArray').onclick = () => {
+  if (!needSel()) return;
+  const v = window.prompt('배열: 열,열간격x,열간격y[,행,행간격y] (예: 5,30,0,2,25)', '4,30,0'); if (!v) return;
+  const [count, dx, dy, rows, rdy] = v.split(',').map(Number);
+  if (!count || isNaN(dx)) { log('형식: 열,간격x,간격y'); return; }
+  op('array_elements', { cids: S.selected.slice(), count, dx, dy: dy || 0,
+                         rows: rows || 1, row_dy: rdy || 0 });
+};
+
+// 드래그 이동: 선택 도구에서, 이미 선택된 요소 위에서 드래그 시작 → 선택 전체 이동
+$('viewport').addEventListener('pointerdown', evt => {
+  if (evt.button !== 0 || S.tool !== 'select' || evt.altKey || S.spaceDown || evt.shiftKey || evt.ctrlKey || evt.metaKey) return;
+  const hit = evt.target.closest && evt.target.closest('[data-cid]');
+  if (!hit || !S.selected.includes(hit.getAttribute('data-cid'))) return;
+  evt.stopImmediatePropagation();          // 러버밴드 시작 차단
+  const svg0 = $('stage').querySelector('svg'); if (!svg0) return;
+  const ctm0 = svg0.getScreenCTM().inverse();
+  const toW = e => { const p = svg0.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(ctm0); };
+  const start = toW(evt);
+  const targets = S.selected.map(cid => $('stage').querySelector(`[data-cid="${cid}"]`)).filter(Boolean);
+  let last = { x: 0, y: 0 }, moved = false;
+  const move = e2 => {
+    const p = toW(e2);
+    last = { x: p.x - start.x, y: p.y - start.y };
+    if (!moved && Math.hypot(last.x, last.y) < 1) return;
+    moved = true;
+    targets.forEach(el => el.setAttribute('data-drag', `translate(${last.x},${last.y})`) ||
+                          el.style.setProperty('transform', `translate(${last.x}px,${last.y}px)`));
+  };
+  const up = async () => {
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    targets.forEach(el => { el.style.removeProperty('transform'); el.removeAttribute('data-drag'); });
+    if (moved) { S.suppressClick = true; await xform({ dx: Math.round(last.x * 100) / 100, dy: Math.round(last.y * 100) / 100 }); }
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}, true);   // capture: 러버밴드 리스너보다 먼저
+
 $('btnDelete').onclick = () => {
   if (!S.selected.length) { log('삭제할 요소를 먼저 선택하세요 (Ctrl/Cmd/Shift+클릭 = 복수 선택)'); return; }
   const n = S.selected.length;

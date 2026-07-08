@@ -524,3 +524,42 @@ def test_http_export_endpoint(server, tmp_path: Path) -> None:
     dwg = http_json(base + "/api/export", {"path": str(tmp_path / "web2"), "format": "dwg"})
     assert dwg["status"] == "ok" and Path(dwg["dxf"]).exists()
     assert "dwg" in dwg  # 변환기 없으면 None + 안내, 있으면 경로
+
+
+def test_transform_elements_group(doc: CanvasDocument) -> None:
+    a = doc.apply("draw_rect", {"x": 0, "y": 0, "width": 10, "height": 10})["cid"]
+    b = doc.apply("draw_rect", {"x": 20, "y": 0, "width": 10, "height": 10})["cid"]
+    # 순수 이동은 좌표에 bake
+    doc.apply("transform_elements", {"cids": [a, b], "dx": 5, "dy": 5})
+    assert doc.world_bbox(doc.find(a))[:2] == [5.0, 5.0]
+    # 그룹 중심 회전: 두 요소의 합성 bbox는 유지(90도, 정사각 배치)
+    doc.apply("transform_elements", {"cids": [a, b], "rotate": 90})
+    boxes = [doc.world_bbox(doc.find(c)) for c in (a, b)]
+    combined = [min(x[0] for x in boxes), min(x[1] for x in boxes),
+                max(x[2] for x in boxes), max(x[3] for x in boxes)]
+    # 30x10 밴드가 중심 (20,10) 기준 90° 회전 → 10x30: x 15~25, y -5~25
+    assert abs(combined[0] - 15) < 0.1 and abs(combined[2] - 25) < 0.1
+    assert abs(combined[1] + 5) < 0.1 and abs(combined[3] - 25) < 0.1
+    # 스케일
+    doc.apply("transform_elements", {"cids": [a], "scale": 2})
+    bb = doc.world_bbox(doc.find(a))
+    assert abs((bb[2] - bb[0]) - 20) < 0.2
+    with pytest.raises(CanvasError):
+        doc.apply("transform_elements", {"cids": [], "dx": 1, "dy": 0})
+    with pytest.raises(CanvasError):
+        doc.apply("transform_elements", {"cids": [a]})  # nothing to do
+
+
+def test_array_elements_grid(doc: CanvasDocument) -> None:
+    a = doc.apply("draw_rect", {"x": 0, "y": 0, "width": 8, "height": 8})["cid"]
+    r = doc.apply("array_elements", {"cids": [a], "count": 3, "dx": 20, "rows": 2, "row_dy": 15})
+    assert r["copies"] == 5 and r["grid"] == "3x2"
+    last = doc.world_bbox(doc.find(r["created"][-1]))
+    assert abs(last[0] - 40) < 0.1 and abs(last[1] - 15) < 0.1
+    with pytest.raises(CanvasError):
+        doc.apply("array_elements", {"cids": [a], "count": 500})
+
+
+def test_stretch_rejects_empty_cids(doc: CanvasDocument) -> None:
+    with pytest.raises(CanvasError, match="cids"):
+        doc.apply("stretch", {"box": [0, 0, 100, 100], "dx": 1, "dy": 0, "cids": []})

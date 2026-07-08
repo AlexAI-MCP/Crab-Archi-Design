@@ -185,6 +185,22 @@ TOOLS: dict[str, dict[str, Any]] = {
                           "max_rooms": {"type": "integer"}}, []),
         "readonly": True,
     },
+    "transform_elements": {
+        "description": "Move / rotate / scale a selection as one group. Pure translation bakes into coordinates; rotate (degrees, clockwise) and scale pivot about the selection center (or explicit center=[x,y]). Honors protected zones.",
+        "kind": ("op", "transform_elements"),
+        "schema": schema({"cids": CIDS, "dx": NUM, "dy": NUM,
+                          "rotate": {**NUM, "description": "Degrees clockwise."},
+                          "scale": {**NUM, "description": "Uniform factor, e.g. 1.5."},
+                          "center": {"type": "array", "items": NUM, "minItems": 2, "maxItems": 2}},
+                         ["cids"]),
+    },
+    "array_elements": {
+        "description": "Rectangular array of a selection: count columns stepped by (dx,dy), optional rows stepped by (row_dx,row_dy). Original keeps slot (0,0); returns new cids. Great for parking stalls, carrels, lights, trees.",
+        "kind": ("op", "array_elements"),
+        "schema": schema({"cids": CIDS, "count": {"type": "integer"}, "dx": NUM, "dy": NUM,
+                          "rows": {"type": "integer"}, "row_dx": NUM, "row_dy": NUM},
+                         ["cids", "count"]),
+    },
     "stretch_elements": {
         "description": "CAD-style stretch: geometry points inside box move by (dx,dy); points outside stay, so walls crossing the box boundary lengthen instead of moving. Works on lines, polylines, rects, paths (curve control points included) and transformed elements. Use to enlarge rooms or pull walls. box=[x0,y0,x1,y1] in world coordinates.",
         "kind": ("op", "stretch"),
