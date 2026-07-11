@@ -255,6 +255,18 @@ TOOLS: dict[str, dict[str, Any]] = {
                           "px": {"type": "integer", "description": "Output width in pixels (default 1024)."}}, []),
         "readonly": True,
     },
+    "get_latest_3d_cut": {
+        "description": "Return the latest Three.js camera-cut PNG captured by the user in the live canvas. Use when browser_state reports a three_d_camera_cut message; this is the exact orbit/pan composition the user selected for Codex, GPT image rendering, or Nano Banana.",
+        "kind": ("render", "/api/3d/capture/latest"),
+        "schema": schema({}, []),
+        "readonly": True,
+    },
+    "get_latest_3d_cut_metadata": {
+        "description": "Return camera position/target, finish settings, render prompt, source SVG revision/hash, and local paths for the latest Three.js camera cut. The cut is derivative-only and never mutates source SVG geometry.",
+        "kind": ("get", "/api/3d/capture/latest-meta"),
+        "schema": schema({}, []),
+        "readonly": True,
+    },
     "undo": {
         "description": "Undo the last canvas mutation.",
         "kind": ("post", "/api/undo"), "schema": schema({}, []),
@@ -396,7 +408,9 @@ def handle_request(client: CanvasClient, message: dict[str, Any]) -> dict[str, A
                 "Live SVG CAD canvas. Typical flow: open_svg (or canvas_status to see what the "
                 "user already loaded) -> list_elements to recognize geometry/labels -> edit with "
                 "draw_*/delete_elements/copy_*/set_* -> set_zone to mark protected/mutable areas "
-                "-> regenerate_layout for a full deterministic redesign. Every edit appears "
+                "-> regenerate_layout for a full deterministic redesign. If browser_state reports "
+                "type=three_d_camera_cut, call get_latest_3d_cut and get_latest_3d_cut_metadata to "
+                "inspect the user's exact Three.js orbit/pan composition. Every edit appears "
                 "instantly in the user's browser at the canvas server URL."
             ),
         })

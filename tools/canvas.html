@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <title>Crab Archi Design — Live Canvas</title>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}
+</script>
 <style>
   :root { --bg:#14171c; --panel:#1d2129; --line:#2c313b; --text:#e6e9ef; --dim:#8a93a3; --accent:#4da3ff; }
   * { box-sizing:border-box; }
@@ -15,7 +18,8 @@
   button.active { background:var(--accent); color:#08121f; border-color:var(--accent); }
   select { background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:6px; padding:6px; }
   main { flex:1; display:flex; min-height:0; }
-  #viewport { flex:1; position:relative; overflow:hidden; background:#fff; }
+  #workspace { flex:1; min-width:0; display:flex; flex-direction:column; }
+  #viewport { flex:1; min-height:180px; position:relative; overflow:hidden; background:#fff; }
   #stage svg, #overlay { position:absolute; inset:0; width:100%; height:100%; }
   #overlay { pointer-events:none; }
   aside { width:240px; flex:none; background:var(--panel); border-left:1px solid var(--line); padding:10px; overflow-y:auto; font-size:13px; }
@@ -26,6 +30,23 @@
   footer { padding:4px 12px; background:var(--panel); border-top:1px solid var(--line); color:var(--dim); font-size:12px; display:flex; justify-content:space-between; }
   .sel { outline:2px dashed var(--accent); outline-offset:1px; }
   .toolbar-group { display:flex; gap:4px; align-items:center; padding-right:8px; border-right:1px solid var(--line); }
+  #threePane { position:relative; flex:0 0 46%; min-height:260px; overflow:hidden; background:#11151b;
+    border-bottom:1px solid var(--line); }
+  #threePane.hidden { display:none; }
+  #threeCanvas { display:block; width:100%; height:100%; touch-action:none; }
+  .three-toolbar { position:absolute; z-index:4; top:8px; left:8px; right:8px; display:flex; flex-wrap:wrap;
+    align-items:center; gap:5px; padding:7px; border:1px solid rgba(255,255,255,.12); border-radius:8px;
+    background:rgba(20,23,28,.88); backdrop-filter:blur(8px); }
+  .three-toolbar label { display:flex; align-items:center; gap:4px; font-size:11px; color:var(--dim); }
+  .three-toolbar input[type=number] { width:66px; }
+  .three-toolbar input[type=text] { min-width:260px; flex:1; }
+  .three-toolbar input, .three-toolbar select { background:var(--bg); border:1px solid var(--line); color:var(--text);
+    border-radius:5px; padding:4px 6px; }
+  .three-toolbar button { padding:4px 8px; font-size:12px; }
+  #threeStatus { position:absolute; left:10px; bottom:8px; z-index:4; color:#cbd5e1; font:11px/1.4 ui-monospace, monospace;
+    background:rgba(0,0,0,.62); padding:4px 7px; border-radius:5px; pointer-events:none; }
+  #threeSelection { position:absolute; right:10px; bottom:8px; z-index:4; color:#7dd3fc; font:11px/1.4 ui-monospace, monospace;
+    background:rgba(0,0,0,.62); padding:4px 7px; border-radius:5px; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -40,6 +61,7 @@
     <button id="btnUndo">↩ 실행취소</button>
     <button id="btnFit">전체보기</button>
     <button id="btnSnap" class="active">스냅</button>
+    <button id="btn3d" title="현재 SVG를 읽기 전용 Three.js 3D로 보기">◫ 3D</button>
   </div>
   <div class="toolbar-group" id="tools">
     <button data-tool="select" class="active">선택</button>
@@ -79,7 +101,43 @@
   <button id="btnRegen">재생성</button>
 </header>
 <main>
-  <div id="viewport"><div id="stage"></div><svg id="overlay"></svg></div>
+  <div id="workspace">
+    <div id="threePane" class="hidden">
+      <canvas id="threeCanvas"></canvas>
+      <div class="three-toolbar">
+        <button id="btn3dRebuild">↻ 3D 갱신</button>
+        <label>층고 mm <input id="threeWallHeight" type="number" value="2700" min="300" step="100"></label>
+        <label>벽두께 mm <input id="threeWallThickness" type="number" value="150" min="20" step="10"></label>
+        <label>슬래브 mm <input id="threeSlab" type="number" value="150" min="0" step="10"></label>
+        <label>가구높이 mm <input id="threeFurnitureHeight" type="number" value="750" min="50" step="50"></label>
+        <label><input id="threeShowWalls" type="checkbox" checked>벽</label>
+        <label><input id="threeShowColumns" type="checkbox" checked>기둥</label>
+        <label><input id="threeShowFurniture" type="checkbox" checked>가구</label>
+        <label><input id="threeShowOverlay" type="checkbox" checked>2D 정합선</label>
+        <select id="threeFinish" title="선택한 3D 부재 또는 전체 벽 마감">
+          <option value="plaster">화이트 플라스터</option>
+          <option value="concrete">노출 콘크리트</option>
+          <option value="wood">우드</option>
+          <option value="metal">메탈</option>
+          <option value="glass">유리</option>
+          <option value="custom">사용자 색상</option>
+        </select>
+        <input id="threeColor" type="color" value="#d8d4ca" title="마감 색상">
+        <button id="btn3dApplyFinish">마감 적용</button>
+        <button id="btn3dPerspective">사선뷰</button>
+        <button id="btn3dTop">평면뷰</button>
+        <button id="btn3dEye">아이레벨</button>
+        <button id="btn3dFit">Fit</button>
+        <input id="threeRenderPrompt" type="text" placeholder="렌더 요청: 재질, 조명, 시간대, 분위기…">
+        <button id="btn3dSend" class="active">컷을 Codex로</button>
+        <button id="btn3dCopy">캡처 복사</button>
+        <button id="btn3dCopyPrompt">렌더 요청 복사</button>
+      </div>
+      <div id="threeStatus">3D 준비 중…</div>
+      <div id="threeSelection">선택: 전체 벽</div>
+    </div>
+    <div id="viewport"><div id="stage"></div><svg id="overlay"></svg></div>
+  </div>
   <aside>
     <h3>선택</h3><div id="selInfo">없음</div>
     <h3>구역</h3><div id="zoneList">없음</div>
@@ -120,6 +178,7 @@ async function poll(force) {
       $('status').textContent = `rev ${doc.revision} · 요소 ${doc.element_count} · ${doc.source_path||'(파일 미지정)'}`;
       S.endpoints = null;  // 스냅 캐시 무효화
       refreshZones(); restoreSelection();
+      window.dispatchEvent(new CustomEvent('crab-canvas-revision', { detail:{ revision:S.rev } }));
     } else if (doc.status === 'empty') { $('status').textContent = 'SVG를 열어주세요'; }
   } catch (e) { $('status').textContent = '서버 연결 끊김'; }
 }
@@ -539,6 +598,17 @@ $('btnRegen').onclick = async () => {
   } catch (e) { log('재생성 오류: ' + e); }
   $('btnRegen').disabled = false; poll(true);
 };
+window.CrabCanvas = {
+  api,
+  log,
+  getRevision: () => S.rev,
+  getSourcePath: () => S.sourcePath || null,
+  getSvgRoot: () => $('stage').querySelector('svg'),
+  getSelectedCids: () => S.selected.slice(),
+  selectCid: cid => select(cid, false),
+};
+window.dispatchEvent(new CustomEvent('crab-canvas-ready'));
 </script>
+<script type="module" src="/canvas_3d.js"></script>
 </body>
 </html>

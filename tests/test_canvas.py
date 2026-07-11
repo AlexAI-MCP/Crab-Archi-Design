@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -19,6 +20,11 @@ SAMPLE_SVG = """<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 400 300\
   <line x1=\"10\" y1=\"120\" x2=\"110\" y2=\"120\" stroke=\"#333\" stroke-width=\"4\"/>
   <text x=\"20\" y=\"50\" font-size=\"12\">LOUNGE</text>
 </svg>"""
+
+ONE_PIXEL_PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 @pytest.fixture
@@ -128,6 +134,93 @@ def test_http_open_op_doc_flow(server) -> None:
     assert doc["status"] == "ok" and "svg" in doc and doc["element_count"] == 5
     unchanged = http_json(base + f"/api/doc?rev={doc['revision']}")
     assert unchanged["status"] == "unchanged"
+
+
+def test_http_serves_three_viewer_assets(server) -> None:
+    base, _ = server
+    with urllib.request.urlopen(base + "/", timeout=10) as response:
+        html = response.read().decode()
+    with urllib.request.urlopen(base + "/canvas_3d.js", timeout=10) as response:
+        javascript = response.read().decode()
+    assert 'id="threePane"' in html
+    assert 'src="/canvas_3d.js"' in html
+    assert 'id="threeShowWalls"' in html
+    assert 'id="threeShowColumns"' in html
+    assert 'id="threeShowFurniture"' in html
+    assert 'id="threeShowOverlay"' in html
+    assert "OrbitControls" in javascript
+    assert "flattened_svg_inference" in javascript
+    assert "hybrid_semantic_and_inference" in javascript
+    assert "model_source_revision" in javascript
+    assert "addPlanOverlay" in javascript
+    assert "furnitureCount" in javascript
+
+
+def test_three_camera_cut_capture_queues_agent_handoff(server) -> None:
+    base, svg_path = server
+    opened = http_json(base + "/api/open", {"path": str(svg_path)})
+    result = http_json(base + "/api/3d/capture", {
+        "image_data_url": ONE_PIXEL_PNG_DATA_URL,
+        "project_id": "camera-demo",
+        "model_source_revision": opened["revision"],
+        "camera": {"position": [4, 6, 8], "target": [0, 0, 0], "fov_degrees": 42},
+        "settings": {"wall_height_mm": 2700, "finish": "concrete",
+                     "source_revision": opened["revision"]},
+        "render_prompt": "Keep this exact camera and render warm evening light.",
+        "queue_to_agent": True,
+    })
+    assert result["status"] == "ok" and result["queued_to_agent"] is True
+    assert Path(result["capture_path"]).read_bytes().startswith(b"\x89PNG")
+    metadata = json.loads(Path(result["metadata_path"]).read_text(encoding="utf-8"))
+    assert metadata["schema"] == "crab-archi-design-three-camera-cut-v1"
+    assert metadata["derivative_only"] is True and metadata["source_geometry_mutated"] is False
+    assert metadata["source_revision"] == result["source_revision"]
+    assert metadata["model_source_revision"] == opened["revision"]
+    assert len(metadata["source_svg_sha256"]) == 64
+
+    latest_meta = http_json(base + "/api/3d/capture/latest-meta")
+    assert latest_meta["capture_path"] == result["capture_path"]
+    with urllib.request.urlopen(base + "/api/3d/capture/latest", timeout=10) as response:
+        assert response.read().startswith(b"\x89PNG")
+
+    session = http_json(base + "/api/session?drain=1")
+    message = session["user_messages"][0]
+    assert message["type"] == "three_d_camera_cut"
+    assert message["capture_path"] == result["capture_path"]
+    assert message["camera"]["position"] == [4, 6, 8]
+
+
+def test_three_camera_cut_rejects_stale_model_revision(server) -> None:
+    base, svg_path = server
+    opened = http_json(base + "/api/open", {"path": str(svg_path)})
+    with pytest.raises(urllib.error.HTTPError) as error:
+        http_json(base + "/api/3d/capture", {
+            "image_data_url": ONE_PIXEL_PNG_DATA_URL,
+            "model_source_revision": opened["revision"] - 1,
+            "settings": {"source_revision": opened["revision"] - 1},
+        })
+    assert error.value.code == 400
+    body = json.loads(error.value.read().decode())
+    assert "rebuild before capture" in body["error"]
+
+
+def test_canvas_mcp_returns_latest_three_cut(server) -> None:
+    base, svg_path = server
+    http_json(base + "/api/open", {"path": str(svg_path)})
+    http_json(base + "/api/3d/capture", {
+        "image_data_url": ONE_PIXEL_PNG_DATA_URL,
+        "camera": {"position": [1, 2, 3]},
+        "settings": {},
+        "queue_to_agent": False,
+    })
+    client = CanvasClient(base)
+    image = client.call("get_latest_3d_cut", {})
+    metadata = client.call("get_latest_3d_cut_metadata", {})
+    assert image["status"] == "ok" and image["bytes"] > 8 and image["png_base64"]
+    assert metadata["camera"]["position"] == [1, 2, 3]
+    tools = handle_request(client, {"jsonrpc": "2.0", "id": 7, "method": "tools/list"})
+    names = {tool["name"] for tool in tools["result"]["tools"]}
+    assert {"get_latest_3d_cut", "get_latest_3d_cut_metadata"} <= names
 
 
 def test_http_rejects_unknown_op(server) -> None:

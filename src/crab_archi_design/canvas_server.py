@@ -10,12 +10,17 @@ Binds to 127.0.0.1 only. Stdlib only.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import json
 import re
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -28,6 +33,8 @@ from crab_archi_design.canvas_document import (
 )
 
 DEFAULT_PORT = 8770
+THREE_CAPTURE_MAX_BYTES = 20 * 1024 * 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 # Ops an HTTP client may invoke on the document (op name -> mutating).
 ALLOWED_OPS = {
@@ -111,6 +118,19 @@ def canvas_html_path() -> Path | None:
     return next((path for path in candidates if path.exists()), None)
 
 
+def canvas_3d_js_path() -> Path | None:
+    candidates = [
+        Path(__file__).resolve().parents[2] / "tools" / "canvas_3d.js",
+        Path.cwd() / "tools" / "canvas_3d.js",
+    ]
+    return next((path for path in candidates if path.exists()), None)
+
+
+def safe_project_id(raw: Any) -> str:
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(raw or "canvas-session").strip()).strip(".-")
+    return value[:80] or "canvas-session"
+
+
 class CanvasState:
     def __init__(self, project_root: Path) -> None:
         self.document = CanvasDocument()
@@ -125,6 +145,8 @@ class CanvasState:
         self.inbox: list[dict[str, Any]] = []   # 사용자 → 에이전트 메시지
         self.notices: list[dict[str, Any]] = [] # 에이전트 → 브라우저 알림/포인터
         self.notice_seq = 0
+        self.latest_three_capture: Path | None = None
+        self.latest_three_metadata: Path | None = None
 
     def push_notice(self, text: str, pointer: list[float] | None = None) -> int:
         with self.session_lock:
@@ -142,6 +164,99 @@ class CanvasState:
             except Exception:  # noqa: BLE001
                 return False
         return False
+
+    def save_three_capture(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Persist one browser-rendered camera cut and queue it for the MCP agent.
+
+        The PNG is a derived review artifact. It never mutates the source SVG or
+        feeds camera coordinates back into the architectural solver.
+        """
+        image_data = str(payload.get("image_data_url") or "")
+        prefix = "data:image/png;base64,"
+        if not image_data.startswith(prefix):
+            raise CanvasError("image_data_url must be a base64 PNG data URL")
+        try:
+            png = base64.b64decode(image_data[len(prefix):], validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise CanvasError("image_data_url is not valid base64") from exc
+        if not png.startswith(PNG_SIGNATURE):
+            raise CanvasError("captured image is not a valid PNG")
+        if len(png) > THREE_CAPTURE_MAX_BYTES:
+            raise CanvasError(f"captured PNG exceeds {THREE_CAPTURE_MAX_BYTES // (1024 * 1024)} MB")
+
+        settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+        expected_revision = payload.get("model_source_revision", settings.get("source_revision"))
+        with self.document.lock:
+            source_svg = self.document.to_string()
+            source_status = self.document.status()
+        if expected_revision is not None:
+            try:
+                expected_revision = int(expected_revision)
+            except (TypeError, ValueError) as exc:
+                raise CanvasError("model_source_revision must be an integer") from exc
+            if expected_revision != source_status.get("revision"):
+                raise CanvasError(
+                    "3D model revision does not match the current SVG revision; rebuild before capture"
+                )
+
+        project_id = safe_project_id(payload.get("project_id"))
+        capture_dir = self.project_root / project_id / "canvas" / "three_d_cuts"
+        capture_dir.mkdir(parents=True, exist_ok=True)
+        seq = max(
+            (int(match.group(1)) for path in capture_dir.glob("camera_cut_*.png")
+             if (match := re.fullmatch(r"camera_cut_(\d+)\.png", path.name))),
+            default=0,
+        ) + 1
+        png_path = capture_dir / f"camera_cut_{seq:03d}.png"
+        metadata_path = capture_dir / f"camera_cut_{seq:03d}.json"
+        camera = payload.get("camera") if isinstance(payload.get("camera"), dict) else {}
+        render_prompt = str(payload.get("render_prompt") or "").strip()
+        metadata = {
+            "schema": "crab-archi-design-three-camera-cut-v1",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "project_id": project_id,
+            "capture_path": str(png_path.resolve()),
+            "source_path": source_status.get("source_path"),
+            "source_revision": source_status.get("revision"),
+            "model_source_revision": expected_revision,
+            "source_svg_sha256": hashlib.sha256(source_svg.encode("utf-8")).hexdigest(),
+            "source_geometry_mutated": False,
+            "derivative_only": True,
+            "camera": camera,
+            "settings": settings,
+            "render_prompt": render_prompt,
+            "renderer": {
+                "engine": "three.js",
+                "purpose": "camera composition reference for Codex, GPT image rendering, or Nano Banana",
+            },
+        }
+        png_path.write_bytes(png)
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        message = {
+            "type": "three_d_camera_cut",
+            "text": render_prompt or "3D camera cut captured. Inspect it with get_latest_3d_cut before rendering.",
+            "ts": time.time(),
+            "capture_path": str(png_path.resolve()),
+            "metadata_path": str(metadata_path.resolve()),
+            "source_revision": source_status.get("revision"),
+            "camera": camera,
+            "settings": settings,
+        }
+        with self.session_lock:
+            self.latest_three_capture = png_path
+            self.latest_three_metadata = metadata_path
+            if payload.get("queue_to_agent", True):
+                self.inbox.append(message)
+                self.inbox = self.inbox[-50:]
+        return {
+            "status": "ok",
+            "capture_path": str(png_path.resolve()),
+            "metadata_path": str(metadata_path.resolve()),
+            "queued_to_agent": bool(payload.get("queue_to_agent", True)),
+            "bytes": len(png),
+            "source_revision": source_status.get("revision"),
+        }
 
     def regenerate(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Save the canvas, run the deterministic pipeline, load the alternative back."""
@@ -240,6 +355,12 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
+                elif route == "/canvas_3d.js":
+                    path = canvas_3d_js_path()
+                    if path is None:
+                        self.send_json({"status": "error", "error": "tools/canvas_3d.js not found"}, 404)
+                        return
+                    self.send_bytes_raw(path.read_bytes(), "text/javascript; charset=utf-8")
                 elif route == "/api/health":
                     self.send_json({"status": "ok", "schema": "crab-archi-design-canvas-health-v1",
                                     "zone_modes": sorted(ZONE_MODES), "ops": sorted(ALLOWED_OPS),
@@ -318,6 +439,18 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                         svg_text = doc.to_string()
                     png = render_png(svg_text, bbox, px=int(params.get("px", 1024)))
                     self.send_bytes_raw(png, "image/png")
+                elif route == "/api/3d/capture/latest":
+                    with state.session_lock:
+                        path = state.latest_three_capture
+                    if path is None or not path.is_file():
+                        raise CanvasError("no 3D camera cut has been captured yet")
+                    self.send_bytes_raw(path.read_bytes(), "image/png")
+                elif route == "/api/3d/capture/latest-meta":
+                    with state.session_lock:
+                        path = state.latest_three_metadata
+                    if path is None or not path.is_file():
+                        raise CanvasError("no 3D camera cut metadata is available yet")
+                    self.send_json(json.loads(path.read_text(encoding="utf-8")))
                 else:
                     self.send_json({"status": "error", "error": f"unknown route {route}"}, 404)
             except CanvasError as exc:
@@ -391,6 +524,8 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                                             "selection": list(state.selection)})
                         state.inbox = state.inbox[-50:]
                     self.send_json({"status": "ok", "queued": len(state.inbox)})
+                elif route == "/api/3d/capture":
+                    self.send_json(state.save_three_capture(payload))
                 elif route == "/api/notify":
                     # 에이전트 → 브라우저 알림 (+선택적 포인터 좌표)
                     text = str(payload.get("text") or "").strip()
