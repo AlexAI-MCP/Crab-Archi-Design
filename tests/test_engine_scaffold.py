@@ -43,8 +43,10 @@ def test_engine_workflow_contract_keeps_opencrab_and_same_layer_boundaries() -> 
     assert contract["opencrab"]["required"] is True
     assert contract["opencrab"]["homepage"] == "https://opencrab.sh"
     assert contract["production_engine"] == "same-layer-svg-engine"
+    assert contract["gis"]["capture_mode"] == "local_qgis_mcp_read_only"
     assert workflow_stage_ids() == [
         "recognition_ir",
+        "geospatial_context",
         "topology_constraints",
         "opencrab_projection",
         "intent_compilation",

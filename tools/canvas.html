@@ -2,6 +2,8 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
 <title>Crab Archi Design — Live Canvas</title>
 <script type="importmap">
 {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}
@@ -33,12 +35,46 @@
   #threePane { position:relative; flex:0 0 46%; min-height:260px; overflow:hidden; background:#11151b;
     border-bottom:1px solid var(--line); }
   #threePane.hidden { display:none; }
+  #splitHandle { position:relative; flex:0 0 8px; min-height:8px; background:var(--panel); cursor:row-resize;
+    touch-action:none; user-select:none; outline:none; }
+  #splitHandle::after { content:""; position:absolute; left:50%; top:50%; width:48px; height:2px;
+    border-radius:2px; background:#596273; transform:translate(-50%,-50%); }
+  #splitHandle:hover::after, #splitHandle:focus-visible::after, #splitHandle.dragging::after { background:var(--accent); }
+  #threePane.hidden + #splitHandle { display:none; }
+  #workspace[data-split="side-by-side"] { flex-direction:row; }
+  #workspace[data-split="side-by-side"] #viewport { order:1; min-width:280px; }
+  #workspace[data-split="side-by-side"] #splitHandle { order:2; min-width:8px; min-height:0; cursor:col-resize; }
+  #workspace[data-split="side-by-side"] #splitHandle::after { width:2px; height:48px; }
+  #workspace[data-split="side-by-side"] #threePane { order:3; flex-basis:46%; min-width:300px; min-height:0; border-bottom:0; border-left:0; }
   #threeCanvas { display:block; width:100%; height:100%; touch-action:none; }
+  #threeCanvas.pan-mode { cursor:grab; }
+  #threeCanvas.pan-mode:active { cursor:grabbing; }
   .three-toolbar { position:absolute; z-index:4; top:8px; left:8px; right:8px; display:flex; flex-wrap:wrap;
     align-items:center; gap:5px; padding:7px; border:1px solid rgba(255,255,255,.12); border-radius:8px;
-    background:rgba(20,23,28,.88); backdrop-filter:blur(8px); }
+    background:rgba(20,23,28,.88); backdrop-filter:blur(8px); transition:box-shadow .12s ease; }
+  .three-toolbar.dragging { cursor:grabbing; box-shadow:0 12px 30px rgba(0,0,0,.45); transition:none; }
+  .three-toolbar-handle { align-self:stretch; display:flex; align-items:center; padding:0 3px; color:var(--dim); cursor:grab; user-select:none; touch-action:none; font-size:16px; }
+  .three-toolbar-docks { display:flex; gap:2px; }
+  .three-toolbar-docks button { padding:2px 4px; font-size:11px; }
+  #threePane[data-toolbar-dock="bottom"] .three-toolbar { top:auto; bottom:8px; }
+  #threePane[data-toolbar-dock="left"] .three-toolbar,
+  #threePane[data-toolbar-dock="right"] .three-toolbar { top:8px; bottom:8px; width:min(360px, calc(100% - 16px)); overflow:auto; align-content:flex-start; }
+  #threePane[data-toolbar-dock="left"] .three-toolbar { left:8px; right:auto; }
+  #threePane[data-toolbar-dock="right"] .three-toolbar { left:auto; right:8px; }
+  #threePane .three-toolbar.minimized { width:auto; right:auto; bottom:auto; overflow:visible; flex-wrap:nowrap; padding:4px 6px; }
+  #threePane .three-toolbar.minimized > :not(.three-toolbar-handle):not(#btn3dMinimize) { display:none; }
+  #threePane[data-toolbar-dock="right"] .three-toolbar.minimized { left:auto; right:8px; }
+  #threePane[data-toolbar-dock="bottom"] .three-toolbar.minimized { top:auto; bottom:8px; }
   .three-toolbar label { display:flex; align-items:center; gap:4px; font-size:11px; color:var(--dim); }
   .three-toolbar input[type=number] { width:66px; }
+  .three-selection-height { display:flex; flex:1 1 560px; min-width:0; max-width:100%; flex-wrap:wrap;
+    align-items:center; gap:5px; padding-left:6px; border-left:1px solid var(--line); }
+  .three-selection-height strong { color:#7dd3fc; font-size:11px; }
+  .three-selection-height .selection-hint { color:#94a3b8; font-size:10px; white-space:nowrap; }
+  .three-selection-height .height-apply-state { color:#fbbf24; font-size:10px; white-space:nowrap; }
+  .three-selection-height .height-apply-state.applied { color:#86efac; }
+  .three-selection-height #threeObjectSelect { max-width:180px; }
+  .three-toolbar button:disabled { opacity:.42; cursor:not-allowed; }
   .three-toolbar input[type=text] { min-width:260px; flex:1; }
   .three-toolbar input, .three-toolbar select { background:var(--bg); border:1px solid var(--line); color:var(--text);
     border-radius:5px; padding:4px 6px; }
@@ -47,6 +83,14 @@
     background:rgba(0,0,0,.62); padding:4px 7px; border-radius:5px; pointer-events:none; }
   #threeSelection { position:absolute; right:10px; bottom:8px; z-index:4; color:#7dd3fc; font:11px/1.4 ui-monospace, monospace;
     background:rgba(0,0,0,.62); padding:4px 7px; border-radius:5px; pointer-events:none; }
+  @media (max-width: 760px) {
+    #workspace[data-split="side-by-side"] { flex-direction:column; }
+    #workspace[data-split="side-by-side"] #viewport, #workspace[data-split="side-by-side"] #threePane,
+    #workspace[data-split="side-by-side"] #splitHandle { order:initial; min-width:0; }
+    #workspace[data-split="side-by-side"] #splitHandle { min-height:8px; cursor:row-resize; }
+    #workspace[data-split="side-by-side"] #splitHandle::after { width:48px; height:2px; }
+    #workspace[data-split="side-by-side"] #threePane { min-height:220px; border-left:0; border-bottom:1px solid var(--line); }
+  }
 </style>
 </head>
 <body>
@@ -58,10 +102,13 @@
     <input type="file" id="filePick" accept=".svg,image/svg+xml" style="display:none">
     <button id="btnSave">저장</button>
     <button id="btnDxf" title="DXF로 내보내기 (AutoCAD 호환)">⬇ DXF</button>
+    <button id="btnDwg" title="ODA File Converter가 설치된 경우 DWG로 변환">⬇ DWG</button>
     <button id="btnUndo">↩ 실행취소</button>
+    <button id="btnRedo" title="다시 실행 (Ctrl/Cmd+Y 또는 Ctrl/Cmd+Shift+Z)">↪ 다시 실행</button>
     <button id="btnFit">전체보기</button>
     <button id="btnSnap" class="active">스냅</button>
     <button id="btn3d" title="현재 SVG를 읽기 전용 Three.js 3D로 보기">◫ 3D</button>
+    <button id="btnSplit" title="2D/3D를 상하 또는 좌우로 전환" aria-pressed="false">↔ 좌우 분할</button>
   </div>
   <div class="toolbar-group" id="tools">
     <button data-tool="select" class="active">선택</button>
@@ -102,18 +149,54 @@
 </header>
 <main>
   <div id="workspace">
-    <div id="threePane" class="hidden">
+    <div id="threePane" class="hidden" data-toolbar-dock="top">
       <canvas id="threeCanvas"></canvas>
       <div class="three-toolbar">
+        <span class="three-toolbar-handle" id="threeToolbarHandle" title="드래그해서 패널을 위·아래·왼쪽·오른쪽에 도킹" aria-label="3D 제어 패널 이동">⠿</span>
+        <button id="btn3dMinimize" type="button" title="3D 제어 패널 최소화" aria-expanded="true">−</button>
+        <span class="three-toolbar-docks" aria-label="3D 제어 패널 위치">
+          <button type="button" data-toolbar-dock="left" title="왼쪽에 도킹">◀</button>
+          <button type="button" data-toolbar-dock="top" title="위에 도킹">▲</button>
+          <button type="button" data-toolbar-dock="bottom" title="아래에 도킹">▼</button>
+          <button type="button" data-toolbar-dock="right" title="오른쪽에 도킹">▶</button>
+        </span>
         <button id="btn3dRebuild">↻ 3D 갱신</button>
-        <label>층고 mm <input id="threeWallHeight" type="number" value="2700" min="300" step="100"></label>
+        <label>벽 높이 mm <input id="threeWallHeight" type="number" value="2700" min="300" step="100"></label>
         <label>벽두께 mm <input id="threeWallThickness" type="number" value="150" min="20" step="10"></label>
         <label>슬래브 mm <input id="threeSlab" type="number" value="150" min="0" step="10"></label>
         <label>가구높이 mm <input id="threeFurnitureHeight" type="number" value="750" min="50" step="50"></label>
+        <span class="three-selection-height" aria-label="선택 객체 높이 조정">
+          <strong>선택 높이</strong>
+          <span id="threeHeightSelectionHint" class="selection-hint" aria-live="polite">2D·3D·목록에서 객체 선택</span>
+          <span id="threeHeightApplyState" class="height-apply-state" aria-live="polite">숫자 변경 시 자동 적용</span>
+          <select id="threeObjectSelect" title="높이 편집이 가능한 동·구조물·수목 선택">
+            <option value="">3D 객체 선택…</option>
+          </select>
+          <label>층수 <input id="threeSelectedFloors" type="number" value="1" min="1" max="200" step="1" disabled></label>
+          <label>층고 mm <input id="threeSelectedFloorHeight" type="number" value="2700" min="300" step="100" disabled></label>
+          <button id="btn3dApplyFloors" type="button" disabled title="건축 매스에만 적용">동 층수 적용</button>
+          <label>직접 mm <input id="threeSelectedHeight" type="number" value="2700" min="10" step="100" disabled></label>
+          <button id="btn3dApplyHeight" type="button" disabled>객체 높이 적용</button>
+          <button id="btn3dResetHeight" type="button" disabled>초기화</button>
+          <label><input id="threeShowSelectionPlan" type="checkbox" checked>선택 평면</label>
+        </span>
+        <select id="threeViewPreset" title="분류는 유지하고 표시 채널만 전환">
+          <option value="all">전체 동시 보기</option>
+          <option value="building">건축/매스</option>
+          <option value="landscape">조경</option>
+          <option value="civil-terrain">토목/지형</option>
+          <option value="interior">실내/주차</option>
+          <option value="manual">사용자 선택</option>
+        </select>
         <label><input id="threeShowWalls" type="checkbox" checked>벽</label>
         <label><input id="threeShowColumns" type="checkbox" checked>기둥</label>
         <label><input id="threeShowFurniture" type="checkbox" checked>가구</label>
-        <label><input id="threeShowOverlay" type="checkbox" checked>2D 정합선</label>
+        <label><input id="threeShowParking" type="checkbox" checked>주차</label>
+        <label><input id="threeShowBuilding" type="checkbox" checked>건축 외관/매스</label>
+        <label><input id="threeShowLandscape" type="checkbox" checked>조경</label>
+        <label><input id="threeShowCivil" type="checkbox" checked>토목</label>
+        <label><input id="threeShowTerrain" type="checkbox" checked>지형</label>
+        <label><input id="threeShowOverlay" type="checkbox" checked>2D 도면 패턴</label>
         <select id="threeFinish" title="선택한 3D 부재 또는 전체 벽 마감">
           <option value="plaster">화이트 플라스터</option>
           <option value="concrete">노출 콘크리트</option>
@@ -136,6 +219,8 @@
       <div id="threeStatus">3D 준비 중…</div>
       <div id="threeSelection">선택: 전체 벽</div>
     </div>
+    <div id="splitHandle" role="separator" tabindex="0" aria-label="2D와 3D 화면 크기 조절"
+      aria-orientation="horizontal" aria-valuemin="20" aria-valuemax="80" aria-valuenow="46"></div>
     <div id="viewport"><div id="stage"></div><svg id="overlay"></svg></div>
   </div>
   <aside>
@@ -146,11 +231,17 @@
 </main>
 <footer><span id="status">서버 연결 중…</span><span id="hint">휠 줌 · Space/Alt+드래그 팬 · Ctrl/Shift+클릭 복수선택 · Delete키/🗑 삭제 · 더블클릭 다점 완료 · Esc 취소</span></footer>
 <script>
-const S = { rev:-1, tool:'select', pts:[], selected:[], styleSource:null, copySource:null, drawing:false };
+const S = { rev:-1, tool:'select', pts:[], selected:[], styleSource:null, copySource:null, drawing:false,
+  split:'stacked', splitRatios:{ stacked:0.46, 'side-by-side':0.46 } };
 const $ = id => document.getElementById(id);
-const log = m => { $('log').textContent = (m + "\n" + $('log').textContent).slice(0, 4000); };
+const log = m => {
+  $('log').textContent = (m + "\n" + $('log').textContent).slice(0, 4000);
+  const notice = $('webNotice');
+  if (notice) notice.textContent = m;
+};
 
 async function api(route, body, method) {
+  if (window.CrabBrowser) return window.CrabBrowser.api(route, body);
   const opt = body !== undefined ? { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) } : { method: method||'GET' };
   const res = await fetch(route, opt);
   return res.json();
@@ -258,6 +349,7 @@ $('viewport').addEventListener('pointerdown', evt => {
     }
     $('selInfo').textContent = S.selected.length > 12
       ? `${S.selected.length}개 선택됨` : (S.selected.join(', ') || '없음');
+    window.dispatchEvent(new CustomEvent('crab-canvas-selection', { detail:{ cids:S.selected.slice() } }));
     syncSession(true);
     log(capped ? `박스 선택 800개 상한 도달 — 더 좁게 드래그하세요`
                : `박스 선택: ${picked.length}개 (합계 ${S.selected.length}) — 완전히 포함된 요소만`);
@@ -285,12 +377,24 @@ $('viewport').addEventListener('pointerdown', evt => {
   const up = () => { S.panning = false; syncSession(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 });
-document.addEventListener('keydown', e => { if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT') { S.spaceDown = true; e.preventDefault(); } });
-document.addEventListener('keyup', e => { if (e.code === 'Space') S.spaceDown = false; });
+function publishInteractionMode() {
+  window.dispatchEvent(new CustomEvent('crab-canvas-interaction-mode', { detail:{
+    tool:S.tool, spaceDown:!!S.spaceDown, pan:S.tool === 'pan' || !!S.spaceDown,
+  } }));
+}
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT') {
+    if (!S.spaceDown) { S.spaceDown = true; publishInteractionMode(); }
+    e.preventDefault();
+  }
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space' && S.spaceDown) { S.spaceDown = false; publishInteractionMode(); }
+});
 
 async function refreshZones() {
   const z = await api('/api/zones');
-  $('zoneList').innerHTML = (z.zones||[]).map(x => `${x.mode} <small>(${x.cid})</small>`).join('<br>') || '없음';
+  $('zoneList').textContent = (z.zones||[]).map(x => `${x.mode} (${x.cid})`).join('\n') || '없음';
 }
 
 function svgPoint(evt) {
@@ -383,6 +487,7 @@ function select(cid, additive) {
   if (!additive) { S.selected = []; $('stage').querySelectorAll('.sel').forEach(e=>e.classList.remove('sel')); }
   if (cid && !S.selected.includes(cid)) S.selected.push(cid);
   restoreSelection();
+  window.dispatchEvent(new CustomEvent('crab-canvas-selection', { detail:{ cids:S.selected.slice() } }));
   syncSession(true);
 }
 
@@ -471,17 +576,17 @@ document.addEventListener('keydown', evt => {
 document.querySelectorAll('#tools button').forEach(btn => btn.addEventListener('click', () => {
   if (S.drawing && S.pts.length >= 2) finishMulti();   // 도구 전환 시 그리던 도형 자동 확정
   document.querySelectorAll('#tools button').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active'); S.tool = btn.dataset.tool; resetDraw();
+  btn.classList.add('active'); S.tool = btn.dataset.tool; resetDraw(); publishInteractionMode();
 }));
 
 $('btnOpen').onclick = async () => {
   const r = await api('/api/open', { path: $('svgPath').value.trim() });
-  if (r.status === 'error') log('오류: ' + r.error); else { log('로드됨: ' + $('svgPath').value); S.view = null; poll(true); }
+  if (r.status === 'error') log('오류: ' + r.error); else { log('로드됨: ' + $('svgPath').value); S.view = null; S.docBox = null; poll(true); }
 };
 $('btnBrowse').onclick = async () => {
   log('파인더에서 SVG 파일을 선택하세요… (창이 안 보이면 다른 창 뒤를 확인)');
   const r = await api('/api/pick-file', {});
-  if (r.status === 'ok') { $('svgPath').value = r.path; log('로드됨: ' + r.path); S.view = null; poll(true); }
+  if (r.status === 'ok') { $('svgPath').value = r.path; log('로드됨: ' + r.path); S.view = null; S.docBox = null; poll(true); }
   else if (r.status === 'cancelled') log('파일 선택 취소됨');
   else { log('네이티브 선택창 실패(' + (r.error || '?') + ') — 브라우저 선택창으로 대체합니다'); $('filePick').click(); }
 };
@@ -492,23 +597,176 @@ $('filePick').onchange = async evt => {
   if (r.status === 'ok') {
     if (r.path) $('svgPath').value = r.path;
     log('로드됨(업로드): ' + f.name + (r.path ? ' — 저장 시 ' + r.path : ''));
-    S.view = null; poll(true);
+    S.view = null; S.docBox = null; poll(true);
   } else log('오류: ' + (r.error || '업로드 실패'));
   evt.target.value = '';
 };
 $('btnSave').onclick = async () => { const r = await api('/api/save', {}); log(r.status==='ok' ? '저장됨: '+r.saved : '오류: '+r.error); };
-$('btnDxf').onclick = async () => {
-  log('DXF 내보내는 중…');
-  const r = await api('/api/export', { format: 'dxf' });
-  if (r.status === 'ok') {
-    const n = Object.values(r.entities||{}).reduce((a,b)=>a+b,0);
-    log('DXF 내보냄: ' + r.dxf + ' (요소 ' + n + '개, 단위 ' + r.units + ')');
-  } else log('오류: ' + r.error);
-};
+async function exportCad(format) {
+  log(`${format.toUpperCase()} 내보내는 중…`);
+  const r = await api('/api/export', { format });
+  if (r.status !== 'ok') { log('오류: ' + r.error); return; }
+  const n = Object.values(r.entities||{}).reduce((a,b)=>a+b,0);
+  if (format === 'dwg') {
+    if (r.dwg) log('DWG 내보냄: ' + r.dwg + ` (DXF 원본: ${r.dxf}, 요소 ${n}개)`);
+    else log('DWG 변환 대기: ' + (r.note || 'ODA File Converter를 확인하세요') + ` (DXF는 저장됨: ${r.dxf})`);
+  } else log('DXF 내보냄: ' + r.dxf + ' (요소 ' + n + '개, 단위 ' + r.units + ')');
+}
+$('btnDxf').onclick = () => exportCad('dxf');
+$('btnDwg').onclick = () => exportCad('dwg');
 document.addEventListener('keydown', evt => {
-  if ((evt.metaKey || evt.ctrlKey) && evt.key === 's') { evt.preventDefault(); $('btnSave').click(); }
+  const mod = evt.metaKey || evt.ctrlKey;
+  const key = evt.key.toLowerCase();
+  const active = document.activeElement;
+  const editingText = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+  if (mod && key === 's') { evt.preventDefault(); $('btnSave').click(); }
+  if (!mod || editingText) return;
+  if (key === 'z' && evt.shiftKey) { evt.preventDefault(); $('btnRedo').click(); }
+  else if (key === 'z') { evt.preventDefault(); $('btnUndo').click(); }
+  else if (key === 'y') { evt.preventDefault(); $('btnRedo').click(); }
 });
-$('btnUndo').onclick = async () => { const r = await api('/api/undo', {}); if (r.status==='error') log('오류: '+r.error); poll(true); };
+async function runHistory(route, label) {
+  const r = await api(route, {});
+  if (r.status === 'error') log('오류: ' + r.error);
+  else log(`${label} 완료 (되돌리기 ${r.undo_depth} · 다시 실행 ${r.redo_depth})`);
+  poll(true);
+}
+$('btnUndo').onclick = () => runHistory('/api/undo', '실행취소');
+$('btnRedo').onclick = () => runHistory('/api/redo', '다시 실행');
+$('btnSplit').onclick = () => {
+  S.split = S.split === 'stacked' ? 'side-by-side' : 'stacked';
+  const sideBySide = S.split === 'side-by-side';
+  $('workspace').dataset.split = sideBySide ? 'side-by-side' : 'stacked';
+  $('btnSplit').textContent = sideBySide ? '↕ 상하 분할' : '↔ 좌우 분할';
+  $('btnSplit').setAttribute('aria-pressed', String(sideBySide));
+  requestAnimationFrame(applySplitRatio);
+};
+function actualSplitOrientation() {
+  return getComputedStyle($('workspace')).flexDirection === 'row' ? 'side-by-side' : 'stacked';
+}
+function applySplitRatio(ratio) {
+  const orientation = actualSplitOrientation();
+  const value = Math.min(0.8, Math.max(0.2, Number.isFinite(ratio) ? ratio : S.splitRatios[orientation]));
+  S.splitRatios[orientation] = value;
+  $('threePane').style.flexBasis = `${Math.round(value * 10000) / 100}%`;
+  $('splitHandle').setAttribute('aria-orientation', orientation === 'side-by-side' ? 'vertical' : 'horizontal');
+  $('splitHandle').setAttribute('aria-valuenow', String(Math.round(value * 100)));
+  try { localStorage.setItem('crab-three-split-ratios', JSON.stringify(S.splitRatios)); } catch (_) { /* private browsing */ }
+}
+try {
+  const savedRatios = JSON.parse(localStorage.getItem('crab-three-split-ratios') || '{}');
+  for (const key of ['stacked', 'side-by-side']) {
+    if (Number.isFinite(savedRatios[key])) S.splitRatios[key] = Math.min(0.8, Math.max(0.2, savedRatios[key]));
+  }
+} catch (_) { /* keep defaults */ }
+applySplitRatio();
+$('splitHandle').addEventListener('pointerdown', event => {
+  if (event.button !== 0 || $('threePane').classList.contains('hidden')) return;
+  event.preventDefault();
+  const handle = event.currentTarget;
+  handle.classList.add('dragging');
+  handle.setPointerCapture(event.pointerId);
+  const move = moveEvent => {
+    const rect = $('workspace').getBoundingClientRect();
+    const orientation = actualSplitOrientation();
+    const ratio = orientation === 'side-by-side'
+      ? (rect.right - moveEvent.clientX) / Math.max(1, rect.width)
+      : (moveEvent.clientY - rect.top) / Math.max(1, rect.height);
+    applySplitRatio(ratio);
+  };
+  const stop = () => {
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', stop);
+    handle.removeEventListener('pointercancel', stop);
+    handle.classList.remove('dragging');
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+});
+$('splitHandle').addEventListener('keydown', event => {
+  const orientation = actualSplitOrientation();
+  let delta = 0;
+  if (orientation === 'stacked') {
+    if (event.key === 'ArrowUp') delta = -0.02;
+    if (event.key === 'ArrowDown') delta = 0.02;
+  } else {
+    if (event.key === 'ArrowLeft') delta = 0.02;
+    if (event.key === 'ArrowRight') delta = -0.02;
+  }
+  if (delta) { event.preventDefault(); applySplitRatio(S.splitRatios[orientation] + delta); }
+});
+window.addEventListener('resize', () => requestAnimationFrame(applySplitRatio));
+const THREE_TOOLBAR_DOCKS = new Set(['top', 'bottom', 'left', 'right']);
+function setThreeToolbarDock(dock, announce = true) {
+  if (!THREE_TOOLBAR_DOCKS.has(dock)) return;
+  const pane = $('threePane');
+  pane.dataset.toolbarDock = dock;
+  document.querySelectorAll('.three-toolbar-docks [data-toolbar-dock]').forEach(button => {
+    button.classList.toggle('active', button.dataset.toolbarDock === dock);
+    button.setAttribute('aria-pressed', String(button.dataset.toolbarDock === dock));
+  });
+  try { localStorage.setItem('crab-three-toolbar-dock', dock); } catch (_) { /* private browsing */ }
+  if (announce) log('3D 제어 패널: ' + ({ top:'위', bottom:'아래', left:'왼쪽', right:'오른쪽' })[dock] + '에 도킹');
+  window.dispatchEvent(new Event('resize'));
+}
+try {
+  const savedDock = localStorage.getItem('crab-three-toolbar-dock');
+  setThreeToolbarDock(THREE_TOOLBAR_DOCKS.has(savedDock) ? savedDock : 'top', false);
+} catch (_) { setThreeToolbarDock('top', false); }
+document.querySelectorAll('.three-toolbar-docks [data-toolbar-dock]').forEach(button => {
+  button.addEventListener('click', () => setThreeToolbarDock(button.dataset.toolbarDock));
+});
+function setThreeToolbarMinimized(minimized) {
+  const toolbar = document.querySelector('.three-toolbar');
+  toolbar.classList.toggle('minimized', minimized);
+  $('btn3dMinimize').textContent = minimized ? '+' : '−';
+  $('btn3dMinimize').title = minimized ? '3D 제어 패널 펼치기' : '3D 제어 패널 최소화';
+  $('btn3dMinimize').setAttribute('aria-expanded', String(!minimized));
+  try { localStorage.setItem('crab-three-toolbar-minimized', String(minimized)); } catch (_) { /* private browsing */ }
+  window.dispatchEvent(new Event('resize'));
+}
+$('btn3dMinimize').addEventListener('click', () => {
+  setThreeToolbarMinimized(!document.querySelector('.three-toolbar').classList.contains('minimized'));
+});
+try { setThreeToolbarMinimized(localStorage.getItem('crab-three-toolbar-minimized') === 'true'); }
+catch (_) { setThreeToolbarMinimized(false); }
+$('threeToolbarHandle').addEventListener('pointerdown', event => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  const toolbar = event.currentTarget.closest('.three-toolbar');
+  const pane = $('threePane');
+  const startX = event.clientX, startY = event.clientY;
+  toolbar.classList.add('dragging');
+  event.currentTarget.setPointerCapture(event.pointerId);
+  const move = moveEvent => {
+    toolbar.style.transform = `translate(${moveEvent.clientX - startX}px, ${moveEvent.clientY - startY}px)`;
+  };
+  const up = upEvent => {
+    event.currentTarget.removeEventListener('pointermove', move);
+    event.currentTarget.removeEventListener('pointerup', up);
+    event.currentTarget.removeEventListener('pointercancel', cancel);
+    toolbar.classList.remove('dragging');
+    toolbar.style.transform = '';
+    const rect = pane.getBoundingClientRect();
+    const distances = {
+      left: Math.abs(upEvent.clientX - rect.left), right: Math.abs(rect.right - upEvent.clientX),
+      top: Math.abs(upEvent.clientY - rect.top), bottom: Math.abs(rect.bottom - upEvent.clientY),
+    };
+    const dock = Object.keys(distances).reduce((best, edge) => distances[edge] < distances[best] ? edge : best, 'top');
+    setThreeToolbarDock(dock);
+  };
+  const cancel = () => {
+    event.currentTarget.removeEventListener('pointermove', move);
+    event.currentTarget.removeEventListener('pointerup', up);
+    event.currentTarget.removeEventListener('pointercancel', cancel);
+    toolbar.classList.remove('dragging');
+    toolbar.style.transform = '';
+  };
+  event.currentTarget.addEventListener('pointermove', move);
+  event.currentTarget.addEventListener('pointerup', up);
+  event.currentTarget.addEventListener('pointercancel', cancel);
+});
 $('btnFit').onclick = () => { S.view = null; applyView(); };
 $('btnSnap').onclick = () => { S.snap = !S.snap; $('btnSnap').classList.toggle('active', S.snap); log('스냅 ' + (S.snap ? '켜짐 (끝점>직교(Shift)>그리드)' : '꺼짐')); };
 // ---- 선택 변형: 이동·회전·스케일·복제·배열 ----
@@ -585,7 +843,7 @@ $('btnDelete').onclick = () => {
 $('btnSend').onclick = async () => {
   const text = $('prompt').value.trim(); if (!text) { log('보낼 메시지를 입력하세요'); return; }
   const r = await api('/api/message', { text });
-  if (r.status === 'ok') { log('💬 에이전트에게 전달됨: ' + text); $('prompt').value = ''; }
+  if (r.status === 'ok') { log((r.recorded ? '요청 기록됨: ' : '에이전트 대기열에 추가됨: ') + text); $('prompt').value = ''; }
   else log('오류: ' + r.error);
 };
 $('prompt').addEventListener('keydown', evt => { if (evt.key === 'Enter') $('btnSend').click(); });
@@ -605,6 +863,7 @@ window.CrabCanvas = {
   getSourcePath: () => S.sourcePath || null,
   getSvgRoot: () => $('stage').querySelector('svg'),
   getSelectedCids: () => S.selected.slice(),
+  getInteractionMode: () => ({ tool:S.tool, spaceDown:!!S.spaceDown, pan:S.tool === 'pan' || !!S.spaceDown }),
   selectCid: cid => select(cid, false),
 };
 window.dispatchEvent(new CustomEvent('crab-canvas-ready'));

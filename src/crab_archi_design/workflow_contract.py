@@ -23,6 +23,23 @@ STAGE_DEFINITIONS: tuple[dict[str, Any], ...] = (
         "llm_policy": "LLM may inspect summaries only; it must not redraw SVG geometry.",
     },
     {
+        "id": "geospatial_context",
+        "title": "Geospatial Context",
+        "engine_boundary": "qgis_context_adapter",
+        "module_targets": ["gis_context", "qgis-capture", "gis-context-attach"],
+        "purpose": "Capture QGIS layer metadata and analysis provenance as advisory site context without mixing GIS coordinates into source SVG coordinates.",
+        "required_artifacts": [],
+        "output_artifacts": ["qgis_snapshot", "gis_context_manifest"],
+        "hard_gates": [],
+        "soft_gates": [
+            "qgis_read_only_snapshot_available",
+            "gis_context_ready",
+            "source_svg_georeference_confirmed_before_coordinate_projection",
+        ],
+        "optional": True,
+        "llm_policy": "LLM may cite GIS observations and request human-reviewed constraints; it must not derive SVG coordinates or mutable zones from GIS data.",
+    },
+    {
         "id": "topology_constraints",
         "title": "Topology And Constraints",
         "engine_boundary": "topology_engine",
@@ -114,7 +131,7 @@ def build_engine_workflow_contract(
 ) -> dict[str, Any]:
     return {
         "schema": ENGINE_WORKFLOW_CONTRACT_SCHEMA,
-        "version": "1.0.0",
+        "version": "1.1.0",
         "name": "Crab Archi Design engine workflow contract",
         "production_engine": production_engine,
         "opencrab": {
@@ -122,6 +139,11 @@ def build_engine_workflow_contract(
             "homepage": opencrab_homepage,
             "evidence_gate": "opencrab_evidence_verified",
             "decision_rule": "final SVG candidates require OpenCrab ontology evidence before native SVG mutation can pass production QA",
+        },
+        "gis": {
+            "optional": True,
+            "capture_mode": "local_qgis_mcp_read_only",
+            "decision_rule": "GIS data may enrich OpenCrab requests and design handoffs, but it remains advisory until a reviewed source-SVG georeference mapping and explicit human constraint confirmation exist.",
         },
         "cad_like_svg_policy": {
             "allowed": [
@@ -133,6 +155,7 @@ def build_engine_workflow_contract(
             "disallowed": [
                 "raster overlays",
                 "new zoning-image layers as final output",
+                "unreviewed GIS-to-SVG coordinate transfer",
                 "freehand LLM coordinate redraws without solver verification",
                 "parking/core/ramp/column/egress intrusion",
             ],

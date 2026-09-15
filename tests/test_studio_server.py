@@ -3,11 +3,25 @@ from __future__ import annotations
 import json
 import threading
 import urllib.request
+import pytest
 from pathlib import Path
 
 from crab_archi_design.studio_server import serve, split_strokes, synthesize_default_constraints
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_studio_cannot_replace_missing_opencrab_evidence_with_summary(tmp_path: Path) -> None:
+    from crab_archi_design.studio_server import StudioState, run_pipeline
+    state = StudioState(tmp_path, ROOT)
+    report = run_pipeline(state, {
+        "project_id": "no-evidence", "prompt": "Improve layout", "source_svg": str(ROOT / "examples/original_sample.svg"),
+        "evidence_summary": "Studio operator confirmed everything.",
+        "strokes": [{"mode": "community_shell", "points": [[0, 0], [100, 0], [100, 100], [0, 0]]}],
+    })
+    assert report["status"] == "error"
+    assert "actual OpenCrab" in report["error"]
+    assert not (tmp_path / "no-evidence").exists()
 
 
 def start_server(project_root: Path):
@@ -53,12 +67,8 @@ def test_split_strokes_routes_constraint_and_edit_modes() -> None:
 
 def test_synthesize_default_constraints_fills_missing_zone_groups() -> None:
     viewbox = [0.0, 0.0, 1000.0, 800.0]
-    added, notes = synthesize_default_constraints([], viewbox)
-    modes = [item["mode"] for item in added]
-    assert modes.count("community_shell") == 1
-    assert modes.count("mutable_zone") == 1
-    assert modes.count("no_go_zone") == 4
-    assert len(notes) == 3
+    with pytest.raises(ValueError, match="community_shell is required"):
+        synthesize_default_constraints([], viewbox)
 
     shell_only = [{"mode": "community_shell", "points": [[100, 100], [900, 100], [900, 700], [100, 700], [100, 100]]}]
     added, notes = synthesize_default_constraints(shell_only, viewbox)
@@ -69,7 +79,7 @@ def test_synthesize_default_constraints_fills_missing_zone_groups() -> None:
     assert len(notes) == 2
     interior = next(item for item in added if item["mode"] == "mutable_zone")
     xs = [p[0] for p in interior["points"]]
-    assert min(xs) > 100 and max(xs) < 900  # interior is inset inside the drawn shell
+    assert min(xs) == 100 and max(xs) == 900  # no centroid scaling of concave shells
 
     complete = [
         {"mode": "community_shell", "points": []},
@@ -80,7 +90,7 @@ def test_synthesize_default_constraints_fills_missing_zone_groups() -> None:
     assert added == [] and notes == []
 
 
-def test_studio_run_prompt_only_uses_auto_defaults(tmp_path: Path) -> None:
+def test_studio_run_prompt_only_cannot_edit_entire_drawing(tmp_path: Path) -> None:
     project_root = tmp_path / "projects"
     server, base = start_server(project_root)
     try:
@@ -98,10 +108,9 @@ def test_studio_run_prompt_only_uses_auto_defaults(tmp_path: Path) -> None:
                 "strokes": [],
             },
         )
-        assert report["status"] == "pass", report
-        assert any("쉘로 사용" in note for note in report["warnings"])
-        assert any("편집 가능 영역" in note for note in report["warnings"])
-        assert report["constraint_sketch"] and Path(report["constraint_sketch"]).exists()
+        assert report["status"] == "error", report
+        assert "community_shell is required" in report["error"]
+        assert not (project_root / "prompt-only" / "studio").exists()
     finally:
         server.shutdown()
 

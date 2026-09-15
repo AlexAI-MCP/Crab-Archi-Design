@@ -85,10 +85,11 @@ Note: `--project-root` works both as a global flag (before `studio`) and as a
 subcommand flag (after `studio`).
 
 The studio serves `http://127.0.0.1:8765/` and is prompt-first: the operator
-loads the source linework, optionally draws a single community-shell polygon,
+loads the source linework, confirms a community-shell polygon,
 and states the request in natural language. The shell interior is derived as
 the redraw target and everything outside is auto-protected; with no shell the
-whole drawing frame is used. The default studio engine is
+run is blocked. New projects also require an actual OpenCrab result file.
+The default studio engine is
 `layout-svg-engine --standalone-redraw`, so the source SVG is recognition and
 constraint evidence rather than copied candidate linework. `POST /api/run`
 converts this into constraint/edit sketch JSON and executes the same tested

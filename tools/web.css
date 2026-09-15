@@ -1,0 +1,25 @@
+.web-topbar { display:flex; align-items:center; gap:16px; padding:8px 14px; border-bottom:1px solid #353a42; background:#16191e; flex:none; }
+.web-topbar strong { font-size:15px; color:#f3f5f8; }
+.web-topbar span { font-size:12px; color:#9ee3bd; }
+.web-topbar a { margin-left:auto; color:#b4caff; font-size:12px; text-decoration:none; }
+.public-canvas { height:100dvh; letter-spacing:0; }
+.public-canvas header { max-height:32dvh; overflow:auto; flex-shrink:0; }
+.public-canvas [hidden] { display:none !important; }
+.public-canvas button { border-radius:4px; }
+.public-canvas .toolbar-group { flex-wrap:wrap; max-width:100%; }
+.public-canvas #prompt { min-width:140px; }
+.public-canvas footer { gap:12px; flex-wrap:wrap; }
+.public-canvas #status { overflow-wrap:anywhere; }
+.public-canvas #hint { display:none; }
+.public-canvas #webNotice { max-height:44px; overflow:auto; overflow-wrap:anywhere; white-space:pre-wrap; color:#d6dde6; }
+.public-canvas #threePane .three-toolbar { max-height:65%; overflow:auto; align-content:flex-start; }
+@media (max-width:700px) {
+  .web-topbar { flex-wrap:wrap; gap:4px 12px; }
+  .web-topbar span { order:3; width:100%; }
+  .public-canvas header { gap:5px; padding:6px; }
+  .public-canvas button { padding:5px 7px; font-size:12px; }
+  .public-canvas #workspace[data-split="side-by-side"] { flex-direction:column; }
+  .public-canvas #workspace #threePane { min-height:150px; min-width:0; }
+  .public-canvas #viewport { min-height:140px; min-width:0; }
+  .public-canvas #threePane .three-toolbar:not(.minimized) { max-height:110px; }
+}

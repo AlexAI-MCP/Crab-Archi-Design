@@ -23,3 +23,8 @@ projects/
 *.png
 *.jpg
 *.jpeg
+.vercel/
+.quickstart-*/
+output/
+.vercel
+.env*

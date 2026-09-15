@@ -201,6 +201,20 @@ TOOLS: dict[str, dict[str, Any]] = {
                           "rows": {"type": "integer"}, "row_dx": NUM, "row_dy": NUM},
                          ["cids", "count"]),
     },
+    "auto_arrange_in_polyline": {
+        "description": "Deterministically clone a selected furniture set inside a user-drawn polyline/polygon. The canvas derives balanced placements from the selection footprint and boundary; no placement coordinates are supplied by the agent. The original selection remains as the source template.",
+        "kind": ("op", "auto_arrange_in_polyline"),
+        "schema": schema({"cids": CIDS, "boundary_cid": {"type": "string"},
+                          "max_copies": {"type": "integer", "minimum": 1, "maximum": 64},
+                          "clearance": NUM}, ["cids", "boundary_cid"]),
+    },
+    "populate_kids_zone": {
+        "description": "Create a deterministic balanced kids-zone plan inside a user-drawn polyline/polygon. The engine derives every coordinate from the boundary and adds a child table, soft-play mat, playhouse/slide, reading corner, toy storage, and guardian bench as native SVG furniture; the agent supplies no geometry coordinates.",
+        "kind": ("op", "populate_kids_zone"),
+        "schema": schema({"boundary_cid": {"type": "string"},
+                          "preset": {"type": "string", "enum": ["balanced"]},
+                          "clearance": NUM}, ["boundary_cid"]),
+    },
     "stretch_elements": {
         "description": "CAD-style stretch: geometry points inside box move by (dx,dy); points outside stay, so walls crossing the box boundary lengthen instead of moving. Works on lines, polylines, rects, paths (curve control points included) and transformed elements. Use to enlarge rooms or pull walls. box=[x0,y0,x1,y1] in world coordinates.",
         "kind": ("op", "stretch"),
@@ -270,6 +284,10 @@ TOOLS: dict[str, dict[str, Any]] = {
     "undo": {
         "description": "Undo the last canvas mutation.",
         "kind": ("post", "/api/undo"), "schema": schema({}, []),
+    },
+    "redo": {
+        "description": "Redo the most recently undone canvas mutation. A new successful mutation clears this history branch.",
+        "kind": ("post", "/api/redo"), "schema": schema({}, []),
     },
     "save_svg": {
         "description": "Save the canvas to disk (defaults to the loaded file's path).",

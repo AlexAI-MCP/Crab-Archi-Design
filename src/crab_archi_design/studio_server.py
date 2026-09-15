@@ -48,6 +48,7 @@ EDIT_MODES = {
 
 def studio_html_path() -> Path | None:
     candidates = [
+        Path(__file__).resolve().parent / "assets" / "studio.html",
         Path(__file__).resolve().parents[2] / "tools" / "studio.html",
         Path.cwd() / "tools" / "studio.html",
     ]
@@ -121,14 +122,16 @@ def synthesize_default_constraints(
     """Shell-first defaults: the shell interior is editable, everything else is protected.
 
     The operator draws (at most) the community shell. The mutable zone is derived
-    as the shell interior (slightly inset), and the ring between the drawing frame
+    as the exact shell polygon, and the ring between the drawing frame
     and the shell becomes no-go — so topology and assets inside the shell are the
-    only mutation targets. With no shell at all, the whole drawing frame is used.
+    only mutation targets. An explicit shell is required.
     """
     modes = {item["mode"] for item in constraints}
     have_shell = "community_shell" in modes
     have_mutable = bool(modes & {"mutable_zone", "projectable_zone"})
     have_protected = bool(modes & {"no_go_zone", "lock_boundary", "protect_zone"})
+    if not have_shell:
+        raise ValueError("community_shell is required; the entire drawing cannot be assumed editable")
     if have_shell and have_mutable and have_protected:
         return [], []
 
@@ -146,14 +149,8 @@ def synthesize_default_constraints(
             shell_points = [[float(p[0]), float(p[1])] for p in item["points"]]
             break
 
-    if not have_shell:
-        shell_points = rect(x0, y0, x1, y1)
-        added.append({"stroke_id": "auto_shell", "mode": "community_shell",
-                      "target_hint": "studio_auto_default_shell", "points": shell_points})
-        notes.append("외곽 쉘 미지정 → 도면 전체 범위를 쉘로 사용했습니다 (쉘을 직접 그리면 편집 범위가 정확해집니다).")
-
     if not have_mutable and shell_points:
-        interior = scale_polygon_about_centroid(shell_points, 0.96)
+        interior = [point[:] for point in shell_points]
         added.append({"stroke_id": "auto_mutable", "mode": "mutable_zone",
                       "target_hint": "studio_interior_mutable", "points": interior})
         notes.append("쉘 내부가 편집 가능 영역으로 설정되었습니다 — 이 안의 토폴로지와 요소만 변형 대상입니다.")
@@ -218,12 +215,27 @@ def run_pipeline(state: StudioState, payload: dict[str, Any]) -> dict[str, Any]:
     if not project_id or any(ch in project_id for ch in "/\\.."):
         return {"status": "error", "error": "project_id is required and must be a plain name."}
     prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        return {"status": "error", "error": "A design prompt is required."}
     strokes = payload.get("strokes") or []
     constraints, edits, warnings = split_strokes(strokes)
 
     root = state.project_root
     project_dir = root / project_id
     manifest_exists = (project_dir / "project_manifest.json").exists()
+    existing_constraints = (project_dir / "constraints" / "constraint_manifest.json").exists()
+    shells = [item for item in constraints if item["mode"] == "community_shell"]
+    if (constraints or not existing_constraints) and not shells:
+        return {"status": "error", "error": "community_shell is required. Confirm the community boundary before redesign."}
+    for shell in shells:
+        points = shell["points"]
+        area2 = abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(points, points[1:] + points[:1])))
+        if len(set(tuple(point) for point in points)) < 3 or area2 <= 0:
+            return {"status": "error", "error": "community_shell must enclose a non-zero area."}
+    if not manifest_exists or payload.get("reinit"):
+        evidence_files = payload.get("opencrab_result_files") or []
+        if not evidence_files or any(not Path(path).expanduser().is_file() for path in evidence_files):
+            return {"status": "error", "error": "An actual OpenCrab MCP result file is required. A generated summary is not evidence."}
 
     source_svg = str(payload.get("source_svg") or "").strip()
     if not manifest_exists and not source_svg:
@@ -309,7 +321,7 @@ def run_pipeline(state: StudioState, payload: dict[str, Any]) -> dict[str, Any]:
     cmd += ["--engine-adapter", engine]
     for arg in engine_args:
         cmd.append(f"--engine-arg={arg}")
-    cmd += ["--skip-preview"]
+    cmd += ["--skip-preview", "--strict"]
 
     completed = subprocess.run(cmd, capture_output=True, text=True, cwd=str(state.repo_root), timeout=1800)
     result = parse_cli_json(completed.stdout) or {}
@@ -319,7 +331,7 @@ def run_pipeline(state: StudioState, payload: dict[str, Any]) -> dict[str, Any]:
         "project_id": project_id,
         "command_kind": "revision-run" if use_revision else "workflow-run",
         "returncode": completed.returncode,
-        "status": result.get("status") or ("error" if completed.returncode != 0 else "unknown"),
+        "status": "error" if completed.returncode != 0 else (result.get("status") or "unknown"),
         "result": result,
         "blocking": blocking,
         "warnings": warnings,
@@ -505,6 +517,9 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                     report = run_pipeline(state, payload)
                 except subprocess.TimeoutExpired:
                     self.send_json({"status": "error", "error": "pipeline timed out"}, 500)
+                    return
+                except (ValueError, TypeError, KeyError) as exc:
+                    self.send_json({"status": "error", "error": str(exc)}, 400)
                     return
                 self.send_json(report, 200 if report.get("status") != "error" else 400)
                 return

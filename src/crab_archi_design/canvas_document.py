@@ -9,6 +9,7 @@ for undo and bumps a revision counter that the browser polls.
 from __future__ import annotations
 
 import copy
+import math
 import re
 import threading
 import xml.etree.ElementTree as ET
@@ -360,6 +361,7 @@ class CanvasDocument:
         self.source_path: Path | None = None
         self.revision = 0
         self._undo: list[str] = []
+        self._redo: list[str] = []
         self._cid_seq = 0
         self.autosave_path: Path | None = None
         self._autosave_at = 0.0
@@ -385,6 +387,7 @@ class CanvasDocument:
             self.root = root
             self.source_path = source
             self._undo.clear()
+            self._redo.clear()
             self._cid_seq = 0
             self._assign_cids()
             self.revision += 1
@@ -397,6 +400,11 @@ class CanvasDocument:
 
     def _assign_cids(self) -> None:
         root = self.require_root()
+        self._cid_seq = max(
+            (int(match.group(1)) for el in root.iter()
+             if (match := re.fullmatch(r"e(\d+)", el.get("data-cid", "")))),
+            default=self._cid_seq,
+        )
         seen: set[str] = set()
         for element in root.iter():
             if local_name(element) not in GRAPHIC_TAGS:
@@ -450,6 +458,7 @@ class CanvasDocument:
                 "element_count": sum(1 for _ in self.root.iter() if local_name(_) in GRAPHIC_TAGS),
                 "zone_count": len(self.list_zones()),
                 "undo_depth": len(self._undo),
+                "redo_depth": len(self._redo),
                 "mm_per_unit": self.mm_per_unit(),
                 "draft_open": self._draft_base is not None,
             }
@@ -584,17 +593,38 @@ class CanvasDocument:
             raise CanvasError(f"unknown op: {op}")
         with self.lock:
             self.require_root()
-            self._snapshot()
-            self._op_force = bool(params.pop("force", False)) if isinstance(params, dict) else False
+            if not isinstance(params, dict):
+                raise CanvasError("params must be an object")
+            params = dict(params)
+            before = self.to_string()
+            cid_seq = self._cid_seq
+            self._op_force = bool(params.pop("force", False))
             try:
+                self._check_existing_targets(op, params)
                 result = handler(**params)
-            except TypeError as exc:
-                self._undo.pop()
-                raise CanvasError(f"bad parameters for {op}: {exc}") from exc
-            except CanvasError:
-                self._undo.pop()
+            except Exception as exc:
+                # Compound operations can fail after modifying their first target.
+                self.root = safe_fromstring(before)
+                self._cid_seq = cid_seq
+                self._parent_map = None
+                self._parent_map_rev = -1
+                self._bbox_cache.clear()
+                self._bbox_cache_rev = -1
+                if isinstance(exc, CanvasError):
+                    raise
+                if isinstance(exc, (TypeError, ValueError, ZeroDivisionError, OverflowError)):
+                    raise CanvasError(f"bad parameters for {op}: {exc}") from exc
                 raise
+            finally:
+                self._op_force = False
+            self._undo.append(before)
+            if len(self._undo) > MAX_UNDO:
+                self._undo.pop(0)
             self.revision += 1
+            # A successful new mutation starts a new history branch.  Keep the
+            # redo stack intact for failed operations so an accidental invalid
+            # command does not discard a recoverable edit.
+            self._redo.clear()
             self._autosave()
             return {"op": op, "revision": self.revision, **(result or {})}
 
@@ -643,7 +673,8 @@ class CanvasDocument:
     def mm_per_unit(self) -> float | None:
         raw = self.require_root().get(SCALE_ATTR)
         try:
-            return float(raw) if raw else None
+            value = float(raw) if raw else None
+            return value if value is not None and math.isfinite(value) and value > 0 else None
         except ValueError:
             return None
 
@@ -661,6 +692,7 @@ class CanvasDocument:
                      p1: list[float] | None = None, p2: list[float] | None = None) -> dict[str, Any]:
         """Set drawing scale directly or by calibrating a known real distance
         between two points on the drawing."""
+        import math
         if mm_per_unit is None:
             if not (known_mm and p1 and p2):
                 raise CanvasError("pass mm_per_unit, or known_mm with p1/p2")
@@ -669,7 +701,10 @@ class CanvasDocument:
             if dist < 1e-6:
                 raise CanvasError("p1 and p2 are the same point")
             mm_per_unit = float(known_mm) / dist
-        self.require_root().set(SCALE_ATTR, f"{float(mm_per_unit):.6f}")
+        mm_per_unit = float(mm_per_unit)
+        if not math.isfinite(mm_per_unit) or mm_per_unit <= 0:
+            raise CanvasError("mm_per_unit must be finite and greater than zero")
+        self.require_root().set(SCALE_ATTR, str(mm_per_unit))
         return {"mm_per_unit": round(float(mm_per_unit), 4),
                 "units_per_meter": round(1000.0 / float(mm_per_unit), 4)}
 
@@ -677,8 +712,24 @@ class CanvasDocument:
         with self.lock:
             if not self._undo:
                 raise CanvasError("nothing to undo")
+            self._redo.append(self.to_string())
+            if len(self._redo) > MAX_UNDO:
+                self._redo.pop(0)
             self.root = safe_fromstring(self._undo.pop())
             self.revision += 1
+            self._autosave()
+            return self.status()
+
+    def redo(self) -> dict[str, Any]:
+        with self.lock:
+            if not self._redo:
+                raise CanvasError("nothing to redo")
+            self._undo.append(self.to_string())
+            if len(self._undo) > MAX_UNDO:
+                self._undo.pop(0)
+            self.root = safe_fromstring(self._redo.pop())
+            self.revision += 1
+            self._autosave()
             return self.status()
 
     # ---- layers ----------------------------------------------------------
@@ -811,7 +862,7 @@ class CanvasDocument:
                 index[cid] = element
         targets: list[tuple[str, ET.Element, ET.Element]] = []
         skipped: list[str] = []
-        for cid in cids:
+        for cid in dict.fromkeys(cids):
             element = index.get(cid)
             parent = self.parent_of(element) if element is not None else None
             if element is None or parent is None:
@@ -981,7 +1032,9 @@ class CanvasDocument:
                     continue
                 ox, oy = c * dx + r * row_dx, c * dy + r * row_dy
                 for src in sources:
-                    parent = self.parent_of(src) or self.require_root()
+                    parent = self.parent_of(src)
+                    if parent is None:
+                        parent = self.require_root()
                     clone = copy.deepcopy(src)
                     for node in clone.iter():
                         if node.get("data-cid"):
@@ -1000,6 +1053,335 @@ class CanvasDocument:
                     created.append(clone.get("data-cid"))
         return {"created": created, "copies": len(created),
                 "grid": f"{count}x{rows}"}
+
+    def op_auto_arrange_in_polyline(self, cids: list[str], boundary_cid: str,
+                                    max_copies: int = 8,
+                                    clearance: float | None = None) -> dict[str, Any]:
+        """Clone a selected furniture set into a user-drawn polyline boundary.
+
+        This is intentionally a deterministic placement primitive: callers provide
+        element handles and a boundary handle, never placement coordinates.  The
+        operation derives a balanced grid from the source footprint, keeps every
+        clone inside the (implicitly closed) boundary, and honours no-go zones.
+        The original selection remains untouched as the source template.
+        """
+        if not cids:
+            raise CanvasError("cids is required (empty selection)")
+        max_copies = int(max_copies)
+        if max_copies < 1 or max_copies > 64:
+            raise CanvasError("max_copies must be between 1 and 64")
+
+        boundary = self.find(boundary_cid)
+        if local_name(boundary) not in {"polyline", "polygon"}:
+            raise CanvasError("boundary_cid must refer to a polyline or polygon")
+        local_boundary = local_points(boundary) or []
+        if len(local_boundary) < 3:
+            raise CanvasError("boundary polyline needs at least three points")
+        matrix = self._accumulated_transform(boundary)
+        polygon = [[float(x), float(y)] for x, y in
+                   (apply_matrix(matrix, x, y) for x, y in local_boundary)]
+        xs = [point[0] for point in polygon]
+        ys = [point[1] for point in polygon]
+        zone_box = [min(xs), min(ys), max(xs), max(ys)]
+
+        sources = [self.find(cid) for cid in cids]
+        boxes = [box for box in (self.world_bbox(element) for element in sources) if box]
+        if not boxes:
+            raise CanvasError("selection has no measurable geometry")
+        source_box = [min(box[0] for box in boxes), min(box[1] for box in boxes),
+                      max(box[2] for box in boxes), max(box[3] for box in boxes)]
+        width, height = source_box[2] - source_box[0], source_box[3] - source_box[1]
+        if width <= 0 or height <= 0:
+            raise CanvasError("selection footprint must have positive width and height")
+
+        gap = float(clearance) if clearance is not None else max(8.0, min(max(width, height), 24.0))
+        if gap < 0:
+            raise CanvasError("clearance must be non-negative")
+        usable_width = zone_box[2] - zone_box[0] - 2 * gap
+        usable_height = zone_box[3] - zone_box[1] - 2 * gap
+        if usable_width < width or usable_height < height:
+            raise CanvasError("boundary is too small for the selected furniture footprint")
+
+        import math
+        aspect = usable_width / max(usable_height, 1e-9)
+        columns = max(1, math.ceil(math.sqrt(max_copies * aspect)))
+        rows = max(1, math.ceil(max_copies / columns))
+        while columns > 1 and (usable_width - width) / (columns - 1) < width + gap:
+            columns -= 1
+            rows = max(1, math.ceil(max_copies / columns))
+        while rows > 1 and (usable_height - height) / (rows - 1) < height + gap:
+            rows -= 1
+        capacity = columns * rows
+        target_count = min(max_copies, capacity)
+        x_step = 0.0 if columns == 1 else (usable_width - width) / (columns - 1)
+        y_step = 0.0 if rows == 1 else (usable_height - height) / (rows - 1)
+        x_start = zone_box[0] + gap
+        y_start = zone_box[1] + gap
+
+        placements: list[tuple[float, float, list[float]]] = []
+        for row in range(rows):
+            for column in range(columns):
+                if len(placements) >= target_count:
+                    break
+                target_x = x_start + column * x_step
+                target_y = y_start + row * y_step
+                candidate = [target_x, target_y, target_x + width, target_y + height]
+                probes = [
+                    (candidate[0], candidate[1]), (candidate[2], candidate[1]),
+                    (candidate[0], candidate[3]), (candidate[2], candidate[3]),
+                    ((candidate[0] + candidate[2]) / 2, (candidate[1] + candidate[3]) / 2),
+                ]
+                if not all(self._point_in_polygon(px, py, polygon) for px, py in probes):
+                    continue
+                self._check_no_go(candidate, "auto_arrange_in_polyline")
+                placements.append((target_x - source_box[0], target_y - source_box[1], candidate))
+            if len(placements) >= target_count:
+                break
+        if not placements:
+            raise CanvasError("no furniture footprint fits inside the boundary")
+
+        created: list[str] = []
+        for dx, dy, _candidate in placements:
+            for source in sources:
+                parent = self.parent_of(source)
+                if parent is None:
+                    parent = self.require_root()
+                clone = copy.deepcopy(source)
+                for node in clone.iter():
+                    if node.get("data-cid"):
+                        node.set("data-cid", self._new_cid())
+                    node.attrib.pop("id", None)
+                existing = clone.get("transform", "")
+                clone.set("transform", f"translate({fmt(dx)},{fmt(dy)}) {existing}".strip())
+                parent.append(clone)
+                created.append(clone.get("data-cid"))
+        return {
+            "created": created,
+            "copies": len(placements),
+            "elements_created": len(created),
+            "boundary_cid": boundary_cid,
+            "source_bbox": [round(value, 2) for value in source_box],
+            "clearance": round(gap, 2),
+            "grid": f"{columns}x{rows}",
+        }
+
+    def op_populate_kids_zone(self, boundary_cid: str, preset: str = "balanced",
+                              clearance: float | None = None) -> dict[str, Any]:
+        """Generate a native-SVG kids-zone plan from a boundary DesignIntent.
+
+        Callers identify the user-drawn boundary only. All geometry is derived
+        deterministically here so an LLM never authors SVG coordinates. Each
+        program item is a selectable furniture group and the entire mutation is
+        one undoable canvas operation.
+        """
+        if preset != "balanced":
+            raise CanvasError("preset must be balanced")
+        boundary = self.find(boundary_cid)
+        if local_name(boundary) not in {"polyline", "polygon"}:
+            raise CanvasError("boundary_cid must refer to a polyline or polygon")
+        local_boundary = local_points(boundary) or []
+        if len(local_boundary) < 3:
+            raise CanvasError("boundary polyline needs at least three points")
+        matrix = self._accumulated_transform(boundary)
+        polygon = [[float(x), float(y)] for x, y in
+                   (apply_matrix(matrix, x, y) for x, y in local_boundary)]
+        xs = [point[0] for point in polygon]
+        ys = [point[1] for point in polygon]
+        zone_box = [min(xs), min(ys), max(xs), max(ys)]
+        zone_width = zone_box[2] - zone_box[0]
+        zone_height = zone_box[3] - zone_box[1]
+        if zone_width <= 0 or zone_height <= 0:
+            raise CanvasError("kids-zone boundary has no area")
+
+        gap = (float(clearance) if clearance is not None
+               else max(10.0, min(zone_width, zone_height) * 0.055))
+        if gap < 0:
+            raise CanvasError("clearance must be non-negative")
+        inset = gap * 1.25
+        usable_width = zone_width - 2 * inset
+        usable_height = zone_height - 2 * inset
+        if usable_width < 120 or usable_height < 80:
+            raise CanvasError("kids-zone boundary is too small for the balanced preset")
+
+        columns, rows = 3, 2
+        cell_gap = gap * 0.75
+        cell_width = (usable_width - cell_gap * (columns - 1)) / columns
+        cell_height = (usable_height - cell_gap * (rows - 1)) / rows
+        if cell_width < 32 or cell_height < 32:
+            raise CanvasError("kids-zone cells are too small")
+
+        def probes(box: list[float]) -> list[tuple[float, float]]:
+            x0, y0, x1, y1 = box
+            return [
+                (x0, y0), (x1, y0), (x0, y1), (x1, y1),
+                ((x0 + x1) / 2, y0), ((x0 + x1) / 2, y1),
+                (x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2),
+                ((x0 + x1) / 2, (y0 + y1) / 2),
+            ]
+
+        def contained(box: list[float]) -> bool:
+            return all(self._point_in_polygon(px, py, polygon) for px, py in probes(box))
+
+        def fitted_cell(column: int, row: int) -> list[float]:
+            x0 = zone_box[0] + inset + column * (cell_width + cell_gap)
+            y0 = zone_box[1] + inset + row * (cell_height + cell_gap)
+            margin = max(4.0, gap * 0.32)
+            desired = [x0 + margin, y0 + margin,
+                       x0 + cell_width - margin, y0 + cell_height - margin]
+            step = max(3.0, gap * 0.45)
+            offsets = [(0.0, 0.0)]
+            for ring in range(1, 7):
+                delta = ring * step
+                offsets.extend([(0.0, delta), (0.0, -delta),
+                                (delta, 0.0), (-delta, 0.0),
+                                (delta, delta), (-delta, delta),
+                                (delta, -delta), (-delta, -delta)])
+            for dx, dy in offsets:
+                candidate = [desired[0] + dx, desired[1] + dy,
+                             desired[2] + dx, desired[3] + dy]
+                if (candidate[0] >= zone_box[0] and candidate[1] >= zone_box[1]
+                        and candidate[2] <= zone_box[2] and candidate[3] <= zone_box[3]
+                        and contained(candidate)):
+                    self._check_no_go(candidate, "populate_kids_zone")
+                    return candidate
+            raise CanvasError(f"no safe kids-zone cell fits at grid {column},{row}")
+
+        layer = self._layer(self.layer_id("kids"))
+        assert layer is not None
+        created_groups: list[str] = []
+        created_elements: list[str] = []
+
+        def shape(parent: ET.Element, tag: str, attrs: dict[str, Any]) -> ET.Element:
+            clean = {key: fmt(value) if isinstance(value, (int, float)) else str(value)
+                     for key, value in attrs.items()}
+            clean["data-cid"] = self._new_cid()
+            element = ET.SubElement(parent, q(tag), clean)
+            created_elements.append(clean["data-cid"])
+            return element
+
+        def item_group(kind: str, label: str, box: list[float], color: str) -> ET.Element:
+            cid = self._new_cid()
+            group = ET.SubElement(layer, q("g"), {
+                "data-cid": cid,
+                "data-role": "furniture",
+                "data-category": "kids_zone",
+                "data-kids-type": kind,
+                "aria-label": label,
+            })
+            created_groups.append(cid)
+            created_elements.append(cid)
+            x0, y0, x1, y1 = box
+            shape(group, "rect", {"x": x0, "y": y0, "width": x1 - x0,
+                                  "height": y1 - y0, "rx": min(x1 - x0, y1 - y0) * 0.08,
+                                  "fill": color, "fill-opacity": "0.12",
+                                  "stroke": color, "stroke-width": "1.5",
+                                  "stroke-dasharray": "5 4"})
+            return group
+
+        def add_label(group: ET.Element, box: list[float], text: str) -> None:
+            x0, _y0, x1, y1 = box
+            node = shape(group, "text", {"x": (x0 + x1) / 2, "y": y1 - gap * 0.32,
+                                         "text-anchor": "middle", "fill": "#334155",
+                                         "font-size": max(7.0, min(x1 - x0, y1 - box[1]) * 0.105),
+                                         "font-family": "sans-serif", "font-weight": "600"})
+            node.text = text
+
+        # Child table with four lightweight chairs.
+        box = fitted_cell(0, 0); x0, y0, x1, y1 = box; w, h = x1 - x0, y1 - y0
+        group = item_group("child_table", "어린이 테이블", box, "#2563EB")
+        cx, cy = (x0 + x1) / 2, y0 + h * 0.43
+        shape(group, "ellipse", {"cx": cx, "cy": cy, "rx": w * 0.23, "ry": h * 0.16,
+                                 "fill": "#BFDBFE", "stroke": "#2563EB", "stroke-width": "2"})
+        for px, py in ((cx - w * 0.31, cy), (cx + w * 0.31, cy),
+                       (cx, cy - h * 0.25), (cx, cy + h * 0.25)):
+            shape(group, "circle", {"cx": px, "cy": py, "r": min(w, h) * 0.075,
+                                    "fill": "#60A5FA", "stroke": "#1D4ED8", "stroke-width": "1.5"})
+        add_label(group, box, "어린이 테이블")
+
+        # Soft-play mat with modular foam blocks.
+        box = fitted_cell(1, 0); x0, y0, x1, y1 = box; w, h = x1 - x0, y1 - y0
+        group = item_group("soft_play", "소프트 플레이", box, "#D97706")
+        shape(group, "rect", {"x": x0 + w * 0.12, "y": y0 + h * 0.12,
+                              "width": w * 0.76, "height": h * 0.56,
+                              "rx": min(w, h) * 0.1, "fill": "#FDE68A",
+                              "stroke": "#D97706", "stroke-width": "2"})
+        for index, color in enumerate(("#FCA5A5", "#86EFAC", "#93C5FD")):
+            shape(group, "circle", {"cx": x0 + w * (0.32 + index * 0.18),
+                                    "cy": y0 + h * 0.40, "r": min(w, h) * 0.085,
+                                    "fill": color, "stroke": "#92400E", "stroke-width": "1"})
+        add_label(group, box, "소프트 플레이")
+
+        # Compact playhouse plus slide chute.
+        box = fitted_cell(2, 0); x0, y0, x1, y1 = box; w, h = x1 - x0, y1 - y0
+        group = item_group("playhouse_slide", "놀이집·미끄럼틀", box, "#DC2626")
+        house_x, house_y = x0 + w * 0.12, y0 + h * 0.25
+        shape(group, "rect", {"x": house_x, "y": house_y, "width": w * 0.34,
+                              "height": h * 0.36, "rx": min(w, h) * 0.04,
+                              "fill": "#FCA5A5", "stroke": "#B91C1C", "stroke-width": "2"})
+        shape(group, "polygon", {"points": points_attr([[house_x - w * 0.04, house_y],
+                                                         [house_x + w * 0.17, y0 + h * 0.10],
+                                                         [house_x + w * 0.38, house_y]]),
+                                    "fill": "#FB7185", "stroke": "#B91C1C", "stroke-width": "2"})
+        shape(group, "polygon", {"points": points_attr([[house_x + w * 0.34, house_y + h * 0.12],
+                                                         [x0 + w * 0.84, y0 + h * 0.56],
+                                                         [x0 + w * 0.78, y0 + h * 0.65],
+                                                         [house_x + w * 0.30, house_y + h * 0.23]]),
+                                    "fill": "#FDBA74", "stroke": "#C2410C", "stroke-width": "2"})
+        add_label(group, box, "놀이집·미끄럼틀")
+
+        # Reading corner: low shelf and floor cushions.
+        box = fitted_cell(0, 1); x0, y0, x1, y1 = box; w, h = x1 - x0, y1 - y0
+        group = item_group("reading_corner", "독서 코너", box, "#15803D")
+        shape(group, "rect", {"x": x0 + w * 0.12, "y": y0 + h * 0.15,
+                              "width": w * 0.76, "height": h * 0.18,
+                              "fill": "#D6B58C", "stroke": "#7C2D12", "stroke-width": "2"})
+        for index in range(1, 4):
+            split_x = x0 + w * (0.12 + 0.19 * index)
+            shape(group, "line", {"x1": split_x, "y1": y0 + h * 0.15,
+                                  "x2": split_x, "y2": y0 + h * 0.33,
+                                  "stroke": "#7C2D12", "stroke-width": "1"})
+        for index, color in enumerate(("#86EFAC", "#A7F3D0", "#BBF7D0")):
+            shape(group, "circle", {"cx": x0 + w * (0.30 + index * 0.20),
+                                    "cy": y0 + h * 0.52, "r": min(w, h) * 0.08,
+                                    "fill": color, "stroke": "#15803D", "stroke-width": "1"})
+        add_label(group, box, "독서 코너")
+
+        # Role-play/toy storage kept low and open to the aisle.
+        box = fitted_cell(1, 1); x0, y0, x1, y1 = box; w, h = x1 - x0, y1 - y0
+        group = item_group("toy_storage", "역할놀이·수납", box, "#7C3AED")
+        for row in range(2):
+            for column in range(3):
+                shape(group, "rect", {"x": x0 + w * (0.13 + column * 0.25),
+                                      "y": y0 + h * (0.14 + row * 0.22),
+                                      "width": w * 0.20, "height": h * 0.16,
+                                      "rx": min(w, h) * 0.035,
+                                      "fill": ("#C4B5FD" if row == 0 else "#DDD6FE"),
+                                      "stroke": "#6D28D9", "stroke-width": "1.3"})
+        add_label(group, box, "역할놀이·수납")
+
+        # Guardian bench at the perimeter-facing cell.
+        box = fitted_cell(2, 1); x0, y0, x1, y1 = box; w, h = x1 - x0, y1 - y0
+        group = item_group("guardian_bench", "보호자 벤치", box, "#0F766E")
+        shape(group, "rect", {"x": x0 + w * 0.12, "y": y0 + h * 0.28,
+                              "width": w * 0.76, "height": h * 0.18,
+                              "rx": min(w, h) * 0.04,
+                              "fill": "#99F6E4", "stroke": "#0F766E", "stroke-width": "2"})
+        for leg_x in (x0 + w * 0.22, x0 + w * 0.78):
+            shape(group, "line", {"x1": leg_x, "y1": y0 + h * 0.46,
+                                  "x2": leg_x, "y2": y0 + h * 0.58,
+                                  "stroke": "#0F766E", "stroke-width": "2"})
+        add_label(group, box, "보호자 벤치")
+
+        return {
+            "boundary_cid": boundary_cid,
+            "preset": preset,
+            "items": 6,
+            "created": created_groups,
+            "elements_created": len(created_elements),
+            "clearance": round(gap, 2),
+            "program": ["child_table", "soft_play", "playhouse_slide",
+                        "reading_corner", "toy_storage", "guardian_bench"],
+        }
 
     def op_copy_style(self, source_cid: str, target_cids: list[str]) -> dict[str, Any]:
         source = self.find(source_cid)
@@ -1031,6 +1413,10 @@ class CanvasDocument:
                 element.attrib.pop(key, None)
             else:
                 element.set(key, str(value))
+        self._bbox_cache.clear()
+        bbox = self.world_bbox(element)
+        if bbox:
+            self._check_no_go(bbox, "set attributes")
         return {"cid": cid, "element": self.describe(element)}
 
     def op_stretch(self, box: list[float], dx: float, dy: float,
@@ -1357,7 +1743,7 @@ class CanvasDocument:
         if layer is None:
             return zones
         for poly in layer:
-            if poly.get("data-zone-mode") in {"no_go_zone", "lock_boundary"}:
+            if poly.get("data-zone-mode") in {"no_go_zone", "lock_boundary", "protect_zone"}:
                 pts = [[float(v) for v in pair.split(",")] for pair in poly.get("points", "").split()]
                 xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
                 zones.append((poly.get("data-zone-name") or "no_go",
@@ -1375,6 +1761,35 @@ class CanvasDocument:
             j = i
         return hit
 
+    def _check_existing_targets(self, op: str, params: dict[str, Any]) -> None:
+        if op not in {"delete_elements", "move_element", "transform_elements", "set_style",
+                      "set_attrs", "set_length", "set_thickness", "set_area", "stretch"}:
+            return
+        cids = params.get("cids") or ([params["cid"]] if params.get("cid") else [])
+        for cid in cids:
+            element = self.find(cid)
+            if element.get("data-zone-mode"):
+                continue
+            bbox = self.world_bbox(element)
+            if bbox:
+                self._check_no_go(bbox, op)
+
+    @staticmethod
+    def _segment_hits_box(a: list[float], b: list[float], box: list[float]) -> bool:
+        low, high = 0.0, 1.0
+        for axis in (0, 1):
+            delta = b[axis] - a[axis]
+            if abs(delta) < 1e-12:
+                if a[axis] < box[axis] or a[axis] > box[axis + 2]:
+                    return False
+            else:
+                t0, t1 = sorted(((box[axis] - a[axis]) / delta,
+                                 (box[axis + 2] - a[axis]) / delta))
+                low, high = max(low, t0), min(high, t1)
+                if low > high:
+                    return False
+        return True
+
     def _check_no_go(self, bbox: list[float], action: str) -> None:
         if getattr(self, "_op_force", False):
             return
@@ -1383,7 +1798,11 @@ class CanvasDocument:
         for name, pts, zb in self._no_go_zones():
             if bbox[2] < zb[0] or bbox[0] > zb[2] or bbox[3] < zb[1] or bbox[1] > zb[3]:
                 continue
-            if any(self._point_in_polygon(px, py, pts) for px, py in probes):
+            contained_vertex = any(bbox[0] <= px <= bbox[2] and bbox[1] <= py <= bbox[3]
+                                   for px, py in pts)
+            crossing_edge = any(self._segment_hits_box(a, b, bbox)
+                                for a, b in zip(pts, pts[1:] + pts[:1]))
+            if contained_vertex or crossing_edge or any(self._point_in_polygon(px, py, pts) for px, py in probes):
                 raise CanvasError(
                     f"{action} blocked: geometry enters protected zone '{name}' "
                     "(no_go/lock). Pass force=true only if this is intentional.")
@@ -1542,7 +1961,12 @@ class CanvasDocument:
             transform += f" scale({fmt(scale)})"
         symbol.set("transform", transform)
         symbol.set("data-cid", self._new_cid())
+        # This group is intentionally the semantic owner so every primitive in a
+        # placed symbol inherits the discipline/role without coordinate changes.
+        symbol.set("data-discipline", discipline)
+        symbol.set("data-role", f"{discipline} {name}")
         symbol.set("data-symbol", str(name))
+        symbol.set("data-name", str(name))
         parent.append(symbol)
         bbox = self.world_bbox(symbol)
         if bbox:

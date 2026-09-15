@@ -43,6 +43,16 @@ SRC_ROOT = Path(__file__).resolve().parents[1]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from crab_archi_design.gis_context import (
+    GIS_CONTEXT_MANIFEST_SCHEMA,
+    QGIS_MCP_SNAPSHOT_SCHEMA,
+    QgisMcpClient,
+    QgisMcpError,
+    build_gis_context,
+    capture_qgis_preview,
+    capture_qgis_snapshot,
+    summarize_gis_context,
+)
 from crab_archi_design.qa import build_candidate_quality_report
 from crab_archi_design.solver.objective import evaluate_topology_fit
 from crab_archi_design.solver.patch_plan import annotate_candidates_with_solver_plan, build_endpoint_move_candidates, build_opening_candidates, patch_role_priority
@@ -309,6 +319,69 @@ def evidence_status(manifest: dict[str, Any] | None) -> str:
     if manifest.get("status"):
         return str(manifest["status"])
     return "verified" if count_evidence_items(manifest) > 0 else "missing"
+
+
+def gis_context_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
+    return project_dir(project_id, root) / "gis" / "gis_context_manifest.json"
+
+
+def load_gis_context_manifest(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> dict[str, Any] | None:
+    path = gis_context_manifest_path(project_id, root)
+    return read_json(path) if path.exists() else None
+
+
+def latest_gis_context(manifest: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not manifest:
+        return None
+    contexts = manifest.get("contexts", [])
+    if not isinstance(contexts, list):
+        return None
+    for context in reversed(contexts):
+        if isinstance(context, dict):
+            return context
+    return None
+
+
+def gis_context_status(manifest: dict[str, Any] | None) -> str:
+    if not manifest:
+        return "missing"
+    return str(manifest.get("status") or "review_required")
+
+
+def project_local_gis_provenance_files(base: Path, context: dict[str, Any] | None) -> list[tuple[str, Path]]:
+    """Return only project-local source artifacts behind the latest GIS context.
+
+    GIS context can be attached from an arbitrary external JSON file. The
+    normalized context is safe to package, but the original external input may
+    contain unrelated local data. QGIS captures produced by this project live
+    under ``<project>/gis`` and can be retained as package provenance.
+    """
+    if not context:
+        return []
+
+    candidates: list[tuple[str, Any]] = []
+    source = context.get("source") if isinstance(context.get("source"), dict) else {}
+    candidates.append(("qgis_snapshot", source.get("snapshot_file")))
+    visual = context.get("visual_reference") if isinstance(context.get("visual_reference"), dict) else {}
+    if visual.get("available"):
+        candidates.append(("qgis_visual_reference", visual.get("file")))
+
+    local_files: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
+    base_resolved = base.resolve()
+    for role, raw_path in candidates:
+        if not raw_path:
+            continue
+        path = Path(str(raw_path)).expanduser()
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(base_resolved)
+        except (OSError, ValueError):
+            continue
+        if resolved.is_file() and resolved not in seen:
+            local_files.append((role, resolved))
+            seen.add(resolved)
+    return local_files
 
 
 def constraint_manifest_path(project_id: str, root: Path = DEFAULT_PROJECT_ROOT) -> Path:
@@ -1182,6 +1255,15 @@ def opencrab_request_query(manifest: dict[str, Any], status: dict[str, Any] | No
         }.items()
         if value is not None
     )
+    gis_context = (status or {}).get("gis_context", {})
+    gis_text = "not attached"
+    if isinstance(gis_context, dict) and gis_context.get("status") not in {None, "missing"}:
+        layer_names = ", ".join(str(item) for item in gis_context.get("layer_names", [])[:8])
+        gis_text = (
+            f"status={gis_context.get('status')}, crs={gis_context.get('crs')}, "
+            f"layers={gis_context.get('layer_count')}, layer_names={layer_names or 'not listed'}, "
+            f"coordinate_mapping={gis_context.get('coordinate_mapping_status')}"
+        )
     intent = args.intent or "Generate evidence-backed community layout topology guidance for greenery lounge, fitness/GX, golf/screen golf, sauna/locker/shower, hall/lobby, and support spaces."
     return (
         f"Crab Archi Design OpenCrab MCP request for project {manifest.get('project_id')}. "
@@ -1190,6 +1272,7 @@ def opencrab_request_query(manifest: dict[str, Any], status: dict[str, Any] | No
         f"Return precedent topology, adjacency levers, area criteria, protected/mutable zone rules, claims, and evidence references. "
         f"Hard constraints: {hard_constraints}. "
         f"Recognition metrics: {metric_text or 'not available'}. "
+        f"QGIS context: {gis_text}. Treat QGIS findings as evidence/advisory only; do not infer SVG coordinates without a reviewed georeference mapping. "
         "The response must be usable by opencrab-sync and include answer/summary plus evidence items with source references."
     )
 
@@ -1285,6 +1368,7 @@ def command_opencrab_request(args: argparse.Namespace) -> None:
             "status": status.get("overall_status") if status else None,
             "gates": status.get("gates") if status else {},
             "metrics": status.get("metrics") if status else {},
+            "gis_context": status.get("gis_context") if status else {},
             "latest_artifacts": status.get("latest_artifacts") if status else {},
         },
         "response_contract": {
@@ -1377,6 +1461,168 @@ def command_opencrab_sync(args: argparse.Namespace) -> None:
                 "status": evidence_manifest["status"],
                 "evidence_count": evidence_manifest["evidence_count"],
                 "normalized_evidence_count": len(normalized_evidence),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def command_qgis_capture(args: argparse.Namespace) -> None:
+    """Save a QGIS read-only snapshot, with an optional GIS-only preview."""
+    root = Path(args.project_root)
+    load_manifest(args.project_id, root)
+    preview_bytes: bytes | None = None
+    preview_metadata: dict[str, Any] | None = None
+    preview_error: str | None = None
+    try:
+        with QgisMcpClient.from_environment(
+            host=args.host,
+            port=args.port,
+            timeout=args.timeout,
+            token_env=args.qgis_token_env,
+        ) as client:
+            snapshot = capture_qgis_snapshot(client, max_layers=args.max_layers)
+            if args.include_preview:
+                try:
+                    preview_bytes, preview_metadata = capture_qgis_preview(client)
+                except QgisMcpError as error:
+                    # A busy QGIS canvas must not discard an otherwise valid
+                    # metadata capture. The unavailable preview remains an
+                    # explicit review state rather than a silent omission.
+                    preview_error = str(error)
+    except QgisMcpError as error:
+        raise SystemExit(str(error)) from error
+
+    base = project_dir(args.project_id, root)
+    snapshot_dir = base / "gis"
+    seq = next_sequence(snapshot_dir, "qgis_snapshot_[0-9][0-9][0-9].json")
+    snapshot["project_id"] = args.project_id
+    snapshot["capture_parameters"] = {
+        "host": args.host,
+        "port": args.port,
+        "max_layers": args.max_layers,
+        "token_env_used": args.qgis_token_env if bool(os.environ.get(args.qgis_token_env)) else None,
+    }
+    if preview_bytes is not None and preview_metadata is not None:
+        preview_out = snapshot_dir / f"qgis_preview_{seq:03d}.png"
+        preview_out.parent.mkdir(parents=True, exist_ok=True)
+        preview_out.write_bytes(preview_bytes)
+        snapshot["read_only_commands"].append("get_canvas_screenshot")
+        snapshot["visual_reference"] = {
+            **preview_metadata,
+            "file": str(preview_out.resolve()),
+            "sha256": sha256_file(preview_out),
+        }
+    elif args.include_preview:
+        snapshot["read_only_commands"].append("get_canvas_screenshot")
+        snapshot["visual_reference"] = {
+            "available": False,
+            "status": "unavailable",
+            "role": "qgis_review_sidecar_only",
+            "final_svg_embedding_allowed": False,
+            "error": preview_error or "QGIS canvas preview was unavailable.",
+        }
+    out = snapshot_dir / f"qgis_snapshot_{seq:03d}.json"
+    write_json(out, snapshot)
+    print(out)
+    print(
+        json.dumps(
+            {
+                "status": "captured",
+                "schema": QGIS_MCP_SNAPSHOT_SCHEMA,
+                "layer_count": len(snapshot.get("layers", [])),
+                "canvas_crs": snapshot.get("canvas", {}).get("crs"),
+                "read_only": True,
+                "visual_preview": preview_bytes is not None,
+                "visual_preview_status": "captured" if preview_bytes is not None else ("unavailable" if args.include_preview else "not_requested"),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def command_gis_context_attach(args: argparse.Namespace) -> None:
+    """Attach a QGIS snapshot as advisory GIS context, never SVG geometry."""
+    root = Path(args.project_root)
+    load_manifest(args.project_id, root)
+    snapshot_path = Path(args.snapshot).expanduser()
+    if not snapshot_path.exists():
+        raise SystemExit(f"Missing QGIS snapshot file: {snapshot_path}")
+    try:
+        snapshot = read_json(snapshot_path)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"Invalid QGIS snapshot JSON: {snapshot_path}") from error
+    if not isinstance(snapshot, dict):
+        raise SystemExit("QGIS snapshot JSON must contain an object.")
+
+    analysis: dict[str, Any] = {}
+    if args.analysis_file:
+        analysis_path = Path(args.analysis_file).expanduser()
+        if not analysis_path.exists():
+            raise SystemExit(f"Missing QGIS analysis JSON: {analysis_path}")
+        try:
+            analysis = read_json(analysis_path)
+        except json.JSONDecodeError as error:
+            raise SystemExit(f"Invalid QGIS analysis JSON: {analysis_path}") from error
+        if not isinstance(analysis, dict):
+            raise SystemExit("QGIS analysis JSON must contain an object.")
+
+    base = project_dir(args.project_id, root)
+    gis_dir = base / "gis"
+    existing = None if args.replace else load_gis_context_manifest(args.project_id, root)
+    seq = next_sequence(gis_dir, "gis_context_[0-9][0-9][0-9].json")
+    context = build_gis_context(
+        snapshot,
+        context_id=f"gis_context_{seq:03d}",
+        project_id=args.project_id,
+        source_file=str(snapshot_path.resolve()),
+        source_tool=args.source_tool,
+        summary=args.summary,
+        confidence=args.confidence,
+        observations=args.observation,
+        analysis=analysis,
+        attached_at=now(),
+    )
+    context["source"]["sha256"] = sha256_file(snapshot_path)
+    if args.analysis_file:
+        analysis_path = Path(args.analysis_file).expanduser()
+        context["analysis_source"] = {"file": str(analysis_path.resolve()), "sha256": sha256_file(analysis_path)}
+    context_path = gis_dir / f"gis_context_{seq:03d}.json"
+    write_json(context_path, context)
+
+    context_manifest = existing or {
+        "schema": GIS_CONTEXT_MANIFEST_SCHEMA,
+        "created_at": now(),
+        "project_id": args.project_id,
+        "contexts": [],
+        "required_for_final_svg": False,
+        "coordinate_policy": "GIS coordinates remain advisory until a reviewed georeference mapping is attached.",
+    }
+    contexts = context_manifest.setdefault("contexts", [])
+    if not isinstance(contexts, list):
+        raise SystemExit("Invalid existing GIS context manifest: contexts must be a list.")
+    contexts.append({**context, "context_file": str(context_path)})
+    context_manifest["updated_at"] = now()
+    context_manifest["context_count"] = len(contexts)
+    context_manifest["latest_context_id"] = context["id"]
+    context_manifest["latest_context_file"] = str(context_path)
+    context_manifest["status"] = context["status"]
+    context_manifest["design_projection_status"] = "review_required"
+    context_manifest["design_projection_policy"] = (
+        "Only a user-reviewed georeference mapping and explicit constraint confirmation may make GIS findings binding."
+    )
+    manifest_out = gis_context_manifest_path(args.project_id, root)
+    write_json(manifest_out, context_manifest)
+    print(context_path)
+    print(manifest_out)
+    print(
+        json.dumps(
+            {
+                "status": context["status"],
+                "context_id": context["id"],
+                "layer_count": context["layer_count"],
+                "coordinate_mapping_status": context["spatial_reference"]["coordinate_mapping_status"],
+                "direct_svg_mutation": False,
             },
             ensure_ascii=False,
         )
@@ -3747,6 +3993,9 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
     constraint_manifest = load_constraint_manifest(project_id, root)
     standards_manifest = load_standards_manifest(project_id, root)
     scale_manifest = load_scale_manifest(project_id, root)
+    gis_context_manifest = load_gis_context_manifest(project_id, root)
+    gis_context = latest_gis_context(gis_context_manifest)
+    gis_summary = summarize_gis_context(gis_context)
     edit_intent_paths = sorted_json_files(base / "edit_intents", "*.json")
     latest_brief = latest_file(base / "briefs", "edit_brief_*.json")
     latest_apply = latest_file(base / "runs", "apply_edit_*/apply_edit_report.json")
@@ -3766,6 +4015,11 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
         "standards_manifest_active": standards_status(standards_manifest) == "active",
         "opencrab_evidence_verified": evidence_status(evidence_manifest) == "verified",
         "constraint_manifest_active": constraint_status(constraint_manifest) == "active",
+        "gis_context_present": gis_context_status(gis_context_manifest) != "missing",
+        "gis_context_ready": gis_context_status(gis_context_manifest) == "context_ready",
+        "gis_direct_svg_coordinate_transfer_blocked": not bool(
+            gis_summary.get("gates", {}).get("direct_qgis_to_svg_coordinate_transfer_allowed", False)
+        ),
         "recognition_audit_pass": recognition_audit is not None and recognition_audit.get("status") == "pass",
         "edit_intent_exists": len(edit_intent_paths) > 0,
         "latest_apply_pass": bool(apply_report and apply_report.get("status") == "pass"),
@@ -3808,6 +4062,8 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
             "topology_manifest": str(topology_manifest_path(project_id, root)) if topology_manifest else None,
             "standards_manifest": str(standards_manifest_path(project_id, root)) if standards_manifest else None,
             "scale_manifest": str(scale_manifest_path(project_id, root)) if scale_manifest else None,
+            "gis_context_manifest": str(gis_context_manifest_path(project_id, root)) if gis_context_manifest else None,
+            "gis_context": gis_context_manifest.get("latest_context_file") if gis_context_manifest else None,
             "evidence_manifest": str(evidence_manifest_path(project_id, root)) if evidence_manifest else None,
             "constraint_manifest": str(constraint_manifest_path(project_id, root)) if constraint_manifest else None,
             "recognition_audit": str(latest_recognition_audit) if latest_recognition_audit else None,
@@ -3831,6 +4087,11 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
             "scale_status": scale_status(scale_manifest),
             "scale_mm_per_world": (scale_manifest or {}).get("selected_scale", {}).get("mm_per_world"),
             "scale_confidence": (scale_manifest or {}).get("selected_scale", {}).get("confidence"),
+            "gis_context_count": (gis_context_manifest or {}).get("context_count", 0),
+            "gis_layer_count": gis_summary.get("layer_count", 0),
+            "gis_context_status": gis_summary.get("status"),
+            "gis_context_crs": gis_summary.get("crs"),
+            "gis_coordinate_mapping_status": gis_summary.get("coordinate_mapping_status"),
             "evidence_count": count_evidence_items(evidence_manifest),
             "constraint_count": count_constraint_items(constraint_manifest),
             "enforced_constraint_count": count_constraint_items(constraint_manifest, enforced_only=True),
@@ -3841,6 +4102,7 @@ def build_project_status(project_id: str, root: Path) -> dict[str, Any]:
             "latest_alternative_image_elements": alternative_info.get("image_elements"),
         },
         "opencrab_mcp": manifest.get("opencrab_mcp"),
+        "gis_context": gis_summary,
         "source_svg_info": source_info,
         "alternative_svg_info": alternative_info,
     }
@@ -3980,6 +4242,21 @@ def build_design_handoff_markdown(handoff: dict[str, Any]) -> str:
     if not handoff["knowledge_context"]["evidence_items"]:
         lines.append("- No evidence attached.")
 
+    lines.extend(["", "## GIS Context", ""])
+    gis_context = handoff["knowledge_context"].get("gis_context", {})
+    if gis_context.get("status") not in {None, "missing"}:
+        lines.append(f"- Status: `{gis_context.get('status')}`")
+        lines.append(f"- CRS: `{gis_context.get('crs')}`")
+        lines.append(f"- Layers: `{gis_context.get('layer_count')}`")
+        lines.append(f"- Coordinate mapping: `{gis_context.get('coordinate_mapping_status')}`")
+        if gis_context.get("layer_names"):
+            lines.append(f"- Layer names: {', '.join(str(item) for item in gis_context['layer_names'])}")
+        for item in gis_context.get("observations", []):
+            lines.append(f"- Observation: {item}")
+    else:
+        lines.append("- No QGIS context attached.")
+    lines.append("- Policy: QGIS data is advisory evidence until a reviewed georeference mapping and explicit human constraint confirmation exist.")
+
     lines.extend(["", "## Constraints", ""])
     for item in handoff["knowledge_context"]["constraint_items"]:
         lines.append(f"- `{item.get('role')}`: {item.get('target_hint') or item.get('mode') or item.get('id')} (policy `{item.get('solver_policy')}`)")
@@ -4025,6 +4302,8 @@ def command_design_handoff(args: argparse.Namespace) -> None:
     evidence_manifest = load_evidence_manifest(args.project_id, root)
     constraint_manifest = load_constraint_manifest(args.project_id, root)
     standards_manifest = load_standards_manifest(args.project_id, root)
+    gis_context_manifest = load_gis_context_manifest(args.project_id, root)
+    gis_context = summarize_gis_context(latest_gis_context(gis_context_manifest))
     project_status = build_project_status(args.project_id, root)
     latest_brief_path = latest_file(base / "briefs", "edit_brief_*.json")
     latest_brief = read_json(latest_brief_path) if latest_brief_path else None
@@ -4043,6 +4322,7 @@ def command_design_handoff(args: argparse.Namespace) -> None:
     system_prompt = (
         "You are the Crab Archi Design planning agent. Use OpenCrab MCP evidence as the design knowledge base, "
         "treat standards, topology, and constraints as binding inputs, and produce solver-ready instructions rather than a raster overlay. "
+        "Treat attached QGIS context as advisory evidence only unless a reviewed source-SVG georeference mapping exists. "
         "Do not invent protected geometry changes. Preserve parking count, columns, cores, ramps, stairs, egress, and the community shell."
     )
     operation_lines = [
@@ -4056,12 +4336,14 @@ def command_design_handoff(args: argparse.Namespace) -> None:
             f"Source SVG: {manifest.get('source_svg')}",
             f"Households: {manifest.get('household_count')}",
             f"Ontology pack: {manifest.get('ontology_pack')}",
+            f"QGIS context: status={gis_context.get('status')}, crs={gis_context.get('crs')}, layers={gis_context.get('layer_count')}, coordinate_mapping={gis_context.get('coordinate_mapping_status')}",
             "Operations:",
             *(operation_lines or ["- Review attached intent files."]),
             "Required behavior:",
             "- Keep every edit inside mutable/projectable community zones.",
             "- Preserve topology constraints from the topology manifest before changing room partitions.",
             "- Use OpenCrab evidence and 900-household standards before assigning program area.",
+            "- Use QGIS layers and analysis as cited context only; do not transfer GIS coordinates into source SVG without a reviewed georeference mapping.",
             "- Keep protected no-go and locked geometry unchanged.",
             "- Output native SVG solver instructions and cite the manifest evidence paths.",
         ]
@@ -4087,6 +4369,7 @@ def command_design_handoff(args: argparse.Namespace) -> None:
             "recognition": summarize_recognition_manifest(recognition_manifest),
             "topology": summarize_topology_manifest(topology_manifest),
             "evidence_items": summarize_evidence_manifest(evidence_manifest),
+            "gis_context": gis_context,
             "constraint_items": summarize_constraint_manifest(constraint_manifest),
             "standards_status": standards_status(standards_manifest),
             "standard_count": count_standard_items(standards_manifest),
@@ -4095,6 +4378,8 @@ def command_design_handoff(args: argparse.Namespace) -> None:
                 "recognition_manifest": str(recognition_manifest_path(args.project_id, root)) if recognition_manifest else None,
                 "topology_manifest": str(topology_manifest_path(args.project_id, root)) if topology_manifest else None,
                 "evidence_manifest": str(evidence_manifest_path(args.project_id, root)) if evidence_manifest else None,
+                "gis_context_manifest": str(gis_context_manifest_path(args.project_id, root)) if gis_context_manifest else None,
+                "gis_context": gis_context_manifest.get("latest_context_file") if gis_context_manifest else None,
                 "constraint_manifest": str(constraint_manifest_path(args.project_id, root)) if constraint_manifest else None,
                 "standards_manifest": str(standards_manifest_path(args.project_id, root)) if standards_manifest else None,
             },
@@ -4121,6 +4406,11 @@ def command_design_handoff(args: argparse.Namespace) -> None:
                 "standards_manifest_active",
                 "native_svg_no_images",
             ],
+            "gis_context_policy": {
+                "status": gis_context.get("status"),
+                "coordinate_mapping_status": gis_context.get("coordinate_mapping_status"),
+                "rule": "GIS context may inform intent and evidence selection, but requires reviewed georeference plus explicit human confirmation before becoming an enforced drawing constraint.",
+            },
         },
     }
     handoff_dir = base / "handoffs"
@@ -5445,6 +5735,11 @@ def collect_export_files(project_id: str, root: Path, include_source_svg: bool, 
             required=role in {"recognition_manifest", "topology_manifest", "evidence_manifest", "constraint_manifest", "standards_manifest"},
         )
 
+    gis_context_manifest = load_gis_context_manifest(project_id, root)
+    latest_gis_context_entry = latest_gis_context(gis_context_manifest)
+    for role, path in project_local_gis_provenance_files(base, latest_gis_context_entry):
+        append_package_file(files, project_id, base, role, path)
+
     for handoff_path in latest_handoff_files(base):
         append_package_file(files, project_id, base, f"design_handoff_{handoff_path.suffix.lstrip('.')}", handoff_path)
 
@@ -5878,6 +6173,7 @@ def command_studio(args: argparse.Namespace) -> None:
 def command_doodle_editor(args: argparse.Namespace) -> None:
     candidates = [
         Path(__file__).resolve().parents[2] / "tools" / "doodle_editor.html",
+        Path(__file__).resolve().parent / "assets" / "doodle_editor.html",
         Path.cwd() / "tools" / "doodle_editor.html",
     ]
     editor = next((path for path in candidates if path.exists()), None)
@@ -6078,6 +6374,24 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "gates": ["opencrab_evidence_verified"],
         },
         {
+            "id": "qgis_capture",
+            "cli_subcommand": "qgis-capture",
+            "description": "Read only QGIS MCP metadata from the local QGIS plugin and save a privacy-scrubbed layer/canvas snapshot. An optional PNG remains a separate GIS review sidecar; this tool cannot modify QGIS, fetch features, run processing, or transfer coordinates to SVG.",
+            "required_args": ["--project-id"],
+            "optional_args": ["--host", "--port", "--timeout", "--max-layers", "--include-preview", "--qgis-token-env"],
+            "outputs": ["gis/qgis_snapshot_###.json", "gis/qgis_preview_###.png (optional GIS review sidecar)"],
+            "gates": ["qgis_read_only_snapshot_captured", "local_qgis_mcp_connected"],
+        },
+        {
+            "id": "gis_context_attach",
+            "cli_subcommand": "gis-context-attach",
+            "description": "Validate and attach a QGIS metadata snapshot as advisory GIS context for OpenCrab queries and design handoff. GIS coordinates remain blocked from direct SVG mutation until a reviewed georeference mapping and explicit human confirmation exist.",
+            "required_args": ["--project-id", "--snapshot"],
+            "optional_args": ["--analysis-file", "--source-tool", "--summary", "--observation", "--confidence", "--replace"],
+            "outputs": ["gis/gis_context_###.json", "gis/gis_context_manifest.json"],
+            "gates": ["gis_context_ready_or_review_required", "direct_qgis_to_svg_coordinate_transfer_blocked"],
+        },
+        {
             "id": "prompt_edit",
             "cli_subcommand": "prompt-edit",
             "description": "Convert natural-language revision instructions into structured edit intent JSON.",
@@ -6274,12 +6588,14 @@ def build_mcp_tool_manifest() -> dict[str, Any]:
             "revision_loop": ["revision_run", "export_package", "verify_package", "doctor", "release_audit"],
             "manual_revision_loop": ["recognize_svg_v2", "topology_build", "recognition_audit", "scale_attach", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit", "review_panel", "project_status", "export_package", "verify_package", "doctor", "release_audit"],
             "opencrab_first_manual_loop": ["recognize_svg_v2", "opencrab_request", "opencrab_sync", "constraint_attach", "topology_build", "recognition_audit", "scale_attach", "svg_patch_plan", "prompt_edit", "sketch_intent", "edit_brief", "design_handoff", "apply_edit"],
+            "qgis_opencrab_design_loop": ["qgis_capture", "gis_context_attach", "opencrab_request", "opencrab_sync", "constraint_attach", "topology_build", "design_handoff", "apply_edit"],
             "mcp_server_bootstrap": ["mcp_manifest", "mcp_config", "mcp_smoke", "doctor"],
         },
         "security": {
             "source_svg_in_package": "opt-in via export-package --include-source-svg",
             "native_svg_only_gate": "latest_alternative_native_svg",
             "no_raster_overlay_gate": "native_svg_no_images",
+            "gis_coordinate_policy": "QGIS capture is localhost read-only. GIS data is a sidecar context artifact and cannot create final SVG raster layers or direct SVG coordinate mutations without reviewed georeference and explicit human confirmation.",
             "engine_adapter_allowlist": sorted(BUILTIN_ENGINE_ADAPTERS),
             "custom_engine_policy": "Custom engine adapters are refused by default. Direct local CLI users may pass --allow-custom-engine for trusted adapters; MCP raw_args cannot use this escape hatch.",
             "secrets_policy": "do not put OAuth tokens, API keys, or private credentials in project manifests, evidence payloads, or export packages",
@@ -6604,6 +6920,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_opencrab_sync.add_argument("--metadata", action="append", default=[])
     p_opencrab_sync.add_argument("--replace", action="store_true")
     p_opencrab_sync.set_defaults(func=command_opencrab_sync)
+
+    p_qgis_capture = sub.add_parser("qgis-capture", help="Capture metadata from a running local QGIS MCP plugin without changing QGIS.")
+    p_qgis_capture.add_argument("--project-id", required=True)
+    p_qgis_capture.add_argument("--host", default="127.0.0.1", help="Local QGIS MCP host. Non-local hosts are refused.")
+    p_qgis_capture.add_argument("--port", type=int, default=9876)
+    p_qgis_capture.add_argument("--timeout", type=float, default=20.0)
+    p_qgis_capture.add_argument("--max-layers", type=int, default=50, help="Maximum layer metadata records to capture (1-200).")
+    p_qgis_capture.add_argument("--include-preview", action="store_true", help="Save the visible QGIS canvas as a separate GIS review PNG; it is never embedded in final SVG output.")
+    p_qgis_capture.add_argument("--qgis-token-env", default="QGIS_MCP_TOKEN", help="Environment variable containing an optional QGIS MCP token. The value is never written to artifacts.")
+    p_qgis_capture.set_defaults(func=command_qgis_capture)
+
+    p_gis_context = sub.add_parser("gis-context-attach", help="Attach a QGIS metadata snapshot as advisory GIS context for OpenCrab and design handoff.")
+    p_gis_context.add_argument("--project-id", required=True)
+    p_gis_context.add_argument("--snapshot", required=True, help="JSON emitted by qgis-capture or a compatible QGIS MCP read-only snapshot.")
+    p_gis_context.add_argument("--analysis-file", help="Optional QGIS processing/analysis JSON to retain as context; it never becomes direct SVG geometry.")
+    p_gis_context.add_argument("--source-tool", default="qgis_mcp_read_only")
+    p_gis_context.add_argument("--summary")
+    p_gis_context.add_argument("--observation", action="append", default=[], help="Human/QGIS observation to include in the GIS context. Repeatable.")
+    p_gis_context.add_argument("--confidence", type=float, default=0.8)
+    p_gis_context.add_argument("--replace", action="store_true", help="Replace the GIS context manifest instead of appending a context version.")
+    p_gis_context.set_defaults(func=command_gis_context_attach)
 
     p_opencrab_request = sub.add_parser("opencrab-request", help="Create an OpenCrab MCP request package from project context.")
     p_opencrab_request.add_argument("--project-id", required=True)

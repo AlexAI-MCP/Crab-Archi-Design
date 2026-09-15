@@ -42,8 +42,10 @@ BOOLEAN_FIELDS = {
     "no_doctor",
     "no_validate_file_checks",
     "open",
+    "include_preview",
 }
-INTEGER_FIELDS = {"households", "max_labels", "max_results", "max_candidates", "timeout"}
+INTEGER_FIELDS = {"households", "max_labels", "max_results", "max_candidates", "timeout", "port", "max_layers"}
+NUMBER_FIELDS = {"confidence"}
 ARRAY_FIELDS = {
     "standards",
     "engine_arg",
@@ -55,6 +57,7 @@ ARRAY_FIELDS = {
     "result_json",
     "metadata",
     "file",
+    "observation",
 }
 
 
@@ -81,6 +84,8 @@ def schema_property_for_key(key: str, flag: str) -> dict[str, Any]:
         return {"type": "boolean", "description": description}
     if key in INTEGER_FIELDS:
         return {"type": "integer", "description": description}
+    if key in NUMBER_FIELDS:
+        return {"type": "number", "description": description}
     if key in ARRAY_FIELDS:
         return {"type": "array", "items": {"type": "string"}, "description": f"Repeatable. {description}"}
     return {"type": "string", "description": description}

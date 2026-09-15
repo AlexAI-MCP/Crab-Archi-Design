@@ -35,6 +35,16 @@ jobs:
         run: |
           python -m pytest -q
 
+      - name: Browser runtime build and JavaScript regression checks
+        run: |
+          python tools/build_web.py
+          node --check tools/web_bridge.js
+          node --check tools/web_worker.js
+          node tests/test_canvas_native_overlay.mjs
+          node tests/test_canvas_parking_classifier.mjs
+          node tests/test_canvas_multidiscipline_classifier.mjs
+          node tests/test_canvas_height_controls.mjs
+
       - name: End-to-end preflight
         run: |
           crab-archi-design-mcp --help

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import urllib.error
 import urllib.request
@@ -11,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from crab_archi_design.canvas_document import CanvasDocument, CanvasError
-from crab_archi_design.canvas_mcp import CanvasClient, handle_request
+from crab_archi_design.canvas_mcp import CanvasClient, TOOLS, handle_request
 from crab_archi_design.canvas_server import CanvasState, make_handler
 from http.server import ThreadingHTTPServer
 
@@ -51,6 +52,21 @@ def test_draw_delete_undo_cycle(doc: CanvasDocument) -> None:
     assert not any(e["cid"] == cid for e in doc.list_elements())
     doc.undo()  # restore line
     assert any(e["cid"] == cid for e in doc.list_elements())
+
+
+def test_undo_redo_and_new_mutation_invalidates_redo(doc: CanvasDocument) -> None:
+    line = doc.apply("draw_line", {"x1": 0, "y1": 0, "x2": 50, "y2": 50})["cid"]
+    undone = doc.undo()
+    assert not any(e["cid"] == line for e in doc.list_elements())
+    assert undone["undo_depth"] == 0 and undone["redo_depth"] == 1
+    redone = doc.redo()
+    assert any(e["cid"] == line for e in doc.list_elements())
+    assert redone["undo_depth"] == 1 and redone["redo_depth"] == 0
+    doc.undo()
+    doc.apply("draw_rect", {"x": 1, "y": 1, "width": 5, "height": 5})
+    assert doc.status()["redo_depth"] == 0
+    with pytest.raises(CanvasError, match="nothing to redo"):
+        doc.redo()
 
 
 def test_draw_curve_and_polyline(doc: CanvasDocument) -> None:
@@ -136,6 +152,28 @@ def test_http_open_op_doc_flow(server) -> None:
     assert unchanged["status"] == "unchanged"
 
 
+def test_http_undo_redo_flow(server) -> None:
+    base, svg_path = server
+    http_json(base + "/api/open", {"path": str(svg_path)})
+    created = http_json(base + "/api/op", {"op": "draw_line", "params": {"x1": 0, "y1": 0, "x2": 9, "y2": 9}})
+    assert created["status"] == "ok"
+    undone = http_json(base + "/api/undo", {})
+    assert undone["status"] == "ok" and undone["redo_depth"] == 1
+    redone = http_json(base + "/api/redo", {})
+    assert redone["status"] == "ok" and redone["redo_depth"] == 0
+
+
+def test_live_canvas_ui_wires_split_dock_redo_and_dwg_controls() -> None:
+    html = (Path(__file__).parents[1] / "tools" / "canvas.html").read_text(encoding="utf-8")
+    assert 'id="btnSplit"' in html and 'id="btnRedo"' in html and 'id="btnDwg"' in html
+    assert 'data-toolbar-dock' in html and "'/api/redo'" in html
+    assert "crab-three-toolbar-dock" in html
+    assert 'id="splitHandle"' in html and 'role="separator"' in html
+    assert 'id="btn3dMinimize"' in html and "crab-three-toolbar-minimized" in html
+    assert "crab-three-split-ratios" in html and "applySplitRatio" in html
+    assert TOOLS["redo"]["kind"] == ("post", "/api/redo")
+
+
 def test_http_serves_three_viewer_assets(server) -> None:
     base, _ = server
     with urllib.request.urlopen(base + "/", timeout=10) as response:
@@ -147,13 +185,86 @@ def test_http_serves_three_viewer_assets(server) -> None:
     assert 'id="threeShowWalls"' in html
     assert 'id="threeShowColumns"' in html
     assert 'id="threeShowFurniture"' in html
+    assert 'id="threeShowParking"' in html
+    assert 'id="threeShowBuilding"' in html
+    assert 'id="threeShowLandscape"' in html
+    assert 'id="threeShowCivil"' in html
+    assert 'id="threeShowTerrain"' in html
+    assert 'id="threeViewPreset"' in html
     assert 'id="threeShowOverlay"' in html
+    assert 'id="threeSelectedFloors"' in html
+    assert 'id="threeSelectedFloorHeight"' in html
+    assert 'id="threeSelectedHeight"' in html
+    assert 'id="btn3dApplyFloors"' in html
+    assert 'id="btn3dApplyHeight"' in html
+    assert 'id="btn3dResetHeight"' in html
+    assert 'id="threeShowSelectionPlan"' in html
+    assert 'id="threeHeightSelectionHint"' in html
+    assert 'id="threeHeightApplyState"' in html
+    assert 'id="threeObjectSelect"' in html
     assert "OrbitControls" in javascript
+    assert "THREE.MOUSE.PAN" in javascript
+    assert "crab-canvas-interaction-mode" in javascript
+    assert "interactionMode().pan" in javascript
     assert "flattened_svg_inference" in javascript
     assert "hybrid_semantic_and_inference" in javascript
     assert "model_source_revision" in javascript
     assert "addPlanOverlay" in javascript
     assert "furnitureCount" in javascript
+    assert "detectParkingBays" in javascript
+    assert "parkingCount" in javascript
+    assert "data-height-mm" in javascript
+    assert "elementHeightMeters(element, baseOptions.height)" in javascript
+    assert "heightOverrideCount" in javascript
+    assert "hasAttribute('data-height-mm')" in javascript
+    assert "classifyMultiDiscipline" in javascript
+    assert "terrainFlatCount" in javascript
+    assert "data-elevation-mm" in javascript
+    assert "floorHeightTargetMm" in javascript
+    assert "applySelectedFloors" in javascript
+    assert "applySelectedHeight" in javascript
+    assert "reviewHeightOverrides" in javascript
+    assert "refreshSelectionFootprint" in javascript
+    assert "selectedObjectBounds" in javascript
+    assert "focusSelectedObject" in javascript
+    assert "bindHeightInputs" in javascript
+    assert "잠시 후 자동 적용" in javascript
+    assert "crab-canvas-selection" in html
+    assert "syncSelectionFromCanvas" in javascript
+    assert "refreshObjectSelect" in javascript
+    assert "classifyDisciplineRepresentation" in javascript
+    assert "representationCapabilities" in javascript
+    assert "buildingPresentation" in javascript
+    assert "vegetationPresentation" in javascript
+    assert "setBuildingStoreyBands" in javascript
+    assert "native-vector-plan-overlay" in javascript
+    assert "2D 도면 패턴" in html
+    assert "THREE.TextureLoader" not in javascript
+    assert "/api/render?bbox=" not in javascript
+
+
+def test_three_parking_classifier_repeated_rows_and_wall_negative_control() -> None:
+    fixture = Path(__file__).with_name("test_canvas_parking_classifier.mjs")
+    completed = subprocess.run(["node", str(fixture)], text=True, capture_output=True, check=False)
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_three_multidiscipline_classifier_semantics_and_furniture_fallback() -> None:
+    fixture = Path(__file__).with_name("test_canvas_multidiscipline_classifier.mjs")
+    completed = subprocess.run(["node", str(fixture)], text=True, capture_output=True, check=False)
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_three_selected_object_height_controls() -> None:
+    fixture = Path(__file__).with_name("test_canvas_height_controls.mjs")
+    completed = subprocess.run(["node", str(fixture)], text=True, capture_output=True, check=False)
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_three_native_svg_plan_overlay_is_bounded_and_not_rasterized() -> None:
+    fixture = Path(__file__).with_name("test_canvas_native_overlay.mjs")
+    completed = subprocess.run(["node", str(fixture)], text=True, capture_output=True, check=False)
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 def test_three_camera_cut_capture_queues_agent_handoff(server) -> None:
@@ -357,6 +468,12 @@ def test_layers_and_symbols(doc: CanvasDocument) -> None:
     assert len(catalog()) == len(SYMBOLS) >= 20
     tree = doc.apply("place_symbol", {"name": "tree_deciduous", "x": 50, "y": 50, "label": "느티나무"})
     assert tree["discipline"] == "landscape" and tree["layer"] == "crab_layer_landscape"
+    tree_group = doc.find(tree["cid"])
+    assert tree_group.get("data-discipline") == "landscape"
+    assert tree_group.get("data-role") == "landscape tree_deciduous"
+    assert tree_group.get("data-symbol") == tree_group.get("data-name") == "tree_deciduous"
+    manhole = doc.apply("place_symbol", {"name": "manhole", "x": 90, "y": 90})
+    assert doc.find(manhole["cid"]).get("data-role") == "civil manhole"
     doc.apply("place_symbol", {"name": "sprinkler", "x": 60, "y": 60})
     doc.apply("draw_line", {"x1": 0, "y1": 0, "x2": 9, "y2": 9, "layer": "electrical"})
     layers = {l["id"]: l["elements"] for l in doc.list_layers()}
@@ -651,6 +768,53 @@ def test_array_elements_grid(doc: CanvasDocument) -> None:
     assert abs(last[0] - 40) < 0.1 and abs(last[1] - 15) < 0.1
     with pytest.raises(CanvasError):
         doc.apply("array_elements", {"cids": [a], "count": 500})
+
+
+def test_auto_arrange_in_polyline_keeps_clones_inside_boundary(doc: CanvasDocument) -> None:
+    source = doc.apply("draw_rect", {"x": 0, "y": 0, "width": 12, "height": 8})["cid"]
+    boundary = doc.apply("draw_polyline", {
+        "points": [[40, 40], [180, 40], [180, 120], [40, 120]],
+        "closed": False,
+    })["cid"]
+    result = doc.apply("auto_arrange_in_polyline", {
+        "cids": [source], "boundary_cid": boundary, "max_copies": 6,
+    })
+    assert result["copies"] == 6
+    assert result["elements_created"] == 6
+    assert result["boundary_cid"] == boundary
+    for cid in result["created"]:
+        box = doc.world_bbox(doc.find(cid))
+        assert box is not None
+        assert 40 <= box[0] <= box[2] <= 180
+        assert 40 <= box[1] <= box[3] <= 120
+
+
+def test_populate_kids_zone_derives_native_svg_inside_boundary(doc: CanvasDocument) -> None:
+    boundary = doc.apply("draw_polyline", {
+        "points": [[40, 40], [400, 40], [400, 260], [40, 260]],
+        "closed": False,
+    })["cid"]
+    result = doc.apply("populate_kids_zone", {"boundary_cid": boundary})
+    assert result["items"] == 6
+    assert result["program"] == [
+        "child_table", "soft_play", "playhouse_slide",
+        "reading_corner", "toy_storage", "guardian_bench",
+    ]
+    assert result["elements_created"] > result["items"]
+    for cid in result["created"]:
+        item = doc.find(cid)
+        assert item.get("data-role") == "furniture"
+        assert item.get("data-category") == "kids_zone"
+        box = doc.world_bbox(item)
+        assert box is not None
+        assert 40 <= box[0] <= box[2] <= 400
+        assert 40 <= box[1] <= box[3] <= 260
+
+
+def test_populate_kids_zone_rejects_non_boundary(doc: CanvasDocument) -> None:
+    source = doc.apply("draw_rect", {"x": 0, "y": 0, "width": 300, "height": 200})["cid"]
+    with pytest.raises(CanvasError, match="polyline or polygon"):
+        doc.apply("populate_kids_zone", {"boundary_cid": source})
 
 
 def test_stretch_rejects_empty_cids(doc: CanvasDocument) -> None:

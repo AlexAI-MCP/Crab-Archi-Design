@@ -113,18 +113,18 @@
       </div>
       <div class="field"><label for="standardsPath">면적 기준 파일 (CSV/XLSX, 선택)</label>
         <input type="text" id="standardsPath" placeholder="/path/to/standards.csv" spellcheck="false"></div>
-      <div class="field"><label for="opencrabPath">OpenCrab MCP 결과 JSON (선택)</label>
+      <div class="field"><label for="opencrabPath">OpenCrab MCP 결과 JSON (신규 프로젝트 필수)</label>
         <input type="text" id="opencrabPath" placeholder="/path/to/opencrab_result.json" spellcheck="false"></div>
     </section>
 
     <section>
-      <h2><span class="step">2</span>외곽 쉘 <span class="opt">선택</span></h2>
+      <h2><span class="step">2</span>외곽 쉘 <span class="opt">필수</span></h2>
       <div class="tools">
         <button data-mode="community_shell" data-kind="polygon"><span class="dot" style="background:var(--shell)"></span>외곽 쉘 그리기</button>
       </div>
       <div class="hint">커뮤니티 경계를 폴리곤으로 클릭 (더블클릭·Enter·도구 재클릭으로 완성).
         <b>쉘 내부의 토폴로지와 요소만 수정 대상</b>이 되고 쉘 바깥은 자동으로 보호됩니다.
-        안 그리면 도면 전체가 쉘로 간주됩니다. 나머지 설계 지시는 모두 아래 자연어 요청으로 전달하세요.</div>
+        경계가 지정되지 않으면 재설계를 실행할 수 없습니다.</div>
       <ul class="strokes" id="strokeList"></ul>
     </section>
 
@@ -422,7 +422,7 @@
   document.getElementById("runButton").addEventListener("click", function () {
     var btn = this;
     if (!document.getElementById("prompt").value.trim()) {
-      setStatus("자연어 요청(프롬프트)을 입력하세요 — 구역 지정은 선택사항입니다.", "bad");
+      setStatus("자연어 요청(프롬프트)을 입력하세요.", "bad");
       document.getElementById("prompt").focus();
       return;
     }
@@ -434,8 +434,6 @@
       households: parseInt(document.getElementById("households").value, 10) || null,
       standards: document.getElementById("standardsPath").value.trim() ? [document.getElementById("standardsPath").value.trim()] : [],
       opencrab_result_files: document.getElementById("opencrabPath").value.trim() ? [document.getElementById("opencrabPath").value.trim()] : [],
-      evidence_summary: document.getElementById("opencrabPath").value.trim() ? null :
-        "Studio operator confirmed precedent topology and protected zones for this run.",
       viewBox: state.sourceViewBox,
       strokes: state.strokes.map(function (s) { return { stroke_id: s.stroke_id, mode: s.mode, points: s.points }; }),
       scale: document.getElementById("scaleMm").value ? {

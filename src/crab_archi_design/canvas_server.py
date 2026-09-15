@@ -43,7 +43,8 @@ ALLOWED_OPS = {
     "copy_element", "copy_style", "set_style", "set_attrs",
     "set_zone", "clear_zones", "stretch", "set_scale", "place_symbol",
     "set_length", "set_thickness", "set_area",
-    "transform_elements", "array_elements",
+    "transform_elements", "array_elements", "auto_arrange_in_polyline",
+    "populate_kids_zone",
 }
 
 
@@ -112,6 +113,7 @@ def pick_file_dialog() -> str | None:
 
 def canvas_html_path() -> Path | None:
     candidates = [
+        Path(__file__).resolve().parent / "assets" / "canvas.html",
         Path(__file__).resolve().parents[2] / "tools" / "canvas.html",
         Path.cwd() / "tools" / "canvas.html",
     ]
@@ -120,6 +122,7 @@ def canvas_html_path() -> Path | None:
 
 def canvas_3d_js_path() -> Path | None:
     candidates = [
+        Path(__file__).resolve().parent / "assets" / "canvas_3d.js",
         Path(__file__).resolve().parents[2] / "tools" / "canvas_3d.js",
         Path.cwd() / "tools" / "canvas_3d.js",
     ]
@@ -504,6 +507,8 @@ def make_handler(state: CanvasState) -> type[BaseHTTPRequestHandler]:
                     self.send_json({"status": "ok", "measurements": measurements})
                 elif route == "/api/undo":
                     self.send_json({"status": "ok", **doc.undo()})
+                elif route == "/api/redo":
+                    self.send_json({"status": "ok", **doc.redo()})
                 elif route == "/api/session/update":
                     # 브라우저 → 선택/뷰포트 보고
                     with state.session_lock:

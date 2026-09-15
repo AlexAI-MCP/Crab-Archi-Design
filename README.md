@@ -2,6 +2,17 @@
 
 Crab Archi Design is an original-SVG-first framework for architectural community layout design automation.
 
+## Public Browser Canvas
+
+The public canvas runs the same Python SVG editing engine inside each visitor's
+browser. Import a drawing, edit native elements, mark protected zones, measure,
+undo/redo, review in 3D, and download the edited SVG and design-request JSON.
+Drawings stay in the browser. Codex/OpenCrab-driven redesign and DWG conversion
+require the local CLI/MCP studio; the public site does not claim to run them.
+
+See [public release and deployment](docs/public_release.md) for supported SVGs,
+verified fixes, the OpenCrab handoff, and the static deployment boundary.
+
 OpenCrab is a required part of the workflow, not an optional reference layer.
 
 - OpenCrab homepage: https://opencrab.sh
@@ -21,6 +32,20 @@ It is designed around the workflow proven in the Community SVG experiments:
 9. Run QA gates before exporting the final native SVG.
 
 The framework intentionally keeps LLMs out of direct SVG mutation. Codex or another LLM should produce `DesignIntent` and `EditIntent` JSON. A deterministic solver should apply safe native SVG patches.
+
+## CrabCADParser: DWG/DXF to OpenCrab
+
+The repository also includes [CrabCADParser](docs/crabcadparser.md), a local Crab-style GUI/CLI/MCP bridge that scans a DWG/DXF directory, preserves reconstructable CAD IR v2, extracts CAD evidence and architectural role hints, and builds an OpenCrab Pack v1 bundle. DXF is parsed directly; DWG uses an optional local ODA File Converter. The generated `opencrab/ingest_payloads.jsonl` is intentionally explicit and reviewable before an OpenCrab MCP client submits it.
+
+```bash
+.venv/bin/crabcadparser gui
+# or
+.venv/bin/crabcadparser run /path/to/cad-source --output-dir /path/to/cad-source_crabcadparser --max-files 10
+# replay structured IR to a new DXF
+.venv/bin/crabcadparser reconstruct /path/to/documents/cad-document_xxx.json /path/to/reconstructed.dxf --report /path/to/roundtrip.json
+```
+
+See [docs/crabcadparser.md](docs/crabcadparser.md) for the pack contract, MCP tools, QA gates, and DWG setup.
 
 ## OpenCrab MCP Contract
 
@@ -309,7 +334,19 @@ Engine adapter execution is allowlisted by default. Built-in aliases for `refere
 
 `constraint-attach` writes `projects/<project>/constraints/constraint_manifest.json`. Use it for community shell, parking/core/column/ramp no-go edges, lock boundaries, mutable zones, and projectable zones. `qa` and `apply-edit` require an active constraint manifest before a final SVG alternative can pass.
 
-`./studio.sh [port]` is the one-command way to open the studio: it finds or creates the local `.venv`, installs the package on first run, starts the server, and opens the browser. `studio` serves the localhost design studio at `http://127.0.0.1:<port>/`. The studio is prompt-first: the operator loads the original linework, optionally draws one community-shell polygon, and states the design request in natural language. The shell interior automatically becomes the redraw target and everything outside the shell is auto-protected; with no shell drawn, the whole drawing frame is used. Zone-derivation defaults are reported back in the run result. The default studio engine is `layout-svg-engine --standalone-redraw`, so the source SVG is used as evidence/constraint input and the candidate is newly drawn as native SVG rather than patched over the original. The server converts annotations into constraint/edit sketch JSON, executes `workflow-run` (first run) or `revision-run` (repeat edits), and writes `projects/<project>/studio/studio_run_###/studio_run_report.json`. The same HTTP API (`/api/load-svg`, `/api/run`, `/api/artifact`, `/api/status`) is agent-drivable, so Codex or Claude Code can operate the identical surface headlessly. The server binds to 127.0.0.1 only.
+`./studio.sh [port]` creates or finds `.venv`, installs the package on first run,
+and opens the local studio at `http://127.0.0.1:<port>/`. Confirm the community
+shell and provide a design prompt. New projects require an actual OpenCrab MCP
+result file. Missing boundaries block the run; the whole drawing is never
+implicitly treated as editable. The shell polygon is preserved without centroid
+scaling. Review derived constraints before accepting a design result.
+
+The default experimental engine is `layout-svg-engine --standalone-redraw`.
+Strict CLI gates apply, but a passing run is not architectural design approval.
+Reports are written to `projects/<project>/studio/studio_run_###/`.
+The HTTP API (`/api/load-svg`, `/api/run`, `/api/artifact`, `/api/status`) is also
+available to local agents. Use the public browser canvas for manual native SVG
+editing and a Codex/OpenCrab JSON handoff. The local server binds to 127.0.0.1.
 
 `doodle-editor` prints the local SVG doodle editor path and `file://` URL. The editor loads a source SVG from your machine, records vector strokes in source viewBox coordinates, and downloads sketch JSON for `sketch-intent`.
 

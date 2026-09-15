@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crab-archi-design"
-version = "0.1.0"
+version = "0.2.0"
 description = "Original-SVG-first architectural community design copilot framework."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -24,6 +24,8 @@ crab-archi-design = "crab_archi_design.cli:main"
 crab-archi-design-mcp = "crab_archi_design.mcp_server:main"
 crab-archi-design-canvas = "crab_archi_design.canvas_server:main"
 crab-archi-design-canvas-mcp = "crab_archi_design.canvas_mcp:main"
+crabcadparser = "crab_archi_design.cad_cli:main"
+crabcadparser-mcp = "crab_archi_design.cad_mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
