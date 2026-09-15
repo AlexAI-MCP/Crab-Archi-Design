@@ -1,6 +1,6 @@
-import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.mjs';
-
 const ready = (async () => {
+  // Import after worker creation so worker-src only governs our same-origin entry.
+  const { loadPyodide } = await import('https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.mjs');
   const runtime = await loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/' });
   const response = await fetch('/cad_runtime.zip');
   if (!response.ok) throw new Error('CAD runtime download failed');

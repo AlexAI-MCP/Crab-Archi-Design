@@ -271,6 +271,7 @@ async function poll(force) {
       refreshZones(); restoreSelection();
       window.dispatchEvent(new CustomEvent('crab-canvas-revision', { detail:{ revision:S.rev } }));
     } else if (doc.status === 'empty') { $('status').textContent = 'SVG를 열어주세요'; }
+    else if (doc.status === 'error') { $('status').textContent = '편집 엔진 오류: ' + doc.error; }
   } catch (e) { $('status').textContent = '서버 연결 끊김'; }
 }
 setInterval(() => { if (!S.drawing && !S.panning) poll(); }, 1500);

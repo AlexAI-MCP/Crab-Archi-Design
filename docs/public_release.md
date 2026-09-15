@@ -63,11 +63,14 @@ heuristics are not exposed as a public redesign service.
 
 ## Build and deploy
 
+Public URL: https://crab-archi-design.vercel.app/
+
 ```bash
 python -m pip install -e '.[test]'
 python -m pytest -q
 examples/run_quickstart.sh
 python tools/build_web.py --vercel
+python tools/serve_web.py --port 8785  # local preview with production CSP
 vercel link --project crab-archi-design --yes
 vercel deploy --prebuilt --prod
 ```
@@ -78,3 +81,18 @@ OpenCrab pack content, or local server is deployed. `version.json` identifies
 the built Git commit. Commit before making the release build.
 
 Architecture reference: https://pyodide.org/en/stable/usage/index.html
+
+## Verification (2026-09-15)
+
+- 179 Python tests passed locally; GitHub CI passed on Python 3.9 and 3.12.
+- All four JavaScript regression scripts and sample release quickstart passed.
+- Wheel inspection confirmed the four UI assets are included.
+- The private A-801 file loaded 56,029 elements in the browser worker. Moving an
+  existing source line changed native SVG; undo restored the pre-edit SVG exactly.
+  The file and screenshots remain local and are excluded from deployment.
+- Desktop and 390px mobile layouts were inspected. The Three.js sample had 114
+  sampled canvas colors, confirming a nonblank rendered scene. SVG download and
+  request export were exercised through browser controls.
+- Public CSP initially blocked the worker's static cross-origin import. Loading
+  Pyodide dynamically after worker creation resolved this without weakening CSP.
+  `tools/serve_web.py` reproduces these headers for local verification.

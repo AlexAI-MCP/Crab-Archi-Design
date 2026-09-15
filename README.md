@@ -4,6 +4,8 @@ Crab Archi Design is an original-SVG-first framework for architectural community
 
 ## Public Browser Canvas
 
+Open the [public canvas](https://crab-archi-design.vercel.app/).
+
 The public canvas runs the same Python SVG editing engine inside each visitor's
 browser. Import a drawing, edit native elements, mark protected zones, measure,
 undo/redo, review in 3D, and download the edited SVG and design-request JSON.
